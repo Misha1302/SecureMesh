@@ -1,41 +1,41 @@
 id,priority,scenario,acceptance,status,evidence,notes
-AT-001,P0,Fresh bootstrap,"clean isolated workspace, compose, DB migrations, demo server health PASS",NOT_RUN,,
-AT-002,P0,Registration and auth,"create 2 ordinary users, login, password verify, credentials never logged, login enumeration resisted",NOT_RUN,,
-AT-003,P0,Client device identity,two devices have independent private keys; server DB contains only public crypto material,NOT_RUN,,
-AT-004,P0,OpenMLS 1:1,real MLS across 2 processes/devices: encrypt/decrypt only recipient can read,NOT_RUN,,
-AT-005,P0,Group MLS,"add/remove member, epoch rekey, revoked device denied new ciphertext after rotation",NOT_RUN,,
-AT-006,P0,E2EE metadata sanity,server/operator cannot read plaintext or private media key via DB/log/storage,NOT_RUN,,
-AT-007,P0,Key substitution and replay,malicious key replacement leads to visible warning or explicit deny; replay rejected,NOT_RUN,,
-AT-008,P0,Durable ACK,storage commit before ACK; kill DB before commit means message stays unsent,NOT_RUN,,
-AT-009,P0,Exactly-once UI,"lost ACK, resend same ID/payload -> one DB record and one UI event",NOT_RUN,,
-AT-010,P0,Payload conflict,"same id different digest -> conflict, not silent duplicate",NOT_RUN,,
-AT-011,P0,Offline outbox,"write offline, force-kill app, reconnect -> eventual delivery; no plaintext fallback",NOT_RUN,,
-AT-012,P0,Cursor resume,"disconnect 60s, client catches up missing events in order, ACK cursor after local persist",NOT_RUN,,
-AT-013,P0,GPRS texts,"20 Kbit/s, RTT 1.5 s, 3% loss; 200 messages each direction, 3 seeds, no lost/duplicates",NOT_RUN,,
-AT-014,P0,GPRS performance,"p95 warm-session end-to-end <=15s; measured vs objective, not invented",NOT_RUN,,
-AT-015,P0,Severe 2G,"10 Kbit/s, RTT 3s, 10% loss; eventual success when network usable, no SLA time",NOT_RUN,,
-AT-016,P0,WSS fallback,blocked/broken WSS -> HTTPS sync/send; delivery semantics unchanged,NOT_RUN,,
-AT-017,P0,Media starvation test,ongoing media upload on low bandwidth does not block text queue,NOT_RUN,,
-AT-018,P0,Security authorization,"cross-user chat, device, media and admin IDOR denied; RBAC consistently enforced",NOT_RUN,,
-AT-019,P0,Account reset,password/email recovery does not decrypt old E2EE data without client backup/device,NOT_RUN,,
-AT-020,P0,Private/public separation,"search/moderation accesses public content only, user-report reveal explicitly opted in",NOT_RUN,,
-AT-021,P0,Logging secrecy,"structured logs/crashes never contain keys, password, plaintext private message or tokens",NOT_RUN,,
-AT-022,P0,Backup restore,"recovery isolated DB+objects, test checks consistency, no lost durable committed messages within backup policy",NOT_RUN,,
-AT-023,P0,Supply chain,"dependency/security scan, SBOM, no committed secrets, license inventory",NOT_RUN,,
-AT-024,P0,True E2E demo,two real client sessions exchange 1:1 encrypted text via real server/Postgres and reconnect,NOT_RUN,,
-AT-025,P1,Closed groups UI,"create/invite/send/remove/rekey, real client E2E",NOT_RUN,,
-AT-026,P1,Public channel/feed,"create channel, publish/read/search/post/media, moderation, server-side ACL",NOT_RUN,,
-AT-027,P1,Voice notes,"capture Opus or supported codec, encrypt, upload, download, playback, interrupted resume",NOT_RUN,,
-AT-028,P1,Video circles,"record, round display, encrypt, transfer, play; secure permissions",NOT_RUN,,
-AT-029,P1,Attachments,"images/GIF/video/documents, multipart resume, size/checksums, encryption for private",NOT_RUN,,
-AT-030,P1,One-to-one calls,"real WebRTC signaling/TURN test in test network and native client, deny unauthorized call",NOT_RUN,,
-AT-031,P1,UI/accessibility,"login/chats/communities/profile/settings/admin, RU+EN, light/dark, automated UI checks",NOT_RUN,,
-AT-032,P1,Multi-device,"multiple independent keys, device revocation, per-device sync and receipts",NOT_RUN,,
-AT-033,P1,Moderation,"public reporting, admin MFA/RBAC, immutable audit trail for actions",NOT_RUN,,
-AT-034,P1,Web crypto compatibility,real wasm OpenMLS native/wave test; otherwise web private disabled + limitation explicitly reported,NOT_RUN,,
-AT-035,P1,Android client,Android build + emulator/device E2E if SDK/emulator available; no fabricated verification,NOT_RUN,,
-AT-036,P1,Linux desktop client,build and launch Linux desktop through smoke or screenshot test,NOT_RUN,,
-AT-037,P1,iOS/macOS,build/test on mac runner if available; otherwise UNVERIFIED with setup steps,NOT_RUN,,
-AT-038,P0,Ops handoff,"deploy templates/config, smoke, backups, rollback, commands documented; no real prod changes",NOT_RUN,,
-AT-039,P1,Slow network envelope size,"stats app bytes and TLS bytes for 100-byte message, compare objective <=1 KiB app payload",NOT_RUN,,
-AT-040,P0,Reconnect and MLS ordering,"concurrent epoch commit conflicts, resolve correctly, no permanent stuck clients",NOT_RUN,,
+AT-001,P0,Fresh bootstrap,"clean isolated workspace, compose, DB migrations, demo server health PASS",NOT_RUN,,PARTIAL: warm make bootstrap and real migrations/health pass; full clean-room infrastructure not complete.
+AT-002,P0,Registration and auth,"create 2 ordinary users, login, password verify, credentials never logged, login enumeration resisted",PASS,evidence/delivery-final.txt,Real verified users/login/device proof/token rotation; uniform unknown-user response tested.
+AT-003,P0,Client device identity,two devices have independent private keys; server DB contains only public crypto material,PASS,evidence/m1-crypto-v2.txt,Independent client keys and public-only device registration; CLI/Linux scope.
+AT-004,P0,OpenMLS 1:1,real MLS across 2 processes/devices: encrypt/decrypt only recipient can read,PASS,evidence/crypto-final.txt,"Independent processes, Welcome and real MLS encrypted Unicode."
+AT-005,P0,Group MLS,"add/remove member, epoch rekey, revoked device denied new ciphertext after rotation",PASS,evidence/crypto-final.txt,Standalone OpenMLS third-member add/remove/rekey/revoked denial; group UI/server workflow separate.
+AT-006,P0,E2EE metadata sanity,server/operator cannot read plaintext or private media key via DB/log/storage,NOT_RUN,,PARTIAL: server sees opaque messages; private media and complete operator dump/audit scenario absent.
+AT-007,P0,Key substitution and replay,malicious key replacement leads to visible warning or explicit deny; replay rejected,PASS,evidence/crypto-final.txt,Pinned-key substitution and raw MLS replay rejected.
+AT-008,P0,Durable ACK,storage commit before ACK; kill DB before commit means message stays unsent,PASS,evidence/db-recovery.txt,DB stopped while send waits before COMMIT; 503/no success ACK; retry/outbox persistence.
+AT-009,P0,Exactly-once UI,"lost ACK, resend same ID/payload -> one DB record and one UI event",NOT_RUN,,PARTIAL: concurrent/lost-ACK server and local projection dedup tested; full automated native UI fault suite pending.
+AT-010,P0,Payload conflict,"same id different digest -> conflict, not silent duplicate",PASS,evidence/delivery-final.txt,Same client ID changed ciphertext or epoch gives 409.
+AT-011,P0,Offline outbox,"write offline, force-kill app, reconnect -> eventual delivery; no plaintext fallback",NOT_RUN,,PARTIAL: native offline/SIGKILL/reopen manually exercised with screenshots; complete automated app crash schedule pending.
+AT-012,P0,Cursor resume,"disconnect 60s, client catches up missing events in order, ACK cursor after local persist",NOT_RUN,,NOT_RUN: exact 60-second blackout and 1000-event recovery not run.
+AT-013,P0,GPRS texts,"20 Kbit/s, RTT 1.5 s, 3% loss; 200 messages each direction, 3 seeds, no lost/duplicates",NOT_RUN,,PARTIAL: three full baseline GPRS seeds pass; prescribed mixed crash/ACK-drop/reconnect schedule not combined with profiles.
+AT-014,P0,GPRS performance,"p95 warm-session end-to-end <=15s; measured vs objective, not invented",PASS,2G_REPORT.md,Full GPRS steady warm-session p95 4.351/4.375/4.754 seconds; threshold unchanged.
+AT-015,P0,Severe 2G,"10 Kbit/s, RTT 3s, 10% loss; eventual success when network usable, no SLA time",PASS,2G_REPORT.md,"Severe 10kbit/s RTT3s 10% loss, 200 each direction and three seeds, all IDs delivered."
+AT-016,P0,WSS fallback,blocked/broken WSS -> HTTPS sync/send; delivery semantics unchanged,NOT_RUN,,"PARTIAL: WSS and HTTPS services tested; native UI is HTTPS-only, automatic WSS-first fallback missing."
+AT-017,P0,Media starvation test,ongoing media upload on low bandwidth does not block text queue,NOT_RUN,,NOT_RUN: media pipeline and competing-upload fairness absent.
+AT-018,P0,Security authorization,"cross-user chat, device, media and admin IDOR denied; RBAC consistently enforced",NOT_RUN,,PARTIAL: chat/device negative authorization tested; complete media/admin RBAC surfaces absent.
+AT-019,P0,Account reset,password/email recovery does not decrypt old E2EE data without client backup/device,NOT_RUN,,NOT_RUN: password reset/recovery API and UI absent.
+AT-020,P0,Private/public separation,"search/moderation accesses public content only, user-report reveal explicitly opted in",NOT_RUN,,NOT_RUN: public spaces/search/moderation absent.
+AT-021,P0,Logging secrecy,"structured logs/crashes never contain keys, password, plaintext private message or tokens",NOT_RUN,,PARTIAL: API secret checks and native debug endpoint redaction tested; full crash/platform matrix pending.
+AT-022,P0,Backup restore,"recovery isolated DB+objects, test checks consistency, no lost durable committed messages within backup policy",NOT_RUN,,PARTIAL: isolated PostgreSQL restore/decrypt drill passes; object/media backup missing.
+AT-023,P0,Supply chain,"dependency/security scan, SBOM, no committed secrets, license inventory",FAIL,evidence/cargo-rustsec-audit.txt,Four RustSec advisories and unmaintained warning; no ignores. SBOM/license inventory partial; no clearance.
+AT-024,P0,True E2E demo,two real client sessions exchange 1:1 encrypted text via real server/Postgres and reconnect,PASS,evidence/delivery-final.txt,Real client processes + TLS API + PostgreSQL + reconnect; native GUI supplementary captures.
+AT-025,P1,Closed groups UI,"create/invite/send/remove/rekey, real client E2E",NOT_RUN,,NOT_RUN: MLS core add/remove works; closed-group native UI and server membership workflow absent.
+AT-026,P1,Public channel/feed,"create channel, publish/read/search/post/media, moderation, server-side ACL",NOT_RUN,,NOT_RUN: public channels/feed/search/media/moderation absent.
+AT-027,P1,Voice notes,"capture Opus or supported codec, encrypt, upload, download, playback, interrupted resume",NOT_RUN,,NOT_RUN: voice capture/media transfer absent.
+AT-028,P1,Video circles,"record, round display, encrypt, transfer, play; secure permissions",NOT_RUN,,NOT_RUN: video-circle capture/media transfer absent.
+AT-029,P1,Attachments,"images/GIF/video/documents, multipart resume, size/checksums, encryption for private",NOT_RUN,,NOT_RUN: attachment pipeline absent.
+AT-030,P1,One-to-one calls,"real WebRTC signaling/TURN test in test network and native client, deny unauthorized call",NOT_RUN,,NOT_RUN: WebRTC/TURN/native call flow absent.
+AT-031,P1,UI/accessibility,"login/chats/communities/profile/settings/admin, RU+EN, light/dark, automated UI checks",NOT_RUN,,PARTIAL: native chat/settings RU/EN/light-dark/layout test; full flows and assistive-tech checks absent.
+AT-032,P1,Multi-device,"multiple independent keys, device revocation, per-device sync and receipts",NOT_RUN,,PARTIAL: revoke/session identity exists; trusted enrollment/multi-device history not implemented.
+AT-033,P1,Moderation,"public reporting, admin MFA/RBAC, immutable audit trail for actions",NOT_RUN,,NOT_RUN: moderation/admin MFA/audit workflow absent.
+AT-034,P1,Web crypto compatibility,real wasm OpenMLS native/wave test; otherwise web private disabled + limitation explicitly reported,PASS,evidence/wasm-probe.txt,Native WASM probe fails; browser builds and explicitly disables private chat. Public features still missing.
+AT-035,P1,Android client,Android build + emulator/device E2E if SDK/emulator available; no fabricated verification,NOT_RUN,,NOT_VERIFIED: Android SDK36 exists with unaccepted licenses; Android crypto packaging/build not completed.
+AT-036,P1,Linux desktop client,build and launch Linux desktop through smoke or screenshot test,PASS,evidence/linux-build-v3.txt,Linux build via isolated GTK toolchain and actual Xvfb launch; compact Linux is not Android evidence.
+AT-037,P1,iOS/macOS,build/test on mac runner if available; otherwise UNVERIFIED with setup steps,BLOCKED,,No macOS/Xcode runner; no Apple artifact claimed.
+AT-038,P0,Ops handoff,"deploy templates/config, smoke, backups, rollback, commands documented; no real prod changes",NOT_RUN,,PARTIAL: local handoff/checkpoint only; deployment candidate blocked.
+AT-039,P1,Slow network envelope size,"stats app bytes and TLS bytes for 100-byte message, compare objective <=1 KiB app payload",NOT_RUN,,PARTIAL: variable Unicode app frames measured; exact 100-character TLS/network accounting absent.
+AT-040,P0,Reconnect and MLS ordering,"concurrent epoch commit conflicts, resolve correctly, no permanent stuck clients",PASS,evidence/epochs-final.txt,"Two real staged self-update commits race, loser rebases, both restart and resume at epoch3."

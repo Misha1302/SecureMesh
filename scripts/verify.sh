@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
+ulimit -c 0
 cd "$(dirname "$0")/.."
 mkdir -p .local/tmp
 export TMPDIR="$PWD/.local/tmp"

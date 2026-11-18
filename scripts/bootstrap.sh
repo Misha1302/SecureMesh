@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ulimit -c 0
 cd "$(dirname "$0")/.."
 umask 077
 mkdir -p .local reports/evidence

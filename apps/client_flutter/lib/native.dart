@@ -306,6 +306,7 @@ class _ClientAppState extends State<ClientApp> {
           try {
             await reload();
           } catch (_) {
+            online = false;
             connectionState = 'keys';
             failures++;
             error = tr(
@@ -341,6 +342,7 @@ class _ClientAppState extends State<ClientApp> {
     final text = draft.trim();
     final epoch = generation;
     if (sending || text.isEmpty || profile?['trustConfirmed'] != true) return;
+    bool persisted = false;
     setState(() {
       sending = true;
       sendError = null;
@@ -351,17 +353,23 @@ class _ClientAppState extends State<ClientApp> {
         'id': messageId(),
         'text': text,
       });
+      persisted = true;
       if (epoch != generation) return;
       if (composer.text == draft) composer.clear();
-      await reload(follow: true);
       unawaited(pump());
+      await reload(follow: true);
     } catch (_) {
       if (mounted && epoch == generation) {
         setState(
-          () => sendError = tr(
-            'Сообщение не сохранено. Проверьте ключи и повторите отправку.',
-            'Message was not saved. Check your keys and send again.',
-          ),
+          () => sendError = persisted
+              ? tr(
+                  'Сообщение в очереди. Экран не обновился; откройте профиль снова.',
+                  'Message is queued. The view could not refresh; reopen this profile.',
+                )
+              : tr(
+                  'Сообщение не сохранено. Проверьте ключи и повторите отправку.',
+                  'Message was not saved. Check your keys and send again.',
+                ),
         );
       }
     } finally {
@@ -479,10 +487,14 @@ class _ClientAppState extends State<ClientApp> {
     themeMode: theme,
     theme: ThemeData(
       useMaterial3: true,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      visualDensity: VisualDensity.standard,
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF16685B)),
     ),
     darkTheme: ThemeData(
       useMaterial3: true,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      visualDensity: VisualDensity.standard,
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF16685B),
         brightness: Brightness.dark,

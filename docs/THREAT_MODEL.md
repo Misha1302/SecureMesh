@@ -1,0 +1,13 @@
+# Local alpha threat model
+
+Trusted: correct native client binary, healthy endpoint and user-controlled passphrase. The account service, delivery server and database are not trusted with private message plaintext. OpenMLS handles RFC 9420 cryptography; the server receives opaque ciphertext and public device keys. TLS alone does not establish peer identity: compare and pin device keys independently. No custom primitives or admin decryption endpoint exists.
+
+Server-visible metadata includes account/email, device public keys, membership, sizes, ordering, timestamps and network addresses. Account passwords use Argon2id; access/refresh/email tokens are hashed in PostgreSQL. Device possession requires Ed25519 proof over a short-lived server challenge. First device enrollment requires verified account credentials; additional enrollment currently fails closed rather than granting old history.
+
+Client SQLCipher holds identity/MLS secrets, ratchets, cached plaintext, own authored events, outbox and cursors. FULL synchronous transactions cover ratchet+outbox and decrypt+inbox+cursor. Passphrase and private keys do not go to the server. `.local/demo/profiles.json` contains unlock credentials for synthetic local demo stores only; it is ignored, mode 600 and not a real user recovery design. Linux secure keyring and mobile keystore integration are missing. Snapshot rollback, a compromised endpoint, malicious binaries and screenshots are outside current protection.
+
+Message identity and membership are server-checked. Concurrent durable writes serialize on a conversation row. Identical retries return one sequence; altered payload/kind/epoch conflicts. Receiver authenticates inner sender/group/message identity with MLS. Transport duplicates compare canonical ciphertext digests and do not consume MLS twice. Wrong keys/decryption errors preserve state and do not fall back to plaintext. Concurrent self-update commits are staged; only a durable winner is merged, a conclusively rejected loser is discarded/rebased. Never discard a pending commit merely because an ACK timed out.
+
+Important gaps: auditable signed directory/transparency, routed KeyPackages/Welcome, enrollment/recovery, membership authorization tied to every MLS change, native WSS recovery manager, full replay/fuzz/IDOR/platform matrix, media/call protection. The standalone add/remove spike merges locally for feasibility; it is not the completed server group workflow.
+
+Known dependency advisories remain release blockers; see SECURITY_LIMITATIONS.md. A real independent integration audit has not happened. PRODUCTION_APPROVED=false.

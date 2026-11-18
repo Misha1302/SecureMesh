@@ -7,10 +7,12 @@ import subprocess
 import tempfile
 import uuid
 import threading
+import resource
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / 'src/crypto_core/target/debug/securemesh-crypto'
+resource.setrlimit(resource.RLIMIT_CORE,(0,0))
 
 class Device:
     def __init__(self, root, identity=None):

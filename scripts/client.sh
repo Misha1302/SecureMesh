@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ulimit -c 0
 cd "$(dirname "$0")/.."
 export SECUREMESH_CRYPTO_LIB="$PWD/src/crypto_core/target/debug/libsecuremesh_crypto.so"
 export SECUREMESH_CERT_FILE="$PWD/.local/tls.pem"

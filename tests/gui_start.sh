@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ulimit -c 0
 cd "$(dirname "$0")/.."
 export DISPLAY=:98
 export LIBGL_ALWAYS_SOFTWARE=1
