@@ -1,0 +1,15 @@
+UTC: 2026-11-18T02:10:42.357668+00:00
+Command: ['python3', 'tests/integration/smoke.py']
+  SecureMesh.Api -> /home/micodiy/SecureMesh/src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:00.63
+ Container securemesh-db-1 Running 
+ Container securemesh-db-1 Waiting 
+ Container securemesh-db-1 Healthy 
+PASS: API build; real PostgreSQL readiness; EF migration; restart and migration idempotence.
+
+Exit code: 0
