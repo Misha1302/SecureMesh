@@ -18,7 +18,7 @@ PRODUCTION_APPROVED=false
 
 ## Security release blockers
 
-RustSec executed, exit 1: four advisories in Cargo.lock (crypto-bigint, libcrux-kem twice, libsqlite3-sys), plus unmaintained proc-macro-error2. No advisory ignored. Compatibility probes in progress. NuGet vulnerability query exits 0. OSV unreachable; RustSec fallback succeeded as an executed scan, not clearance. Cargo license metadata/SBOM recorded; allo-isolate license field missing. Independent audit absent. Do not use this alpha with real private data.
+RustSec executed, exit 1: four advisories in Cargo.lock (crypto-bigint, libcrux-kem twice, libsqlite3-sys), plus unmaintained proc-macro-error2. No advisory ignored. Compatibility probes executed and failed current upstream version constraints. NuGet vulnerability query exits 0. OSV unreachable; RustSec fallback succeeded as an executed scan, not clearance. Cargo license metadata/SBOM recorded; allo-isolate metadata lacks a license expression, and its supplied Apache 2.0 LICENSE is retained under third_party. Independent audit absent. Do not use this alpha with real private data.
 
 ## Missing scope
 
