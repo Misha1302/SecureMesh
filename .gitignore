@@ -1,0 +1,23 @@
+# securemesh new repo dev and agent artifacts
+.env
+.env.*
+!.env.example
+!deploy/.env.production.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.db
+*.db-shm
+*.db-wal
+.idea/
+.vscode/
+.dart_tool/
+build/
+**/bin/
+**/obj/
+**/target/
+.node_modules/
+.codex-runner/
+.tmp/
