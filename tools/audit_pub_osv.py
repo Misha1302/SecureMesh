@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -26,11 +27,34 @@ control = {'package': {'name': 'archive', 'ecosystem': 'Pub'}, 'version': '3.3.6
 query_set = [*queries, control]
 results = [{'package': q['package'], 'version': q['version'], 'vulnerabilities': []} for q in query_set]
 pending = list(enumerate(query_set))
+
+def request_batch(items):
+    for attempt in range(3):
+        retry_delay = 1 << attempt
+        request = urllib.request.Request('https://api.osv.dev/v1/querybatch', data=json.dumps({'queries': items}).encode(), headers={'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read(2_000_001))
+        except urllib.error.HTTPError as error:
+            if error.code not in (429, 502, 503, 504) or attempt == 2:
+                raise
+            if error.headers.get('Retry-After'):
+                try:
+                    requested_delay = int(error.headers['Retry-After'])
+                except ValueError:
+                    raise error
+                if requested_delay < 0 or requested_delay > 10:
+                    raise error
+                retry_delay = max(retry_delay, requested_delay)
+        except urllib.error.URLError:
+            if attempt == 2:
+                raise
+        print(f'OSV transient network/server failure; bounded retry {attempt + 1}/2.')
+        time.sleep(retry_delay)
+
 try:
     for page in range(10):
-        request = urllib.request.Request('https://api.osv.dev/v1/querybatch', data=json.dumps({'queries': [q for _, q in pending]}).encode(), headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = json.loads(response.read(2_000_001))
+        payload = request_batch([q for _, q in pending])
         batch = payload.get('results')
         if not isinstance(batch, list) or len(batch) != len(pending):
             raise ValueError('OSV result count mismatch')

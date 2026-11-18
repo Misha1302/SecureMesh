@@ -1,0 +1,5 @@
+UTC: 2026-11-18T23:03:30.796254+00:00
+Command: ['python3', 'tools/audit_pub_osv.py']
+BLOCKED: OSV Pub audit unavailable/incomplete (URLError); no clearance claimed.
+
+Exit code: 2
