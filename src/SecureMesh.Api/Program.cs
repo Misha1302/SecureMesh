@@ -42,6 +42,7 @@ app.Use(async(ctx,next)=>
 });
 app.UseRateLimiter();
 app.MapIdentity();
+app.MapDeviceTrust();
 Delivery.MapDelivery(app);
 app.MapStream();
 app.MapGet("/health/live", () => Results.Ok(new { status = "live", productionApproved = false }));

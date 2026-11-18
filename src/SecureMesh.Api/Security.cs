@@ -27,7 +27,7 @@ public static class Passwords
     }
 }
 
-public sealed record Actor(Guid UserId, Guid DeviceId, Guid SessionId);
+public sealed record Actor(Guid UserId, Guid DeviceId, Guid SessionId, bool Trusted);
 public sealed class ApiError(int status, string code) : Exception(code)
 {
     public int Status { get; } = status;
@@ -43,22 +43,24 @@ public static class Sql
     }
     public static byte[] Hash(string token) => SHA256.HashData(Encoding.UTF8.GetBytes(token));
     public static string Token() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-    public static async Task<Actor> Authenticate(HttpContext ctx, NpgsqlDataSource db)
+    public static async Task<Actor> Authenticate(HttpContext ctx, NpgsqlDataSource db, bool requireTrusted = true)
     {
         var header = ctx.Request.Headers.Authorization.ToString();
         if (!header.StartsWith("Bearer ", StringComparison.Ordinal) || header.Length > 200) throw new ApiError(401, "AUTH_REQUIRED");
         await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
         await using var cmd = Cmd(c, """
-            SELECT d.user_id,d.id,s.id FROM sessions s JOIN devices d ON d.id=s.device_id
+            SELECT d.user_id,d.id,s.id,d.trusted FROM sessions s JOIN devices d ON d.id=s.device_id
             WHERE s.access_hash=$1 AND s.expires_at>now() AND NOT s.revoked AND NOT s.used AND NOT d.revoked
             """, Hash(header[7..]));
         await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
         if (!await r.ReadAsync(ctx.RequestAborted)) throw new ApiError(401, "AUTH_REQUIRED");
-        return new Actor(r.GetGuid(0), r.GetGuid(1), r.GetGuid(2));
+        var trusted = r.GetBoolean(3);
+        if (requireTrusted && !trusted) throw new ApiError(403, "DEVICE_PENDING_TRUST");
+        return new Actor(r.GetGuid(0), r.GetGuid(1), r.GetGuid(2), trusted);
     }
     public static async Task RequireMember(NpgsqlConnection c, Guid conversation, Guid device)
     {
-        await using var cmd = Cmd(c, "SELECT 1 FROM members m JOIN devices d ON d.id=m.device_id WHERE conversation_id=$1 AND device_id=$2 AND NOT d.revoked", conversation, device);
+        await using var cmd = Cmd(c, "SELECT 1 FROM members m JOIN devices d ON d.id=m.device_id WHERE conversation_id=$1 AND device_id=$2 AND NOT d.revoked AND d.trusted", conversation, device);
         if (await cmd.ExecuteScalarAsync() is null) throw new ApiError(403, "MEMBERSHIP_REQUIRED");
     }
 }

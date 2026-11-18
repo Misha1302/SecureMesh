@@ -1,0 +1,5 @@
+UTC: 2026-11-18T19:33:04.937901+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/migrations.py']
+PASS: fresh owned PostgreSQL database; all three EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment suite; destructive downgrade deliberately refused.
+
+Exit code: 0

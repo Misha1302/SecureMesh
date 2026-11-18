@@ -103,7 +103,7 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
             await using(var cmd=Sql.Cmd(c,"INSERT INTO conversations(id,epoch) VALUES($1,$2)",input.Id,input.InitialEpoch)) await cmd.ExecuteNonQueryAsync();
             foreach(var device in input.DeviceIds)
             {
-                await using var cmd=Sql.Cmd(c,"INSERT INTO members SELECT $1,id FROM devices WHERE id=$2 AND NOT revoked",input.Id,device);
+                await using var cmd=Sql.Cmd(c,"INSERT INTO members SELECT $1,id FROM devices WHERE id=$2 AND NOT revoked AND trusted",input.Id,device);
                 if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(400,"INVALID_MEMBERS");
             }
             await tx.CommitAsync(); return Results.Created($"/v1/conversations/{input.Id}",new{id=input.Id});

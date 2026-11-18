@@ -97,9 +97,12 @@ def sync(device,token,group,limit=100):
     request('/v1/acks',dict(conversationId=group,sequence=sequence),token=token,expected=204)
 
 class Server:
+    def __init__(self,database='securemesh'):
+        assert database.replace('_','').isalnum()
+        self.database=database
     def __enter__(self):
         password=dict(line.split('=',1) for line in (ROOT/'.env').read_text().splitlines())['SECUREMESH_DB_PASSWORD']
-        self.env=dict(os.environ,ASPNETCORE_ENVIRONMENT='Development',ConnectionStrings__Database=f'Host=127.0.0.1;Port=55438;Database=securemesh;Username=securemesh;Password={password}',Kestrel__Certificates__Default__Path=str(ROOT/'.local/tls.pem'),Kestrel__Certificates__Default__KeyPath=str(ROOT/'.local/tls.key'))
+        self.env=dict(os.environ,ASPNETCORE_ENVIRONMENT='Development',ConnectionStrings__Database=f'Host=127.0.0.1;Port=55438;Database={self.database};Username=securemesh;Password={password}',Kestrel__Certificates__Default__Path=str(ROOT/'.local/tls.pem'),Kestrel__Certificates__Default__KeyPath=str(ROOT/'.local/tls.key'))
         self.log=(ROOT/'.local'/('api-'+BASE.rsplit(':',1)[-1]+'.log')).open('w')
         self.start()
         return self
@@ -123,7 +126,9 @@ def main():
         login(a['username'],'incorrect password',da,expected=401)
         assert login('u_'+uuid.uuid4().hex[:20],'incorrect password',da,expected=401)=={'code':'INVALID_CREDENTIALS'}
         replacement=Device(root)
-        login(a['username'],a['password'],replacement,expected=403)
+        pending=login(a['username'],a['password'],replacement)
+        assert pending['trustState']=='DEVICE_PENDING_TRUST'
+        request('/v1/devices',token=pending['accessToken'],expected=403)
         rotated=request('/v1/auth/refresh',dict(token=a['session']['refreshToken']))
         request('/v1/users/me',token=at,expected=401)
         request('/v1/auth/refresh',dict(token=a['session']['refreshToken']),expected=401)

@@ -3,6 +3,12 @@
 Implementation: PARTIAL / NOT_READY
 PRODUCTION_APPROVED=false
 
+## V2 continuation (2026-11-18, codex/securemesh-v2)
+
+Base: dae7259, including all V2 requirements fetched from origin/main. S0 is in progress; no stage is complete. New verified component: pending account sessions are separated from trusted delivery; expiring two-signature device enrollment is checked by server and client with pinned approver, explicit transcript confirmation, replay/race/revocation/owner/key denial tests. Fresh EF migration and restart tests pass. Evidence: reports/evidence/v2-device-enrollment.txt, v2-migrations.txt, v2-crypto-regression.txt. This is the protocol/core component, not a completed QR UI or multi-device MLS/rekey/history workflow.
+
+Latest RustSec database 472a4c9a785030434f15d7da84964d60fbe789ab: compatible package update selected zero changes; all four findings and the unmaintained warning remain. No ignores or custom crypto patches. SQLCipher must be checked independently of the libsqlite3-sys package number: the advisory also identifies affected bundled SQLCipher in newer wrappers. Evidence: reports/evidence/v2-rustsec-initial.txt. Continue independent S0 work while remediation remains blocked by upstream constraints.
+
 ## Environment and boundaries
 
 2026-11-18, Fedora 43 x86_64. Bundle SHA-256: all 24 files verified, unchanged. Empty-code intake; implementation branch codex/securemesh-build retained. Active branch main; origin is the private repository https://github.com/Misha1302/SecureMesh, created at the user's explicit request. No deployment. .NET 10.0.111 / runtime 10.0.11, Rust 1.93.1, PostgreSQL container 17 pinned by digest, Docker 29.8 / Compose 5.5.1. Flutter 3.50.0 / Dart 3.14 downloaded, SHA-256 checked, installed inside .local. GTK build toolchain isolated in project container. Android SDK 36 exists, licenses and Android bridge build unverified. No Apple builds. Workspace TMPDIR avoids host temporary-file quota failures.

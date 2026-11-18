@@ -1,6 +1,7 @@
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 // Local client process. No server keys, no plaintext fallback, no crypto primitives.
 pub mod api;
+mod enrollment;
 use ::tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -112,6 +113,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     let public = B64.decode(meta(db, "public")?)?;
     let signer = SignatureKeyPair::read(p.storage(), &public, SUITE.signature_algorithm())
         .context("missing signer")?;
+    if op.starts_with("enrollment_") {
+        return enrollment::execute(db, p, req, &identity, &signer);
+    }
     match op {
         "identity" => Ok(json!({"identity":identity,"public_key":B64.encode(public)})),
         "sign" => Ok(

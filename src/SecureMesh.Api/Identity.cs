@@ -87,8 +87,10 @@ public static class Identity
             if(existing is null)
             {
                 await using var count=Sql.Cmd(c,"SELECT count(*) FROM devices WHERE user_id=$1",user);
-                if((long)(await count.ExecuteScalarAsync())!>0) throw new ApiError(403,"NEW_DEVICE_VERIFICATION_REQUIRED");
-                await using var insert=Sql.Cmd(c,"INSERT INTO devices(id,user_id,public_key) VALUES($1,$2,$3)",input.DeviceId,user,publicKey);
+                var first = (long)(await count.ExecuteScalarAsync())! == 0;
+                await using var quota=Sql.Cmd(c,"SELECT count(*) FROM devices WHERE user_id=$1 AND NOT revoked",user);
+                if((long)(await quota.ExecuteScalarAsync())! >= 20) throw new ApiError(429,"DEVICE_LIMIT");
+                await using var insert=Sql.Cmd(c,"INSERT INTO devices(id,user_id,public_key,trusted) VALUES($1,$2,$3,$4)",input.DeviceId,user,publicKey,first);
                 await insert.ExecuteNonQueryAsync();
             }
             var result=await NewSession(c,input.DeviceId,Guid.NewGuid());
@@ -117,24 +119,27 @@ public static class Identity
         });
         app.MapPost("/v1/auth/logout",async(HttpContext ctx,NpgsqlDataSource db)=>
         {
-            var actor=await Sql.Authenticate(ctx,db); await using var c=await db.OpenConnectionAsync();
+            var actor=await Sql.Authenticate(ctx,db,false); await using var c=await db.OpenConnectionAsync();
             await using var cmd=Sql.Cmd(c,"UPDATE sessions SET revoked=true WHERE id=$1",actor.SessionId); await cmd.ExecuteNonQueryAsync(); return Results.NoContent();
         });
         app.MapGet("/v1/users/me",async(HttpContext ctx,NpgsqlDataSource db)=>
-        {var a=await Sql.Authenticate(ctx,db); return Results.Ok(new {userId=a.UserId,deviceId=a.DeviceId});});
+        {var a=await Sql.Authenticate(ctx,db,false); return Results.Ok(new {userId=a.UserId,deviceId=a.DeviceId,trustState=a.Trusted?"DEVICE_TRUSTED":"DEVICE_PENDING_TRUST"});});
         app.MapGet("/v1/devices",async(HttpContext ctx,NpgsqlDataSource db)=>
         {
             var a=await Sql.Authenticate(ctx,db); await using var c=await db.OpenConnectionAsync();
-            await using var cmd=Sql.Cmd(c,"SELECT id,public_key,revoked FROM devices WHERE user_id=$1 ORDER BY created_at",a.UserId);
+            await using var cmd=Sql.Cmd(c,"SELECT id,public_key,revoked,trusted FROM devices WHERE user_id=$1 ORDER BY created_at",a.UserId);
             await using var r=await cmd.ExecuteReaderAsync(); var devices=new List<object>();
-            while(await r.ReadAsync()) devices.Add(new {id=r.GetGuid(0),publicKey=Convert.ToBase64String((byte[])r[1]),revoked=r.GetBoolean(2)});
+            while(await r.ReadAsync()) devices.Add(new {id=r.GetGuid(0),publicKey=Convert.ToBase64String((byte[])r[1]),revoked=r.GetBoolean(2),trustState=r.GetBoolean(3)?"DEVICE_TRUSTED":"DEVICE_PENDING_TRUST"});
             return Results.Ok(devices);
         });
         app.MapDelete("/v1/devices/{id:guid}",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
         {
             var a=await Sql.Authenticate(ctx,db); await using var c=await db.OpenConnectionAsync();
+            await using var tx=await c.BeginTransactionAsync();
+            await using(var accountLock=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 FOR UPDATE",a.UserId)) await accountLock.ExecuteScalarAsync();
             await using var cmd=Sql.Cmd(c,"UPDATE devices SET revoked=true WHERE id=$1 AND user_id=$2",id,a.UserId);
-            if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(404,"DEVICE_NOT_FOUND"); return Results.NoContent();
+            if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(404,"DEVICE_NOT_FOUND");
+            await tx.CommitAsync(); return Results.NoContent();
         });
     }
     private static async Task<object> NewSession(NpgsqlConnection c,Guid device,Guid family)
@@ -142,6 +147,8 @@ public static class Identity
         var access=Sql.Token(); var refresh=Sql.Token();
         await using var cmd=Sql.Cmd(c,"INSERT INTO sessions(id,family,device_id,access_hash,refresh_hash,expires_at,refresh_expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '15 minutes',now()+interval '30 days')",Guid.NewGuid(),family,device,Sql.Hash(access),Sql.Hash(refresh));
         await cmd.ExecuteNonQueryAsync();
-        return new {accessToken=access,refreshToken=refresh,expiresIn=900,deviceId=device};
+        await using var state=Sql.Cmd(c,"SELECT trusted FROM devices WHERE id=$1",device);
+        var trusted=(bool)(await state.ExecuteScalarAsync())!;
+        return new {accessToken=access,refreshToken=refresh,expiresIn=900,deviceId=device,trustState=trusted?"DEVICE_TRUSTED":"DEVICE_PENDING_TRUST"};
     }
 }
