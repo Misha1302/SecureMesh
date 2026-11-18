@@ -57,8 +57,12 @@ class FaultProxy:
                 while True:
                     fields={k.strip().lower():v.strip().lower() for line in current.split(b'\r\n')[1:] if b':' in line for k,v in [line.split(b':',1)]}
                     websocket=fields.get(b'upgrade')==b'websocket'
+                    if websocket:self.observed.append(dict(event='upgrade',websocket=True,mode=self.mode.read_text(),downstream=False,bytes=len(current)))
                     if websocket and self.mode.read_text()=='blocked':
                         writer.write(b'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+                        await writer.drain();return
+                    if websocket and self.mode.read_text()=='badupgrade':
+                        writer.write(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: invalid\r\n\r\n')
                         await writer.drain();return
                     upstream.write(current);await upstream.drain()
                     if websocket:

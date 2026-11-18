@@ -20,6 +20,12 @@ for profile, rate, rtt, loss in [('gprs', 20, 1500, 3), ('severe', 10, 3000, 10)
         records = data['records']
         counts = Counter(r['sender'] for r in records)
         reasons = []
+        if data.get('child_exit_code') != 0:
+            reasons.append('successful native process exit not confirmed')
+        if not all(key in data for key in ('rate_kbps_each_direction','rtt_ms','packet_loss_percent','source_sha256','binary_sha256','netem-a_tc_stats','netem-b_tc_stats')):
+            failures.append(f'{profile}/{seed}: incomplete parent provenance')
+            rows.append(f'| {profile} | {seed} | FAIL (incomplete) | — | — | — | [{path.name}](evidence/{path.name}) |')
+            continue
         if (data['profile'], data['seed'], data['messages_each_direction'], data['rate_kbps_each_direction'], data['rtt_ms'], data['packet_loss_percent']) != (profile, seed, 200, rate, rtt, loss):
             reasons.append('profile/count mismatch')
         if len(records) != 400 or len({r['id'] for r in records}) != 400 or sorted(counts.values()) != [200, 200] or data['duplicates'] or data['missing_ids']:
@@ -53,6 +59,8 @@ Each trial offers 200 Unicode messages in each direction (400 distinct IDs), one
 ''' + '\n'.join(rows) + '''
 
 GPRS gate remains p95 <=15 seconds in every full trial. Severe requires eventual delivery, with a bounded 1200-second harness watchdog and no claimed latency SLA. The raw failure from the first native seed 19 (p95 18.559 seconds) is preserved in v2-native-gprs-initial-fail.txt and native-netem-gprs-initial-19-200.json. No impairment, count or threshold was reduced. The fix removes batch-wide ACK/sync waiting: bounded writes refill independently from sync, immutable ciphertext remains in SQLCipher until durable ACK, and MLS control commits remain serial barriers.
+
+A separate earlier severe trial delivered 400 IDs but failed to terminate with a CLOSE_WAIT socket. It is retained as FAIL in v2-native-severe-close-fail.txt; see [WEBSOCKET_CLOSE_FIX.md](WEBSOCKET_CLOSE_FIX.md). The SDK close reader is now left active through its close handshake/timeout. Printed measurements from a hanging child are insufficient: the parent requires successful process exit. The final gate also checks current native source hashes, equal binary sets across all six trials and actual raw ID/percentile consistency.
 
 WSS byte counters cover application framing, not TLS/network overhead or an exact 100-character envelope. Historical Python-client figures are separate in 2G_REPORT.md. These steady-link measurements do not complete the combined 60-second blackout, lost-ACK, SIGKILL, half-open, DB interruption and competing-media schedule. AT-013 and V2-08 remain partial. No universal 2G or production claim. PRODUCTION_APPROVED=false.
 '''

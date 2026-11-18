@@ -1,7 +1,7 @@
 {
   "endpoint": "https://api.osv.dev/v1/querybatch",
   "documentation": "https://google.github.io/osv.dev/post-v1-querybatch/",
-  "lock_sha256": "2e47fcc560f890ea6b0e296d5638c6892896fb2f96e81f7202f6fe10d0fa2665",
+  "lock_sha256": "b55fa342faf6011b285337e6bd7cc3af1803dccb38c98f5b038e35281ff66cbc",
   "packages": [
     {
       "package": {

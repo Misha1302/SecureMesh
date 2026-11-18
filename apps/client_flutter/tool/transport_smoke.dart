@@ -165,6 +165,14 @@ Future<void> main(List<String> args) async {
       ))['messages'].any((m) => m['id'] == bad['id']) as bool,
       'OUTBOX_LOST',
     );
+    mode.writeAsStringSync('badupgrade');
+    var invalidUpgrade = false;
+    try {
+      await transports[0].send(bad);
+    } on ApiFailure catch (error) {
+      invalidUpgrade = error.code == 'INVALID_STREAM_UPGRADE';
+    }
+    require(invalidUpgrade, 'INVALID_UPGRADE_ACCEPTED');
     mode.writeAsStringSync('pass');
     final retried = await transports[0].send(bad);
     require(

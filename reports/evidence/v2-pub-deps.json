@@ -13,6 +13,7 @@
         "protobuf",
         "fixnum",
         "path_provider",
+        "crypto",
         "flutter_test",
         "flutter_lints"
       ],
@@ -22,7 +23,8 @@
         "flutter_rust_bridge",
         "protobuf",
         "fixnum",
-        "path_provider"
+        "path_provider",
+        "crypto"
       ],
       "devDependencies": [
         "flutter_test",
@@ -35,6 +37,7 @@
         "protobuf": "6.1.0",
         "fixnum": "1.1.1",
         "path_provider": "2.1.6",
+        "crypto": "3.0.8",
         "flutter_test": "any",
         "flutter_lints": "^6.0.0"
       }
@@ -517,6 +520,15 @@
       }
     },
     {
+      "name": "crypto",
+      "version": "3.0.8",
+      "kind": "direct",
+      "source": "hosted",
+      "dependencies": [],
+      "directDependencies": [],
+      "dependencyConstraints": {}
+    },
+    {
       "name": "path_provider",
       "version": "2.1.6",
       "kind": "direct",
@@ -827,15 +839,6 @@
         "meta": "^1.19.0",
         "pub_semver": "^2.2.0"
       }
-    },
-    {
-      "name": "crypto",
-      "version": "3.0.8",
-      "kind": "transitive",
-      "source": "hosted",
-      "dependencies": [],
-      "directDependencies": [],
-      "dependencyConstraints": {}
     },
     {
       "name": "code_assets",

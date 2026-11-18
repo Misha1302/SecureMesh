@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as hashes;
 import 'package:fixnum/fixnum.dart';
 
 import 'src/wire/wire.pb.dart' as wire;
@@ -44,6 +45,7 @@ class MeshTransport {
   final HttpsRequest https;
   final Duration timeout, probeDelay;
   WebSocket? _socket;
+  Socket? _rawSocket;
   final Map<String, Completer<wire.Frame>> _pending = {};
   Future<void>? _connecting;
   DateTime _probeAfter = DateTime.fromMillisecondsSinceEpoch(0);
@@ -61,14 +63,15 @@ class MeshTransport {
 
   void _disconnect() {
     final socket = _socket;
+    final raw = _rawSocket;
     _socket = null;
-    // Let WebSocket.close own its incoming subscription through the close
-    // handshake/timeout. Cancelling first clears the SDK's raw subscription,
-    // preventing its close drain and leaking a CLOSE_WAIT socket on loss.
-    // The listener's socket-identity guard already discards abandoned data.
+    _rawSocket = null;
     if (socket != null) {
       unawaited(socket.close(WebSocketStatus.goingAway).catchError((_) {}));
     }
+    // Upgrade sockets leave HttpClient ownership. The SDK close handshake can
+    // retain CLOSE_WAIT descriptors after loss; explicitly release both halves.
+    raw?.destroy();
     final pending = _pending.values.toList();
     _pending.clear();
     for (final request in pending) {
@@ -168,29 +171,93 @@ class MeshTransport {
   }
 
   Future<void> _openConnection() async {
-    final uri = endpoint.resolve('/v1/stream').replace(scheme: 'wss');
+    final uri = endpoint.resolve('/v1/stream');
     var abandoned = false;
-    final connecting =
-        WebSocket.connect(
-          uri.toString(),
-          headers: {HttpHeaders.authorizationHeader: 'Bearer ${token()}'},
-          customClient: http,
-          compression: CompressionOptions.compressionOff,
-        ).then((socket) {
-          if (abandoned || _closed) unawaited(socket.close());
-          return socket;
-        });
-    final socket = await connecting.timeout(
-      timeout,
-      onTimeout: () {
-        abandoned = true;
-        throw TimeoutException('STREAM_CONNECT_TIMEOUT');
-      },
-    );
+    HttpClientRequest? upgrade;
+    Socket? raw;
+    Future<WebSocket> connect() async {
+      final request = upgrade = await http.getUrl(uri);
+      if (abandoned || _closed) {
+        request.abort();
+        throw const SocketException('TRANSPORT_CLOSED');
+      }
+      final random = Random.secure();
+      final key = base64Encode(List.generate(16, (_) => random.nextInt(256)));
+      request.followRedirects = false;
+      request.headers
+        ..set(HttpHeaders.authorizationHeader, 'Bearer ${token()}')
+        ..set(HttpHeaders.connectionHeader, 'Upgrade')
+        ..set(HttpHeaders.upgradeHeader, 'websocket')
+        ..set('Sec-WebSocket-Version', '13')
+        ..set('Sec-WebSocket-Key', key);
+      final response = await request.close();
+      if (abandoned || _closed) {
+        request.abort();
+        throw const SocketException('TRANSPORT_CLOSED');
+      }
+      if (response.statusCode != HttpStatus.switchingProtocols) {
+        if (response.statusCode == 401) {
+          throw ApiFailure(401, 'STREAM_UNAUTHORIZED');
+        }
+        throw const WebSocketException('STREAM_UPGRADE_REJECTED');
+      }
+      // RFC 6455 accept challenge. Hashing is the vetted crypto package, not
+      // an E2EE primitive or an authentication substitute; TLS stays verified.
+      final accept = base64Encode(
+        hashes.sha1
+            .convert(utf8.encode('${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11'))
+            .bytes,
+      );
+      final connection =
+          response.headers[HttpHeaders.connectionHeader]
+              ?.join(',')
+              .toLowerCase()
+              .split(',')
+              .map((v) => v.trim()) ??
+          const <String>[];
+      if (response.headers.value(HttpHeaders.upgradeHeader)?.toLowerCase() !=
+              'websocket' ||
+          !connection.contains('upgrade') ||
+          response.headers.value('Sec-WebSocket-Accept') != accept ||
+          response.headers.value('Sec-WebSocket-Extensions') != null ||
+          response.headers.value('Sec-WebSocket-Protocol') != null) {
+        throw ApiFailure(502, 'INVALID_STREAM_UPGRADE');
+      }
+      raw = await response.detachSocket();
+      if (abandoned || _closed) {
+        raw!.destroy();
+        throw const SocketException('TRANSPORT_CLOSED');
+      }
+      return WebSocket.fromUpgradedSocket(
+        raw!,
+        serverSide: false,
+        compression: CompressionOptions.compressionOff,
+      );
+    }
+
+    late WebSocket socket;
+    try {
+      socket = await connect().timeout(
+        timeout,
+        onTimeout: () {
+          abandoned = true;
+          upgrade?.abort();
+          raw?.destroy();
+          throw TimeoutException('STREAM_CONNECT_TIMEOUT');
+        },
+      );
+    } catch (_) {
+      abandoned = true;
+      upgrade?.abort();
+      raw?.destroy();
+      rethrow;
+    }
     if (_closed) {
+      raw?.destroy();
       unawaited(socket.close());
       throw const SocketException('TRANSPORT_CLOSED');
     }
+    _rawSocket = raw;
     _socket = socket;
     socket.listen(
       (data) {
