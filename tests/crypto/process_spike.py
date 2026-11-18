@@ -6,6 +6,7 @@ import secrets
 import subprocess
 import tempfile
 import uuid
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +30,30 @@ class Device:
 
     def pin(self, other):
         self.call('pin', identity=other.identity, public_key=other.public, confirmed=True)
+
+class PersistentDevice(Device):
+    @classmethod
+    def wrap(cls,device):
+        self=cls.__new__(cls)
+        self.__dict__.update(device.__dict__)
+        self.lock=threading.Lock()
+        self.process=subprocess.Popen([str(BIN),'--serve',str(self.path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        self.process.stdin.write(json.dumps(dict(passphrase=self.password))+'\n'); self.process.stdin.flush()
+        assert json.loads(self.process.stdout.readline())['unlocked']
+        return self
+
+    def call(self,op,reject=False,**args):
+        with self.lock:
+            self.process.stdin.write(json.dumps(dict(op=op,**args))+'\n'); self.process.stdin.flush()
+            raw=self.process.stdout.readline()
+            assert raw,'client process stopped'
+            result=json.loads(raw)
+            if reject: assert 'error' in result; return None
+            assert 'error' not in result,f'{op} rejected'
+            return result
+
+    def close(self):
+        self.process.stdin.close(); self.process.wait(timeout=10)
 
 def main():
     with tempfile.TemporaryDirectory(prefix='securemesh-crypto-', dir=ROOT/'.local') as tmp:

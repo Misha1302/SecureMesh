@@ -90,7 +90,7 @@ def sync(device,token,group,limit=100):
         path='/v1/sync?'+urllib.parse.urlencode(dict(conversationId=group,cursor=cursor,limit=limit))
         page=request(path,token=token)
         for index,m in enumerate(page['messages']):
-            device.call('ingest',group=group,id=m['clientMessageId'],sender=m['senderDeviceId'],seq=m['serverSequence'],epoch=m['mlsEpoch'],kind=m['envelopeKind'],ciphertext=m['ciphertext'],cursor=page['nextCursor'] if index==len(page['messages'])-1 else '')
+            device.call('ingest',group=group,id=m['clientMessageId'],sender=m['senderDeviceId'],seq=m['serverSequence'],epoch=m['mlsEpoch'],kind=m['envelopeKind'],ciphertext=m['ciphertext'],digest=m['ciphertextSha256'],cursor=page['nextCursor'] if index==len(page['messages'])-1 else '')
         cursor=page['nextCursor']
         if not page['hasMore']: break
     sequence=device.call('cursor',group=group)['seq']
@@ -104,7 +104,7 @@ class Server:
         self.start()
         return self
     def start(self):
-        self.p=subprocess.Popen(['dotnet','src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll','--urls',BASE],cwd=ROOT,env=self.env,stdout=self.log,stderr=self.log)
+        self.p=subprocess.Popen(['dotnet','src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll','--urls',os.environ.get('SECUREMESH_TEST_URLS',BASE)],cwd=ROOT,env=self.env,stdout=self.log,stderr=self.log)
         for _ in range(150):
             if self.p.poll() is not None: raise RuntimeError('API died; inspect .local/api-delivery.log')
             try: request('/health/ready'); break

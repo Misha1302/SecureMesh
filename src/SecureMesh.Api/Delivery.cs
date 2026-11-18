@@ -8,7 +8,7 @@ namespace SecureMesh;
 public sealed record ConversationRequest(Guid Id, Guid[] DeviceIds, long InitialEpoch = 0);
 public sealed record SendRequest(Guid ConversationId, Guid ClientMessageId, long MlsEpoch, int EnvelopeKind, byte[] Ciphertext);
 public sealed record Saved(Guid ServerMessageId, long ServerSequence, bool AlreadyCommitted, bool Durable = true);
-public sealed record Message(Guid ConversationId, Guid ClientMessageId, Guid SenderDeviceId, long MlsEpoch, int EnvelopeKind, byte[] Ciphertext, long ServerSequence, Guid ServerMessageId);
+public sealed record Message(Guid ConversationId, Guid ClientMessageId, Guid SenderDeviceId, long MlsEpoch, int EnvelopeKind, byte[] Ciphertext, long ServerSequence, Guid ServerMessageId, byte[] CiphertextSha256);
 public sealed record Page(Guid ConversationId, List<Message> Messages, string NextCursor, bool HasMore);
 public sealed record ProcessedAckRequest(Guid ConversationId, long Sequence);
 
@@ -69,14 +69,15 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         }
         await using var c=await db.OpenConnectionAsync(ct);
         await Sql.RequireMember(c,conversation,actor.DeviceId);
-        await using var cmd=Sql.Cmd(c,"SELECT client_id,device_id,epoch,kind,ciphertext,seq,id FROM messages WHERE conversation_id=$1 AND seq>$2 ORDER BY seq LIMIT $3",conversation,after,limit+1);
+        await using var cmd=Sql.Cmd(c,"SELECT client_id,device_id,epoch,kind,ciphertext,seq,id,digest FROM messages WHERE conversation_id=$1 AND seq>$2 ORDER BY seq LIMIT $3",conversation,after,limit+1);
         await using var r=await cmd.ExecuteReaderAsync(ct);
         var messages=new List<Message>(); var total=0; bool more=false;
         while(await r.ReadAsync(ct))
         {
-            var ciphertext=(byte[])r[4];
+            // Sender already persisted its ciphertext. Its own echo needs only a verified digest.
+            var ciphertext=r.GetGuid(1)==actor.DeviceId ? [] : (byte[])r[4];
             if(messages.Count==limit || total+ciphertext.Length>65536) {more=true;break;}
-            messages.Add(new Message(conversation,r.GetGuid(0),r.GetGuid(1),r.GetInt64(2),r.GetInt32(3),ciphertext,r.GetInt64(5),r.GetGuid(6)));
+            messages.Add(new Message(conversation,r.GetGuid(0),r.GetGuid(1),r.GetInt64(2),r.GetInt32(3),ciphertext,r.GetInt64(5),r.GetGuid(6),(byte[])r[7]));
             total+=ciphertext.Length;
         }
         var last=messages.Count==0?after:messages[^1].ServerSequence;

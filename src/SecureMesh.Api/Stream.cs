@@ -70,7 +70,7 @@ public static class StreamTransport
                                     var page=await delivery.Sync(actor,Id(q.ConversationId),q.OpaqueCursor.ToStringUtf8(),q.Limit==0?100:checked((int)q.Limit),timeout.Token);
                                     response.Kind=FrameKind.SyncResponse;
                                     response.SyncResponse=new SyncResponse {ConversationId=q.ConversationId,NextCursor=ByteString.CopyFromUtf8(page.NextCursor),HasMore=page.HasMore};
-                                    foreach(var m in page.Messages) response.SyncResponse.Messages.Add(new EncryptedEnvelope {ConversationId=Bytes(m.ConversationId),ClientMessageId=Bytes(m.ClientMessageId),SenderDeviceId=Bytes(m.SenderDeviceId),MlsEpoch=(ulong)m.MlsEpoch,EnvelopeKind=(EnvelopeKind)m.EnvelopeKind,OpaqueCiphertext=ByteString.CopyFrom(m.Ciphertext),ServerSequence=(ulong)m.ServerSequence,ServerMessageId=Bytes(m.ServerMessageId)});
+                                    foreach(var m in page.Messages) response.SyncResponse.Messages.Add(new EncryptedEnvelope {ConversationId=Bytes(m.ConversationId),ClientMessageId=Bytes(m.ClientMessageId),SenderDeviceId=Bytes(m.SenderDeviceId),MlsEpoch=(ulong)m.MlsEpoch,EnvelopeKind=(EnvelopeKind)m.EnvelopeKind,OpaqueCiphertext=ByteString.CopyFrom(m.Ciphertext),CiphertextSha256=ByteString.CopyFrom(m.CiphertextSha256),ServerSequence=(ulong)m.ServerSequence,ServerMessageId=Bytes(m.ServerMessageId)});
                                     break;
                                 case FrameKind.ProcessedAck when request.ProcessedAck is not null:
                                     var a=request.ProcessedAck;
