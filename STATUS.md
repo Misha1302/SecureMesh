@@ -1,23 +1,29 @@
-# SecureMesh status
+# SecureMesh — implementation checkpoint
 
 Implementation: PARTIAL / NOT_READY
 PRODUCTION_APPROVED=false
 
-## Observed environment
+## Environment and boundaries
 
-2026-11-18, Fedora 43 x86_64. Source bundle integrity: exit 0, 24 SHA-256 files verified. No existing app/git history at intake. Created branch `codex/securemesh-build`.
-.NET SDK 10.0.111 / runtime 10.0.11, Rust 1.93.1, PostgreSQL 18.6, Docker 29.8.0 / Compose 5.5.1 are available. Flutter/Dart absent from PATH; GTK3 development pkg-config unavailable. Only x86_64 Rust target installed. Apple builds cannot be verified here.
+2026-11-18, Fedora 43 x86_64. Bundle SHA-256: all 24 files verified, unchanged. Empty-code intake; local branch codex/securemesh-build, no remote/deployment. .NET 10.0.111 / runtime 10.0.11, Rust 1.93.1, PostgreSQL container 17 pinned by digest, Docker 29.8 / Compose 5.5.1. Flutter 3.50.0 / Dart 3.14 downloaded, SHA-256 checked, installed inside .local. GTK build toolchain isolated in project container. Android SDK 36 exists, licenses and Android bridge build unverified. No Apple builds. Workspace TMPDIR avoids host temporary-file quota failures.
 
-## Current work
+## Verified components (not complete milestones)
 
-M0 PARTIAL: .NET API builds, real PostgreSQL health and EF migration restart/idempotence passed (`reports/evidence/m0-smoke.txt`). Compose default-pool exhaustion resolved with project-only /28. Full clean bootstrap and auxiliary services still under test.
+- M0 PARTIAL: API builds; real PostgreSQL readiness and EF migration restart/idempotence pass. Own Compose subnet resolves exhausted default pools; no foreign networks/volumes changed. Full clean bootstrap/auxiliary stack not complete.
+- M1 PARTIAL: OpenMLS 0.9.2 + transactional SQLCipher: independent keys, Welcome, Unicode, third-member add/remove/rekey, replay/key substitution denial, encrypted-store wrong-key failure, crash rollback and immutable outbox. Dart/FRB 2.13.0 native two-store crypto call passes. No Android/WASM private-chat verification.
+- M2/M3 PARTIAL: Mailpit email, Argon2id, device proof, refresh reuse revocation, TLS WSS/HTTPS texts, lost ACK/concurrent idempotent retries, conflicts, receiver crash recovery, scoped cursor pagination, API restart, active-stream revoke. DB stop before COMMIT returns 503; pg_dump/restore into isolated DB succeeds. Concurrent epoch test stages two commits, accepts one, merges after ACK, rejects/rebases loser, resumes encrypted text. KeyPackage/Welcome routing, enrollment/recovery and native WSS-first manager remain missing.
+- GPRS baseline: seeds 7/19/41, 200 messages each direction each seed; all 1200 IDs delivered exactly once, p95 4.351/4.375/4.754 seconds. Severe same count/seeds: all 1200 IDs delivered exactly once; p95 30.325/58.895/64.428 seconds, no time gate. Raw IDs/times/tc counters/binary hashes retained. Original GPRS failure p95 25.721 preserved; fixed SQLCipher reopening cost, sender echo and sync pacing. Combined blackout/crash/half-open/media schedules remain incomplete.
+- Native Flutter Linux debug binary built and launched in Xvfb. Two actual GUI sessions exchanged encrypted text, compared keys, queued offline, survived SIGKILL, reopened and saved queued text. RU/EN, light/dark, compact layout, encrypted cached history. Registration UI is not connected; make seed-demo creates real local accounts/profiles. UI review found draft lock/reentrant send/error-state issues; fixes implemented, final recapture in progress. Browser builds with private chat explicitly disabled.
+- Layout tests at 320 dp / 1.3 text scale pass. Full screen-reader/mobile/accessibility validation not done.
 
-M1 PARTIAL: real OpenMLS 0.9.2 CLI + SQLCipher process spike passed (`reports/evidence/m1-crypto.txt`): independent keys, Welcome, encrypted Unicode, membership/rekey, replay/key substitution, process crash rollback. Flutter bridge and platform gates pending. No 2G claim.
+## Security release blockers
 
-M2/M3 PARTIAL: live TLS integration passed (`reports/evidence/m2-m3-delivery.txt`): local Mailpit verification, Argon2id login, device key possession, refresh reuse revocation, real OpenMLS texts via WSS + HTTPS, lost ACK and concurrent idempotent retries, conflict rejection, receiver abort recovery, signed scoped cursor pagination and persisted state, API restart, active-stream device revocation, negative membership/IDOR and log checks. Standalone CLI is not a finished user-facing app. KeyPackage directory/Welcome routing, automated connection manager and concurrent MLS conflict recovery remain missing.
+RustSec executed, exit 1: four advisories in Cargo.lock (crypto-bigint, libcrux-kem twice, libsqlite3-sys), plus unmaintained proc-macro-error2. No advisory ignored. Compatibility probes in progress. NuGet vulnerability query exits 0. OSV unreachable; RustSec fallback succeeded as an executed scan, not clearance. Cargo license metadata/SBOM recorded; allo-isolate license field missing. Independent audit absent. Do not use this alpha with real private data.
 
-WASM probe failed with getrandom target features; full native SQLCipher provider also needs a distinct web architecture. Evidence `reports/evidence/wasm-probe.txt`; no web E2EE claim. Flutter 3.50.0 SDK archive is being downloaded inside `.local` after checking official release metadata; Flutter and platform gates have not run yet.
+## Missing scope
+
+M4–M6 social/groups UI/media/calls/admin largely absent. Device directory and real Welcome delivery, multi-device enrollment, password reset, native connection manager, combined 2G faults, storage/resource checks and dependency remediation precede expansion. M7/M8 remain partial validation/handoff. No local delivery candidate and no production approval.
 
 ## Next
 
-Build real .NET API/PostgreSQL vertical slice and OpenMLS client processes. Record commands and test outcomes under `reports/evidence/`. Follow PLAN.md.
+Finish current verification/recapture, dependency compatibility probes and reports/ACCEPTANCE_MATRIX.csv. Run make bootstrap, make smoke, make verify (must remain red for security/unfinished gates). Resume from PLAN.md; do not recreate completed modules. Actual checkout HEAD: git rev-parse HEAD.

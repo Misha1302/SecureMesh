@@ -1,0 +1,5 @@
+UTC: 2026-11-18T02:36:25.106715+00:00
+Command: ['bash', '-c', 'cd apps/client_flutter && FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE=/home/micodiy/SecureMesh/.local/pub-cache /home/micodiy/SecureMesh/.local/flutter/bin/dart run tool/bridge_smoke.dart']
+PASS: Dart flutter_rust_bridge 2.13.0 calls native OpenMLS/SQLCipher; two stores, Welcome, Unicode decrypt, replay deny. This is a Linux Dart FFI check, not an Android or Flutter UI run.
+
+Exit code: 0

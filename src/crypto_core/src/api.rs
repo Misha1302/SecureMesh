@@ -12,7 +12,9 @@ pub struct NativeClient {
 impl NativeClient {
     pub fn open(path: String, passphrase: String) -> Result<NativeClient, String> {
         crate::open_store(&path, &passphrase)
-            .map(|db| NativeClient { db: std::sync::Mutex::new(db) })
+            .map(|db| NativeClient {
+                db: std::sync::Mutex::new(db),
+            })
             .map_err(|_| "STORE_UNLOCK_FAILED".to_owned())
     }
 
@@ -20,9 +22,12 @@ impl NativeClient {
         let action = || -> anyhow::Result<String> {
             anyhow::ensure!(request.len() <= 262144, "input too large");
             let req = serde_json::from_str(&request)?;
-            let db = self.db.lock().map_err(|_|anyhow::anyhow!("store unavailable"))?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|_| anyhow::anyhow!("store unavailable"))?;
             crate::transact(&db, &req)
         };
-        action().map_err(|_|"CRYPTO_OR_STORE_REJECTED".to_owned())
+        action().map_err(|_| "CRYPTO_OR_STORE_REJECTED".to_owned())
     }
 }

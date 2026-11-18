@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Measured TLS/OpenMLS traffic over actual Linux netem in project-only containers."""
 import argparse
+import hashlib
 import asyncio
 import base64
 import json
@@ -161,9 +162,12 @@ def main():
                 group=str(uuid.uuid4()); da.call('create',group=group)
                 welcome=da.call('add',group=group,keypackage=db.call('keypackage')['keypackage']); db.call('join',group=group,welcome=welcome['welcome'])
                 request('/v1/conversations',dict(id=group,deviceIds=[da.identity,db.identity],initialEpoch=welcome['epoch']),token=a['session']['accessToken'],expected=201)
+                source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+                binaries={str(path.relative_to(ROOT)):hashlib.file_digest(path.open('rb'),'sha256').hexdigest() for path in [ROOT/'src/crypto_core/target/debug/securemesh-crypto',ROOT/'src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll']}
                 try: result=asyncio.run(trial(a,b,group,args.profile,seed,args.count))
                 finally: da.close(); db.close()
-                result['code_head']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+                result['code_head_at_start']=source_head
+                result['binary_sha256']=binaries
                 path=output/f'netem-v2-{args.profile}-{seed}-{args.count}.json'; path.write_text(json.dumps(result,indent=2)+'\n')
                 print(json.dumps({k:v for k,v in result.items() if k not in ('records','setup') and not k.endswith('_tc_stats')}),flush=True)
                 if args.profile=='gprs': assert result['delivery_p95']<=15,'GPRS p95 objective failed; raw evidence preserved'

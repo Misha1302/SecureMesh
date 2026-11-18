@@ -213,6 +213,68 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 json!({"commit":B64.encode(commit.tls_serialize_detached()?),"epoch":g.epoch().as_u64()}),
             )
         }
+        "stage_rekey" => {
+            let gid = s(req, "group")?;
+            let id = s(req, "id")?;
+            uuid::Uuid::parse_str(id)?;
+            let old: Option<String> = db
+                .query_row(
+                    "SELECT envelope FROM outgoing WHERE group_id=? AND id=?",
+                    params![gid, id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(old) = old {
+                return Ok(serde_json::from_str(&old)?);
+            }
+            let mut group = load_group(p, gid)?;
+            check_group(db, &group)?;
+            let epoch = group.epoch().as_u64();
+            let update = group.self_update(p, &signer, LeafNodeParameters::default())?;
+            let envelope = json!({"group":gid,"id":id,"epoch":epoch,"kind":3,"ciphertext":B64.encode(update.commit().tls_serialize_detached()?)});
+            db.execute(
+                "INSERT INTO outgoing(group_id,id,envelope,status) VALUES(?,?,?,'queued')",
+                params![gid, id, serde_json::to_string(&envelope)?],
+            )?;
+            set_meta(db, &format!("pending:{gid}"), id)?;
+            Ok(envelope)
+        }
+        "commit_saved" | "commit_rejected" => {
+            let gid = s(req, "group")?;
+            let id = s(req, "id")?;
+            let status: String = db.query_row(
+                "SELECT status FROM outgoing WHERE group_id=? AND id=?",
+                params![gid, id],
+                |r| r.get(0),
+            )?;
+            if status == "saved" && op == "commit_saved" {
+                return Ok(json!({"already_saved":true}));
+            }
+            ensure!(
+                meta(db, &format!("pending:{gid}"))? == id,
+                "pending commit mismatch"
+            );
+            let mut group = load_group(p, gid)?;
+            if op == "commit_saved" {
+                group.merge_pending_commit(p)?;
+                db.execute(
+                    "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
+                    params![req["seq"].as_i64().context("sequence")?, gid, id],
+                )?;
+            } else {
+                ensure!(
+                    req["epoch_conflict_confirmed"].as_bool() == Some(true),
+                    "explicit conflict required"
+                );
+                group.clear_pending_commit(p.storage())?;
+                db.execute(
+                    "UPDATE outgoing SET status='rejected' WHERE group_id=? AND id=?",
+                    params![gid, id],
+                )?;
+            }
+            set_meta(db, &format!("pending:{gid}"), "")?;
+            Ok(json!({"epoch":group.epoch().as_u64()}))
+        }
         "queue" => {
             let gid = s(req, "group")?;
             let id = s(req, "id")?;
@@ -238,6 +300,10 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             db.execute(
                 "INSERT INTO outgoing(group_id,id,envelope,status) VALUES(?,?,?,'queued')",
                 params![gid, id, serde_json::to_string(&result)?],
+            )?;
+            db.execute(
+                "INSERT INTO authored VALUES(?,?,?)",
+                params![gid, id, serde_json::to_string(&payload)?],
             )?;
             Ok(result)
         }
@@ -284,7 +350,20 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 )
                 .optional()?;
             let last = last.unwrap_or(0);
-            let envelope = json!({"ciphertext":s(req,"ciphertext")?,"digest":req["digest"],"sender":s(req,"sender")?,"id":s(req,"id")?,"epoch":req["epoch"],"kind":req["kind"]});
+            let raw = bytes(req, "ciphertext")?;
+            let digest = if raw.is_empty() {
+                bytes(req, "digest")?
+            } else {
+                Sha256::digest(&raw).to_vec()
+            };
+            ensure!(digest.len() == 32, "invalid digest");
+            if req["digest"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+            {
+                ensure!(bytes(req, "digest")? == digest, "digest mismatch");
+            }
+            let envelope = json!({"digest":B64.encode(&digest),"sender":s(req,"sender")?,"id":s(req,"id")?,"epoch":req["epoch"],"kind":req["kind"]});
             let canonical = serde_json::to_string(&envelope)?;
             if seq <= last {
                 let old: String = db.query_row(
@@ -292,19 +371,34 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                     params![gid, seq],
                     |r| r.get(0),
                 )?;
-                ensure!(old == canonical, "sequence payload changed");
+                let mut old: Value = serde_json::from_str(&old)?;
+                // Normalize records from the initial local storage format without consuming MLS again.
+                if let Some(ciphertext) = old["ciphertext"].as_str() {
+                    let previous = if ciphertext.is_empty() {
+                        bytes(&old, "digest")?
+                    } else {
+                        Sha256::digest(B64.decode(ciphertext)?).to_vec()
+                    };
+                    old["digest"] = json!(B64.encode(previous));
+                    old.as_object_mut()
+                        .context("envelope")?
+                        .remove("ciphertext");
+                }
+                ensure!(old == envelope, "sequence payload changed");
+                if let Some(cursor) = req["cursor"].as_str().filter(|value| !value.is_empty()) {
+                    db.execute(
+                        "UPDATE local_cursors SET cursor=? WHERE group_id=?",
+                        params![cursor, gid],
+                    )?;
+                }
                 return Ok(json!({"duplicate":true,"seq":last}));
             }
             ensure!(seq == last + 1, "SYNC_GAP");
             ensure!(
-                req["kind"].as_i64() == Some(1),
-                "application ingest only; membership workflow required"
+                matches!(req["kind"].as_i64(), Some(1 | 3)),
+                "unsupported ingest kind"
             );
             let group = load_group(p, gid)?;
-            ensure!(
-                req["epoch"].as_u64() == Some(group.epoch().as_u64()),
-                "epoch mismatch"
-            );
             let result = if s(req, "sender")? == identity {
                 let own: String = db.query_row(
                     "SELECT envelope FROM outgoing WHERE group_id=? AND id=?",
@@ -312,10 +406,28 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                     |r| r.get(0),
                 )?;
                 let own: Value = serde_json::from_str(&own)?;
-                if s(req,"ciphertext")?.is_empty() {
-                    ensure!(Sha256::digest(bytes(&own,"ciphertext")?).as_slice()==bytes(req,"digest")?,"own digest mismatch");
+                ensure!(
+                    own["epoch"] == req["epoch"] && own["kind"] == req["kind"],
+                    "own envelope metadata mismatch"
+                );
+                if s(req, "ciphertext")?.is_empty() {
+                    ensure!(
+                        Sha256::digest(bytes(&own, "ciphertext")?).as_slice()
+                            == bytes(req, "digest")?,
+                        "own digest mismatch"
+                    );
                 } else {
-                    ensure!(s(&own,"ciphertext")?==s(req,"ciphertext")?,"own ciphertext mismatch");
+                    ensure!(
+                        s(&own, "ciphertext")? == s(req, "ciphertext")?,
+                        "own ciphertext mismatch"
+                    );
+                }
+                if req["kind"].as_i64() == Some(3)
+                    && meta(db, &format!("pending:{gid}"))? == s(req, "id")?
+                {
+                    let mut group = group;
+                    group.merge_pending_commit(p)?;
+                    set_meta(db, &format!("pending:{gid}"), "")?;
                 }
                 db.execute(
                     "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
@@ -323,10 +435,16 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 )?;
                 json!({"own":true})
             } else {
+                ensure!(
+                    req["epoch"].as_u64() == Some(group.epoch().as_u64()),
+                    "epoch mismatch"
+                );
                 let mut process = req.clone();
                 process["op"] = json!("process");
                 let event = execute(db, p, &process)?;
-                ensure!(s(&event, "id")? == s(req, "id")?, "message id mismatch");
+                if req["kind"].as_i64() == Some(1) {
+                    ensure!(s(&event, "id")? == s(req, "id")?, "message id mismatch");
+                }
                 event
             };
             db.execute(
@@ -377,6 +495,49 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 .collect::<Result<Vec<_>>>()?;
             Ok(json!({"events":values}))
         }
+        "profile_put" => {
+            set_meta(
+                db,
+                "local_profile",
+                &serde_json::to_string(&req["profile"])?,
+            )?;
+            Ok(json!({"saved":true}))
+        }
+        "profile" => Ok(serde_json::from_str(&meta(db, "local_profile")?)?),
+        "timeline" => {
+            let gid = s(req, "group")?;
+            let mut entries = Vec::new();
+            let mut q=db.prepare("SELECT a.event,o.status,o.seq FROM authored a JOIN outgoing o ON o.group_id=a.group_id AND o.id=a.id WHERE a.group_id=? ORDER BY a.rowid DESC LIMIT 1000")?;
+            let rows = q.query_map([gid], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (event, status, seq) = row?;
+                let mut event: Value = serde_json::from_str(&event)?;
+                event["status"] = json!(status);
+                event["seq"] = json!(seq);
+                event["own"] = json!(true);
+                entries.push(event);
+            }
+            let mut q=db.prepare("SELECT i.event,r.seq FROM incoming i LEFT JOIN received r ON r.group_id=i.group_id AND json_extract(r.envelope,'$.id')=i.id WHERE i.group_id=? ORDER BY i.rowid DESC LIMIT 1000")?;
+            let rows = q.query_map([gid], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+            })?;
+            for row in rows {
+                let (event, seq) = row?;
+                let mut event: Value = serde_json::from_str(&event)?;
+                event["status"] = json!("received");
+                event["seq"] = json!(seq);
+                event["own"] = json!(false);
+                entries.push(event);
+            }
+            entries.sort_by_key(|event| event["seq"].as_i64().unwrap_or(i64::MAX));
+            Ok(json!({"messages":entries}))
+        }
         _ => bail!("unknown operation"),
     }
 }
@@ -406,6 +567,7 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS incoming(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));
       CREATE TABLE IF NOT EXISTS received(group_id TEXT,seq INTEGER,envelope TEXT NOT NULL,PRIMARY KEY(group_id,seq));
       CREATE TABLE IF NOT EXISTS local_cursors(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL,cursor TEXT NOT NULL);")?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
     Ok(db)
 }
 
@@ -417,7 +579,10 @@ pub(crate) fn transact(db: &Connection, req: &Value) -> Result<String> {
     };
     let result = match execute(db, &p, req) {
         Ok(value) => value,
-        Err(error) => { db.execute_batch("ROLLBACK")?; return Err(error); }
+        Err(error) => {
+            db.execute_batch("ROLLBACK")?;
+            return Err(error);
+        }
     };
     if req["crash_before_commit"].as_bool() == Some(true) {
         std::process::abort();

@@ -100,7 +100,7 @@ class Server:
     def __enter__(self):
         password=dict(line.split('=',1) for line in (ROOT/'.env').read_text().splitlines())['SECUREMESH_DB_PASSWORD']
         self.env=dict(os.environ,ASPNETCORE_ENVIRONMENT='Development',ConnectionStrings__Database=f'Host=127.0.0.1;Port=55438;Database=securemesh;Username=securemesh;Password={password}',Kestrel__Certificates__Default__Path=str(ROOT/'.local/tls.pem'),Kestrel__Certificates__Default__KeyPath=str(ROOT/'.local/tls.key'))
-        self.log=(ROOT/'.local/api-delivery.log').open('w')
+        self.log=(ROOT/'.local'/('api-'+BASE.rsplit(':',1)[-1]+'.log')).open('w')
         self.start()
         return self
     def start(self):
@@ -121,6 +121,7 @@ def main():
         da,db=a['device'],b['device']; at=a['session']['accessToken']; bt=b['session']['accessToken']; ot=outsider['session']['accessToken']
         da.pin(db); db.pin(da)
         login(a['username'],'incorrect password',da,expected=401)
+        assert login('u_'+uuid.uuid4().hex[:20],'incorrect password',da,expected=401)=={'code':'INVALID_CREDENTIALS'}
         replacement=Device(root)
         login(a['username'],a['password'],replacement,expected=403)
         rotated=request('/v1/auth/refresh',dict(token=a['session']['refreshToken']))
@@ -165,6 +166,12 @@ def main():
         sync(da,at,group,limit=1); sync(db,bt,group,limit=1)
         assert da.call('cursor',group=group)['seq']==db.call('cursor',group=group)['seq']==2
         assert len(da.call('history',group=group)['events'])==len(db.call('history',group=group)['events'])==1
+        replay=request('/v1/sync?'+urllib.parse.urlencode(dict(conversationId=group,limit=1)),token=bt)
+        old=replay['messages'][0]
+        db.call('ingest',group=group,id=old['clientMessageId'],sender=old['senderDeviceId'],seq=old['serverSequence'],epoch=old['mlsEpoch'],kind=old['envelopeKind'],ciphertext=old['ciphertext'],digest=old['ciphertextSha256'],cursor=replay['nextCursor'])
+        assert db.call('cursor',group=group)['seq']==2
+        sync(db,bt,group,limit=1)
+        assert len(db.call('history',group=group)['events'])==1
         # Concurrent identical writes serialize to the same durable record, including its outbox event.
         third=da.call('queue',group=group,id=str(uuid.uuid4()),text='concurrent retries')
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
@@ -177,7 +184,7 @@ def main():
         result=stream.exchange(wire.Frame(protocol_version=1,kind=wire.PING))
         assert result.kind==wire.SERVER_ERROR and result.server_error.code==401
         stream.close()
-        logs=(ROOT/'.local/api-delivery.log').read_text()
+        logs=(ROOT/'.local'/('api-'+BASE.rsplit(':',1)[-1]+'.log')).read_text()
         for secret in [a['password'],at,bt,first['ciphertext'],'Только устройства читают это']:
             assert secret not in logs
         sql="SELECT count(*),count(DISTINCT seq),(SELECT count(*) FROM outbox o JOIN messages m ON m.id=o.message_id WHERE m.conversation_id='"+group+"') FROM messages WHERE conversation_id='"+group+"'"

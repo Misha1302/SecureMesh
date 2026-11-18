@@ -17,7 +17,8 @@ var connection = builder.Configuration.GetConnectionString("Database")
     ?? throw new InvalidOperationException("ConnectionStrings__Database required");
 builder.Services.AddDbContext<MeshDb>(o => o.UseNpgsql(connection));
 builder.Services.AddSingleton(NpgsqlDataSource.Create(connection));
-builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(Directory.GetCurrentDirectory(),".local","cursor-keys")));
+var stateDirectory=builder.Configuration["StateDirectory"] ?? Path.Combine(Directory.GetCurrentDirectory(),".local");
+builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(stateDirectory,"cursor-keys")));
 builder.Services.AddSingleton<Delivery>();
 builder.Services.AddRateLimiter(o =>
 {

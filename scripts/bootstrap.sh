@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 umask 077
 mkdir -p .local reports/evidence
 chmod 700 .local
+mkdir -p .local/tmp
+export TMPDIR="$PWD/.local/tmp"
 if [[ ! -f .env ]]; then
   python3 - <<'PY'
 import secrets

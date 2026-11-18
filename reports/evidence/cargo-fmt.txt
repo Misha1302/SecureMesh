@@ -1,0 +1,214 @@
+UTC: 2026-11-18T02:43:34.715537+00:00
+Command: ['cargo', 'fmt', '--manifest-path', 'src/crypto_core/Cargo.toml', '--', '--check']
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/api.rs:12:
+ impl NativeClient {
+     pub fn open(path: String, passphrase: String) -> Result<NativeClient, String> {
+         crate::open_store(&path, &passphrase)
+[31m-            .map(|db| NativeClient { db: std::sync::Mutex::new(db) })
+(B[m[32m+            .map(|db| NativeClient {
+(B[m[32m+                db: std::sync::Mutex::new(db),
+(B[m[32m+            })
+(B[m             .map_err(|_| "STORE_UNLOCK_FAILED".to_owned())
+     }
+ 
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/api.rs:20:
+         let action = || -> anyhow::Result<String> {
+             anyhow::ensure!(request.len() <= 262144, "input too large");
+             let req = serde_json::from_str(&request)?;
+[31m-            let db = self.db.lock().map_err(|_|anyhow::anyhow!("store unavailable"))?;
+(B[m[32m+            let db = self
+(B[m[32m+                .db
+(B[m[32m+                .lock()
+(B[m[32m+                .map_err(|_| anyhow::anyhow!("store unavailable"))?;
+(B[m             crate::transact(&db, &req)
+         };
+[31m-        action().map_err(|_|"CRYPTO_OR_STORE_REJECTED".to_owned())
+(B[m[32m+        action().map_err(|_| "CRYPTO_OR_STORE_REJECTED".to_owned())
+(B[m     }
+ }
+ 
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/lib.rs:239:
+                 "INSERT INTO outgoing(group_id,id,envelope,status) VALUES(?,?,?,'queued')",
+                 params![gid, id, serde_json::to_string(&result)?],
+             )?;
+[31m-            db.execute("INSERT INTO authored VALUES(?,?,?)",params![gid,id,serde_json::to_string(&payload)?])?;
+(B[m[32m+            db.execute(
+(B[m[32m+                "INSERT INTO authored VALUES(?,?,?)",
+(B[m[32m+                params![gid, id, serde_json::to_string(&payload)?],
+(B[m[32m+            )?;
+(B[m             Ok(result)
+         }
+         "process" => {
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/lib.rs:313:
+                     |r| r.get(0),
+                 )?;
+                 let own: Value = serde_json::from_str(&own)?;
+[31m-                if s(req,"ciphertext")?.is_empty() {
+(B[m[31m-                    ensure!(Sha256::digest(bytes(&own,"ciphertext")?).as_slice()==bytes(req,"digest")?,"own digest mismatch");
+(B[m[32m+                if s(req, "ciphertext")?.is_empty() {
+(B[m[32m+                    ensure!(
+(B[m[32m+                        Sha256::digest(bytes(&own, "ciphertext")?).as_slice()
+(B[m[32m+                            == bytes(req, "digest")?,
+(B[m[32m+                        "own digest mismatch"
+(B[m[32m+                    );
+(B[m                 } else {
+[31m-                    ensure!(s(&own,"ciphertext")?==s(req,"ciphertext")?,"own ciphertext mismatch");
+(B[m[32m+                    ensure!(
+(B[m[32m+                        s(&own, "ciphertext")? == s(req, "ciphertext")?,
+(B[m[32m+                        "own ciphertext mismatch"
+(B[m[32m+                    );
+(B[m                 }
+                 db.execute(
+                     "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/lib.rs:379:
+             Ok(json!({"events":values}))
+         }
+         "profile_put" => {
+[31m-            set_meta(db,"local_profile",&serde_json::to_string(&req["profile"])?)?;
+(B[m[32m+            set_meta(
+(B[m[32m+                db,
+(B[m[32m+                "local_profile",
+(B[m[32m+                &serde_json::to_string(&req["profile"])?,
+(B[m[32m+            )?;
+(B[m             Ok(json!({"saved":true}))
+         }
+[31m-        "profile" => Ok(serde_json::from_str(&meta(db,"local_profile")?)?),
+(B[m[32m+        "profile" => Ok(serde_json::from_str(&meta(db, "local_profile")?)?),
+(B[m         "timeline" => {
+[31m-            let gid=s(req,"group")?;
+(B[m[31m-            let mut entries=Vec::new();
+(B[m[32m+            let gid = s(req, "group")?;
+(B[m[32m+            let mut entries = Vec::new();
+(B[m             let mut q=db.prepare("SELECT a.event,o.status,o.seq FROM authored a JOIN outgoing o ON o.group_id=a.group_id AND o.id=a.id WHERE a.group_id=? ORDER BY a.rowid DESC LIMIT 1000")?;
+[31m-            let rows=q.query_map([gid],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<i64>>(2)?)))?;
+(B[m[32m+            let rows = q.query_map([gid], |r| {
+(B[m[32m+                Ok((
+(B[m[32m+                    r.get::<_, String>(0)?,
+(B[m[32m+                    r.get::<_, String>(1)?,
+(B[m[32m+                    r.get::<_, Option<i64>>(2)?,
+(B[m[32m+                ))
+(B[m[32m+            })?;
+(B[m             for row in rows {
+[31m-                let (event,status,seq)=row?;
+(B[m[31m-                let mut event:Value=serde_json::from_str(&event)?;
+(B[m[31m-                event["status"]=json!(status); event["seq"]=json!(seq); event["own"]=json!(true);
+(B[m[32m+                let (event, status, seq) = row?;
+(B[m[32m+                let mut event: Value = serde_json::from_str(&event)?;
+(B[m[32m+                event["status"] = json!(status);
+(B[m[32m+                event["seq"] = json!(seq);
+(B[m[32m+                event["own"] = json!(true);
+(B[m                 entries.push(event);
+             }
+             let mut q=db.prepare("SELECT i.event,r.seq FROM incoming i LEFT JOIN received r ON r.group_id=i.group_id AND json_extract(r.envelope,'$.id')=i.id WHERE i.group_id=? ORDER BY i.rowid DESC LIMIT 1000")?;
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/lib.rs:398:
+[31m-            let rows=q.query_map([gid],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<i64>>(1)?)))?;
+(B[m[32m+            let rows = q.query_map([gid], |r| {
+(B[m[32m+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+(B[m[32m+            })?;
+(B[m             for row in rows {
+[31m-                let (event,seq)=row?;
+(B[m[31m-                let mut event:Value=serde_json::from_str(&event)?;
+(B[m[31m-                event["status"]=json!("received"); event["seq"]=json!(seq); event["own"]=json!(false);
+(B[m[32m+                let (event, seq) = row?;
+(B[m[32m+                let mut event: Value = serde_json::from_str(&event)?;
+(B[m[32m+                event["status"] = json!("received");
+(B[m[32m+                event["seq"] = json!(seq);
+(B[m[32m+                event["own"] = json!(false);
+(B[m                 entries.push(event);
+             }
+[31m-            entries.sort_by_key(|event|event["seq"].as_i64().unwrap_or(i64::MAX));
+(B[m[32m+            entries.sort_by_key(|event| event["seq"].as_i64().unwrap_or(i64::MAX));
+(B[m             Ok(json!({"messages":entries}))
+         }
+         _ => bail!("unknown operation"),
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/lib.rs:446:
+     };
+     let result = match execute(db, &p, req) {
+         Ok(value) => value,
+[31m-        Err(error) => { db.execute_batch("ROLLBACK")?; return Err(error); }
+(B[m[32m+        Err(error) => {
+(B[m[32m+            db.execute_batch("ROLLBACK")?;
+(B[m[32m+            return Err(error);
+(B[m[32m+        }
+(B[m     };
+     if req["crash_before_commit"].as_bool() == Some(true) {
+         std::process::abort();
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/main.rs:1:
+ use std::io::{self, BufRead, Read, Write};
+ fn main() {
+     if std::env::args().nth(1).as_deref() == Some("--serve") {
+[31m-        if serve().is_err() { eprintln!("CRYPTO_OR_STORE_REJECTED"); std::process::exit(1); }
+(B[m[32m+        if serve().is_err() {
+(B[m[32m+            eprintln!("CRYPTO_OR_STORE_REJECTED");
+(B[m[32m+            std::process::exit(1);
+(B[m[32m+        }
+(B[m         return;
+     }
+     let result = (|| -> anyhow::Result<String> {
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/main.rs:8:
+[31m-        let path=std::env::args().nth(1).ok_or_else(||anyhow::anyhow!("DB path required"))?;
+(B[m[31m-        let mut input=String::new();
+(B[m[32m+        let path = std::env::args()
+(B[m[32m+            .nth(1)
+(B[m[32m+            .ok_or_else(|| anyhow::anyhow!("DB path required"))?;
+(B[m[32m+        let mut input = String::new();
+(B[m         io::stdin().take(262145).read_to_string(&mut input)?;
+[31m-        securemesh_crypto::execute_json(&path,&input)
+(B[m[32m+        securemesh_crypto::execute_json(&path, &input)
+(B[m     })();
+     match result {
+[31m-        Ok(value)=>println!("{value}"),
+(B[m[31m-        Err(_)=>{eprintln!("CRYPTO_OR_STORE_REJECTED"); std::process::exit(1);}
+(B[m[32m+        Ok(value) => println!("{value}"),
+(B[m[32m+        Err(_) => {
+(B[m[32m+            eprintln!("CRYPTO_OR_STORE_REJECTED");
+(B[m[32m+            std::process::exit(1);
+(B[m[32m+        }
+(B[m     }
+ }
+ 
+Diff in /home/micodiy/SecureMesh/src/crypto_core/src/main.rs:19:
+ fn serve() -> anyhow::Result<()> {
+[31m-    let path=std::env::args().nth(2).ok_or_else(||anyhow::anyhow!("path required"))?;
+(B[m[31m-    let stdin=io::stdin(); let mut reader=stdin.lock();
+(B[m[31m-    let mut first=String::new(); reader.by_ref().take(262145).read_line(&mut first)?;
+(B[m[31m-    let first:serde_json::Value=serde_json::from_str(&first)?;
+(B[m[31m-    let pass=first["passphrase"].as_str().ok_or_else(||anyhow::anyhow!("passphrase required"))?;
+(B[m[31m-    let client=securemesh_crypto::api::NativeClient::open(path,pass.to_owned()).map_err(anyhow::Error::msg)?;
+(B[m[31m-    println!("{{\"unlocked\":true}}"); io::stdout().flush()?;
+(B[m[32m+    let path = std::env::args()
+(B[m[32m+        .nth(2)
+(B[m[32m+        .ok_or_else(|| anyhow::anyhow!("path required"))?;
+(B[m[32m+    let stdin = io::stdin();
+(B[m[32m+    let mut reader = stdin.lock();
+(B[m[32m+    let mut first = String::new();
+(B[m[32m+    reader.by_ref().take(262145).read_line(&mut first)?;
+(B[m[32m+    let first: serde_json::Value = serde_json::from_str(&first)?;
+(B[m[32m+    let pass = first["passphrase"]
+(B[m[32m+        .as_str()
+(B[m[32m+        .ok_or_else(|| anyhow::anyhow!("passphrase required"))?;
+(B[m[32m+    let client = securemesh_crypto::api::NativeClient::open(path, pass.to_owned())
+(B[m[32m+        .map_err(anyhow::Error::msg)?;
+(B[m[32m+    println!("{{\"unlocked\":true}}");
+(B[m[32m+    io::stdout().flush()?;
+(B[m     loop {
+[31m-        let mut line=String::new();
+(B[m[31m-        let n=reader.by_ref().take(262145).read_line(&mut line)?;
+(B[m[31m-        if n==0 { break; }
+(B[m[31m-        anyhow::ensure!(line.len()<=262144,"input too large");
+(B[m[32m+        let mut line = String::new();
+(B[m[32m+        let n = reader.by_ref().take(262145).read_line(&mut line)?;
+(B[m[32m+        if n == 0 {
+(B[m[32m+            break;
+(B[m[32m+        }
+(B[m[32m+        anyhow::ensure!(line.len() <= 262144, "input too large");
+(B[m         match client.execute(line) {
+[31m-            Ok(value)=>println!("{value}"),
+(B[m[31m-            Err(_)=>println!("{{\"error\":\"CRYPTO_OR_STORE_REJECTED\"}}"),
+(B[m[32m+            Ok(value) => println!("{value}"),
+(B[m[32m+            Err(_) => println!("{{\"error\":\"CRYPTO_OR_STORE_REJECTED\"}}"),
+(B[m         }
+         io::stdout().flush()?;
+     }
+
+Exit code: 1

@@ -1,0 +1,4 @@
+UTC: 2026-11-18T02:43:46.024637+00:00
+Command: ['cargo', 'fmt', '--manifest-path', 'src/crypto_core/Cargo.toml', '--', '--check']
+
+Exit code: 0

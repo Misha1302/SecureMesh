@@ -1,0 +1,41 @@
+UTC: 2026-11-18T03:10:11.718028+00:00
+Command: ['bash', 'scripts/build-linux.sh']
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from linux-builder.Dockerfile
+#1 transferring dockerfile: 597B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/4] FROM docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+#4 resolve docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 0.0s done
+#4 DONE 0.0s
+
+#5 [3/4] WORKDIR /workspace/apps/client_flutter
+#5 CACHED
+
+#6 [2/4] RUN apt-get update && apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev git curl unzip xz-utils ca-certificates && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [4/4] RUN apt-get update && apt-get install -y --no-install-recommends xvfb xdotool imagemagick libgl1-mesa-dri xauth && rm -rf /var/lib/apt/lists/*
+#7 CACHED
+
+#8 exporting to image
+#8 exporting layers done
+#8 exporting manifest sha256:a90bc8b0f54b0c82ae305df1fbd4003142ca56cc7c396613c2250b4735854d44 done
+#8 exporting config sha256:771caf857860a7e4851ab63bd742f7fbd1861a79c21bd630ff1e443fa2666022 done
+#8 exporting attestation manifest sha256:836109dac6873803a63bde2db3830feed4a0d1a0196d42b3664e6806db43af9c done
+#8 exporting manifest list sha256:1708cb0d019f5c318cbd75156ee3046b5dc4d86cf90ce00bb371473fcdd6e02b done
+#8 naming to docker.io/library/securemesh-linux-builder:local done
+#8 unpacking to docker.io/library/securemesh-linux-builder:local done
+#8 DONE 0.1s
+Building Linux application...                                   
+✓ Built build/linux/x64/debug/bundle/securemesh_client
+
+Exit code: 0

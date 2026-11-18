@@ -1,0 +1,11 @@
+UTC: 2026-11-18T03:14:09.349471+00:00
+Command: ['cargo', 'update', '--manifest-path', 'src/crypto_core/Cargo.toml', '-p', 'libsqlite3-sys', '--precise', '0.39.1']
+    Blocking waiting for file lock on package cache
+    Updating crates.io index
+error: failed to select a version for the requirement `libsqlite3-sys = "^0.35.0"`
+candidate versions found which didn't match: 0.39.1
+location searched: crates.io index
+required by package `rusqlite v0.37.0`
+    ... which satisfies dependency `rusqlite = "^0.37"` (locked to 0.37.0) of package `securemesh-crypto v0.1.0 (/home/micodiy/SecureMesh/src/crypto_core)`
+
+Exit code: 101

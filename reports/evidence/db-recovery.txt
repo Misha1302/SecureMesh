@@ -1,0 +1,5 @@
+UTC: 2026-11-18T02:47:59.770850+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/recovery.py']
+PASS: real DB stop while send is blocked before commit returns 503, no durable ACK; immutable outbox survives; PostgreSQL restart retains acknowledged message; retry commits exactly once; pg_dump/pg_restore into isolated database; restored ciphertext decrypts with original client only; restored message+outbox counts agree. Object/media restore not covered.
+
+Exit code: 0
