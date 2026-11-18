@@ -9,3 +9,5 @@ Executed: `python3 tests/crypto/process_spike.py`, exit 0. Evidence: `reports/ev
 Limitations: this is a CLI, not a verified Flutter bridge. Explicit pin confirmation is supplied by the test harness to model out-of-band comparison; a usable safety-number/QR workflow is missing. No key transparency, platform keystore, recovery backup or independent audit. Group mutation currently merges locally before server acceptance; concurrent commit rebase is not implemented. Do not use this alpha with real private data.
 
 WASM storage provider explicitly does not support wasm32 in its upstream source; separate web provider/bridge is required. Browser private chat must remain disabled. Native/WASM platform probes are recorded separately; build support alone is not interoperability proof.
+
+Later checkpoint: Dart/FRB 2.13.0 native two-store OpenMLS smoke passed. Concurrent self-update commits now use staged persistence; epoch-conflict integration passed. Original standalone add/remove remains feasibility-only. RustSec found four advisories; see docs/SECURITY_LIMITATIONS.md and retained resolver probes. No security clearance or independent audit is claimed.

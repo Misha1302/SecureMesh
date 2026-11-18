@@ -11,3 +11,23 @@ Source brief remains immutable. Work on `codex/securemesh-build`, local resource
 7. M7–M8: security/restore tests, deployment templates, truthful local handoff. No deployment.
 
 Every verified increment gets a commit. `make verify` must fail if required acceptance gates remain incomplete. Unsupported or unrun checks remain NOT_RUN/BLOCKED, never PASS.
+
+
+## Checkpoint / next execution order
+
+Verified components and known failures are in STATUS.md and reports. No M0–M8 milestone is declared fully complete.
+
+- [x] Immutable brief integrity; safe local branch; real API/PG health/migrations.
+- [x] OpenMLS/SQLCipher process spike and Linux Dart/FRB test.
+- [x] Core auth/device possession/refresh and durable text/cursor/epoch tests.
+- [x] GPRS and severe steady baselines: 200 each direction, three seeds each.
+- [x] Native Linux build/launch, real two-GUI messaging, offline kill/reopen, body RU/EN/themes, layout tests.
+- [x] Execute security scans and record failures; raw evidence preserved.
+- [ ] Remediate four RustSec findings through compatible upstream/provider/storage versions; no suppressions/custom primitives.
+- [ ] Complete actual directory/KeyPackage/Welcome/enrollment/recovery and registration/trust UX.
+- [ ] Native WSS-first reconnect/HTTPS fallback; mixed blackout/crash/half-open/media fault schedule; all remaining P0.
+- [ ] M4 groups/public channels/moderation, M5 all media, M6 calls/full native UX/platforms.
+- [ ] M7 complete security/resource/load/backup/retention/supply-chain matrix; independent audit remains future external gate.
+- [ ] M8 full local delivery candidate and approved future-deployment documentation; current handoff is a partial checkpoint.
+
+Continue from existing code, not a new skeleton. make verify must remain nonzero while RustSec or required acceptance rows are red. Current source checkpoint is recorded in reports/FINAL_HANDOFF_RU.md; git rev-parse HEAD is authoritative for the checkout.

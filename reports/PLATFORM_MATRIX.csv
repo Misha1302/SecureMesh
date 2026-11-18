@@ -1,0 +1,7 @@
+platform,target,priority,crypto,status,evidence
+Android,Flutter-native,P0,OpenMLS-Rust-FFI,NOT_VERIFIED,Doctor found SDK36; unaccepted licenses and missing Android Rust packaging; no build claimed
+Linux,Flutter-desktop,P0,OpenMLS-Rust-FFI,PASS,reports/evidence/linux-build-v5.txt; reports/evidence/native-dart-ffi.txt; reports/evidence/ui-linux-final.png
+Web,Flutter-web,P1,OpenMLS-Rust-WASM-or-public-only,PASS_PUBLIC_ONLY,Flutter web build executed; private chat disabled; reports/evidence/wasm-probe.txt
+iOS,Flutter-native,P1,OpenMLS-Rust-FFI,BLOCKED_NO_MACOS,No Xcode/macOS runner; no build claimed
+Windows,Flutter-desktop,P1,OpenMLS-Rust-FFI,NOT_RUN,
+macOS,Flutter-desktop,P1,OpenMLS-Rust-FFI,BLOCKED_NO_MACOS,No Xcode/macOS runner; no build claimed

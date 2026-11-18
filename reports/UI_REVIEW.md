@@ -7,3 +7,5 @@ Independent in-session UI reviewer disposition: FIX within implemented slice. Fi
 The prototype previously hid an invalid persisted sync cursor as offline. Fixed by replaying from beginning on explicit INVALID_CURSOR, comparing persisted ciphertext digests, preserving processed sequence, and replacing the opaque cursor without re-consuming MLS or duplicating UI rows. Security/auth/crypto failures never authorize plaintext fallback.
 
 Layout tests passed at 320 dp and 1.3 text scale. Full assistive-technology, keyboard/IME, long-history and mobile hardware checks remain incomplete. Registration, public spaces, media, calls and admin screens are absent. No complete UX/platform acceptance claim.
+
+Final targeted reviewer pass: both residual code issues resolved (local reload failure no longer advertises Connected; post-commit refresh failure says queued). Source-only scope for those fixes; overall product and complete accessibility remain NOT_READY/PARTIAL. Latest analyzer/layout and native build passed; final actual window is ui-linux-final.png after explicit padded touch targets/standard density. No full-surface security/platform approval.
