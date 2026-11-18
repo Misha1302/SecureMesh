@@ -153,9 +153,9 @@ def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--profile',choices=['gprs','severe'],required=True); parser.add_argument('--seeds',default='7,19,41'); parser.add_argument('--count',type=int,default=200)
     args=parser.parse_args()
     os.environ['SECUREMESH_TEST_URLS']='https://127.0.0.1:5090;https://10.239.238.1:5090'
-    docker('up','-d','netem-a','netem-b')
     output=ROOT/'reports/evidence'
     try:
+        docker('up','-d','netem-a','netem-b')
         for seed in map(int,args.seeds.split(',')):
             with Server(), tempfile.TemporaryDirectory(prefix='securemesh-netem-',dir=ROOT/'.local') as tmp:
                 # Drop prior shaping before bootstrapping fresh local test accounts.

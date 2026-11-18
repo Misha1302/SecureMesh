@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Render only observed production-native measurements; missing/failed trials fail the gate."""
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 rows = []
 failures = []
+binary_set = None
 for profile, rate, rtt, loss in [('gprs', 20, 1500, 3), ('severe', 10, 3000, 10)]:
     for seed in (7, 19, 41):
         path = root / f'reports/evidence/native-netem-{profile}-{seed}-200.json'
@@ -29,6 +31,12 @@ for profile, rate, rtt, loss in [('gprs', 20, 1500, 3), ('severe', 10, 3000, 10)
             reasons.append('p95 exceeds unchanged 15-second gate')
         if not data['source_sha256'] or not data['binary_sha256'] or not all(data[n + '_tc_stats'] for n in ('netem-a', 'netem-b')):
             reasons.append('provenance/counters missing')
+        if any(hashlib.sha256((root / name).read_bytes()).hexdigest() != digest for name, digest in data['source_sha256'].items()):
+            reasons.append('measured native sources differ from current sources')
+        if binary_set is None:
+            binary_set = data['binary_sha256']
+        elif binary_set != data['binary_sha256']:
+            reasons.append('binary set differs between trials')
         status = 'FAIL' if reasons else 'PASS'
         if reasons:
             failures.append(f'{profile}/{seed}: ' + ', '.join(reasons))

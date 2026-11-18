@@ -1,2 +1,4 @@
 # Preserve actual tool output, including progress padding, in execution evidence.
 reports/evidence/*.txt -whitespace
+# Retain upstream copyright/license bytes exactly as inventoried.
+third_party/licenses/pub/*.txt -whitespace

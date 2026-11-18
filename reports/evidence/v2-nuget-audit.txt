@@ -1,0 +1,16 @@
+UTC: 2026-11-18T21:33:42.768235+00:00
+Command: ['dotnet', 'list', 'src/SecureMesh.Api', 'package', '--no-restore', '--vulnerable', '--include-transitive', '--format', 'json']
+{
+  "version": 1,
+  "parameters": "--vulnerable --include-transitive",
+  "sources": [
+    "https://api.nuget.org/v3/index.json"
+  ],
+  "projects": [
+    {
+      "path": "/home/micodiy/SecureMesh/src/SecureMesh.Api/SecureMesh.Api.csproj"
+    }
+  ]
+}
+
+Exit code: 0
