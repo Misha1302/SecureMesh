@@ -8,14 +8,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 import 'src/rust/api.dart';
 import 'src/rust/frb_generated.dart';
+import 'transport.dart';
 
 class CryptoFailure implements Exception {}
-
-class ApiFailure implements Exception {
-  final int status;
-  final String code;
-  ApiFailure(this.status, [this.code = '']);
-}
 
 class ClientApp extends StatefulWidget {
   const ClientApp({super.key});
@@ -36,6 +31,7 @@ class _ClientAppState extends State<ClientApp> {
   String? sendError, deviceError;
   NativeClient? store;
   HttpClient? http;
+  MeshTransport? transport;
   Map<String, dynamic>? profile;
   List<dynamic> messages = [];
   List<dynamic> devices = [];
@@ -69,6 +65,7 @@ class _ClientAppState extends State<ClientApp> {
   void dispose() {
     timer?.cancel();
     store?.dispose();
+    transport?.close();
     http?.close(force: true);
     path.dispose();
     pass.dispose();
@@ -110,11 +107,21 @@ class _ClientAppState extends State<ClientApp> {
       if (cert != null) context.setTrustedCertificates(cert);
       http = HttpClient(context: context)
         ..connectionTimeout = const Duration(seconds: 12);
+      transport = MeshTransport(
+        endpoint: Uri.parse(profile!['endpoint'] as String),
+        device: profile!['deviceId'] as String,
+        token: () => profile!['accessToken'] as String,
+        http: http!,
+        https: (route, {data}) => api(route, data: data),
+      );
       pass.clear();
       await reload();
       timer?.cancel();
       unawaited(pump());
     } catch (_) {
+      transport?.close();
+      transport = null;
+      http?.close(force: true);
       store?.dispose();
       store = null;
       profile = null;
@@ -163,6 +170,7 @@ class _ClientAppState extends State<ClientApp> {
       method ?? (data == null ? 'GET' : 'POST'),
       base.resolve(route),
     );
+    req.followRedirects = false;
     req.headers.set(
       HttpHeaders.authorizationHeader,
       'Bearer ${profile!['accessToken']}',
@@ -170,7 +178,15 @@ class _ClientAppState extends State<ClientApp> {
     req.headers.contentType = ContentType.json;
     if (data != null) req.write(jsonEncode(data));
     final response = await req.close().timeout(const Duration(seconds: 20));
-    final raw = await utf8.decoder.bind(response).join();
+    final bytes = <int>[];
+    await for (final chunk in response.timeout(const Duration(seconds: 20))) {
+      if (bytes.length + chunk.length > 262144) {
+        req.abort();
+        throw ApiFailure(502, 'RESPONSE_TOO_LARGE');
+      }
+      bytes.addAll(chunk);
+    }
+    final raw = utf8.decode(bytes);
     if (epoch != generation) throw ApiFailure(499);
     if (response.statusCode == 401 && !refreshing) {
       final rotated = await api(
@@ -182,7 +198,7 @@ class _ClientAppState extends State<ClientApp> {
       await crypto('profile_put', {'profile': profile});
       return api(route, data: data, method: method, refreshing: true);
     }
-    if (response.statusCode >= 400) {
+    if (response.statusCode >= 300) {
       String code = '';
       try {
         final body = jsonDecode(raw);
@@ -204,16 +220,7 @@ class _ClientAppState extends State<ClientApp> {
     try {
       final pending = (await crypto('outbox'))['messages'] as List<dynamic>;
       for (final m in pending.take(20)) {
-        final ack = await api(
-          '/v1/messages',
-          data: {
-            'conversationId': m['group'],
-            'clientMessageId': m['id'],
-            'mlsEpoch': m['epoch'],
-            'envelopeKind': m['kind'],
-            'ciphertext': m['ciphertext'],
-          },
-        ) as Map<String, dynamic>;
+        final ack = await transport!.send(Map<String, dynamic>.from(m as Map));
         if (ack['durable'] != true) throw StateError('DURABLE_ACK_REQUIRED');
         await crypto('saved', {
           'group': m['group'],
@@ -225,16 +232,9 @@ class _ClientAppState extends State<ClientApp> {
           (await crypto('cursor', {'group': profile!['group']}))['cursor']
               as String;
       for (var pages = 0; pages < 10; pages++) {
-        final query = Uri(
-          queryParameters: {
-            'conversationId': profile!['group'] as String,
-            'cursor': cursor,
-            'limit': '6',
-          },
-        ).query;
         Map<String, dynamic> page;
         try {
-          page = await api('/v1/sync?$query') as Map<String, dynamic>;
+          page = await transport!.sync(profile!['group'] as String, cursor);
         } on ApiFailure catch (failure) {
           if (failure.code == 'INVALID_CURSOR' && cursor.isNotEmpty) {
             cursor = '';
@@ -261,10 +261,7 @@ class _ClientAppState extends State<ClientApp> {
         if (page['hasMore'] != true) break;
       }
       final seq = (await crypto('cursor', {'group': profile!['group']}))['seq'];
-      await api(
-        '/v1/acks',
-        data: {'conversationId': profile!['group'], 'sequence': seq},
-      );
+      await transport!.ack(profile!['group'] as String, seq as int);
       failures = 0;
       online = true;
       connectionState = "connected";
@@ -381,6 +378,8 @@ class _ClientAppState extends State<ClientApp> {
     generation++;
     timer?.cancel();
     store?.dispose();
+    transport?.close();
+    transport = null;
     http?.close(force: true);
     setState(() {
       store = null;

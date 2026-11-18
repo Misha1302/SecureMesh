@@ -1,0 +1,23 @@
+UTC: 2026-11-18T19:39:44.340348+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/native_transport.py']
+Unhandled exception:
+Bad state: ACK_SEMANTICS: expected duplicate=true, actual=false, mode=wss
+#0      require (file:///home/micodiy/SecureMesh/apps/client_flutter/tool/transport_smoke.dart:12:15)
+#1      main.send (file:///home/micodiy/SecureMesh/apps/client_flutter/tool/transport_smoke.dart:97:7)
+<asynchronous suspension>
+#2      main (file:///home/micodiy/SecureMesh/apps/client_flutter/tool/transport_smoke.dart:119:5)
+<asynchronous suspension>
+Fault proxy observations: [{"event": "open", "websocket": true, "upgrade": ["upgrade: websocket"]}, {"event": "data", "websocket": true, "mode": "pass", "downstream": true, "bytes": 241}, {"event": "data", "websocket": true, "mode": "pass", "downstream": false, "bytes": 52}, {"event": "data", "websocket": true, "mode": "pass", "downstream": true, "bytes": 34}, {"event": "data", "websocket": true, "mode": "pass", "downstream": false, "bytes": 428}, {"event": "data", "websocket": true, "mode": "pass", "downstream": true, "bytes": 83}, {"event": "open", "websocket": true, "upgrade": ["upgrade: websocket"]}, {"event": "data", "websocket": true, "mode": "pass", "downstream": true, "bytes": 241}, {"event": "data", "websocket": true, "mode": "pass", "downstream": false, "bytes": 52}, {"event": "data", "websocket": true, "mode": "pass", "downstream": true, "bytes": 34}, {"event": "data", "websocket": true, "mode": "pass", "downstream": false, "bytes": 428}, {"event": "data", "websocket": true, "mode": "pass", "downstream": true, "bytes": 83}, {"event": "data", "websocket": true, "mode": "halfopen", "downstream": false, "bytes": 8}, {"event": "data", "websocket": true, "mode": "halfopen", "downstream": false, "bytes": 420}, {"event": "data", "websocket": true, "mode": "halfopen", "downstream": false, "bytes": 6}, {"event": "open", "websocket": false, "upgrade": []}, {"event": "data", "websocket": false, "mode": "halfopen", "downstream": false, "bytes": 640}, {"event": "data", "websocket": false, "mode": "halfopen", "downstream": true, "bytes": 334}, {"event": "data", "websocket": false, "mode": "pass", "downstream": false, "bytes": 332}, {"event": "data", "websocket": false, "mode": "pass", "downstream": true, "bytes": 241}, {"event": "data", "websocket": false, "mode": "pass", "downstream": false, "bytes": 52}, {"event": "data", "websocket": false, "mode": "pass", "downstream": true, "bytes": 34}, {"event": "data", "websocket": false, "mode": "pass", "downstream": false, "bytes": 428}, {"event": "data", "websocket": false, "mode": "pass", "downstream": true, "bytes": 83}, {"event": "data", "websocket": false, "mode": "lostack", "downstream": false, "bytes": 8}, {"event": "data", "websocket": false, "mode": "lostack", "downstream": false, "bytes": 420}, {"event": "data", "websocket": false, "mode": "lostack", "downstream": true, "bytes": 83}]
+Traceback (most recent call last):
+  File "/home/micodiy/SecureMesh/tests/integration/native_transport.py", line 102, in <module>
+    if __name__=='__main__':main()
+                            ~~~~^^
+  File "/home/micodiy/SecureMesh/tests/integration/native_transport.py", line 94, in main
+    subprocess.run([str(d.ROOT/'.local/flutter/bin/dart'),'run','tool/transport_smoke.dart',str(fixture)],cwd=d.ROOT/'apps/client_flutter',env={**os.environ,'PUB_CACHE':str(d.ROOT/'.local/pub-cache')},check=True,timeout=120)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/home/micodiy/SecureMesh/.local/flutter/bin/dart', 'run', 'tool/transport_smoke.dart', '/home/micodiy/SecureMesh/.local/securemesh-native-transport-cm8e4zpu/fixture.json']' returned non-zero exit status 255.
+
+Exit code: 1

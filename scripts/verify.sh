@@ -30,6 +30,7 @@ fi
 if [[ -x .local/flutter/bin/flutter ]]; then
   check flutter-check bash -c 'FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$PWD/.local/pub-cache" .local/flutter/bin/flutter analyze --no-pub apps/client_flutter'
   check flutter-layout bash -c 'cd apps/client_flutter && FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$(pwd)/../../.local/pub-cache" ../../.local/flutter/bin/flutter test --no-pub test'
+  check native-transport .local/venv/bin/python tests/integration/native_transport.py
 fi
 check network-report python3 scripts/render_network_report.py
 check acceptance-gate python3 tools/check_completion.py
