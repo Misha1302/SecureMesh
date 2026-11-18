@@ -1,4 +1,4 @@
-.PHONY: bootstrap demo smoke verify down crypto seed-demo build-linux client network-gprs network-severe native-network-gprs native-network-severe native-cursor-recovery gui-smoke gui-pending-smoke
+.PHONY: bootstrap demo smoke verify down crypto seed-demo build-linux client network-gprs network-severe native-network-gprs native-network-severe native-cursor-recovery restore-v2 enrollment-quota gui-smoke gui-pending-smoke
 bootstrap:
 	bash scripts/bootstrap.sh
 demo:
@@ -21,6 +21,10 @@ native-network-severe:
 	.local/venv/bin/python tests/chaos-2g/native_run.py --profile severe --seeds 7,19,41 --count 200
 native-cursor-recovery:
 	.local/venv/bin/python tests/integration/native_cursor_recovery.py
+restore-v2:
+	.local/venv/bin/python tests/integration/restore_v2.py
+enrollment-quota:
+	.local/venv/bin/python tests/integration/enrollment_quota.py
 gui-smoke:
 	.local/venv/bin/python tests/gui/native_v2.py --script tests/gui/v2_scenario.json
 gui-pending-smoke:

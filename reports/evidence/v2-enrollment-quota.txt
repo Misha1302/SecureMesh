@@ -1,0 +1,5 @@
+UTC: 2026-11-18T21:46:39.018780+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/enrollment_quota.py']
+PASS: 32 real new enrollment issuances across expired-row cleanup; same pending request retry does not consume quota; 33rd denied by ENROLLMENT_LIMIT, including after API restart; next rolling-day window allows issuance; candidate stays pending. Expiry/window timestamps advanced only in an owned isolated DB; no mocked API/crypto.
+
+Exit code: 0

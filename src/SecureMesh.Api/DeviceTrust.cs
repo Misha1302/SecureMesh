@@ -32,13 +32,15 @@ public static class DeviceTrust
             await using (var r = await existing.ExecuteReaderAsync())
                 if (await r.ReadAsync())
                     return Results.Ok(new { id = r.GetGuid(0), payload = Convert.ToBase64String((byte[])r[1]) });
-            await using(var quota=Sql.Cmd(c,"SELECT count(*) FROM device_enrollments WHERE device_id=$1 AND expires_at>now()-interval '1 day'",actor.DeviceId))
+            await using(var quota=Sql.Cmd(c,"SELECT count(*) FROM device_enrollment_issuance WHERE device_id=$1 AND created_at>now()-interval '1 day'",actor.DeviceId))
                 if((long)(await quota.ExecuteScalarAsync())!>=32) throw new ApiError(429,"ENROLLMENT_LIMIT");
             var id = Guid.NewGuid();
             var issued = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var expires = issued + 300;
             var payload = Encoding.UTF8.GetBytes($"SecureMesh/enrollment-request/v1\n{actor.UserId:D}\n{actor.DeviceId:D}\n{Convert.ToBase64String(key)}\n{id:D}\n{Sql.Token()}\n{issued}\n{expires}");
             await using (var cmd = Sql.Cmd(c, "INSERT INTO device_enrollments(id,user_id,device_id,payload,expires_at) VALUES($1,$2,$3,$4,$5)", id, actor.UserId, actor.DeviceId, payload, DateTimeOffset.FromUnixTimeSeconds(expires)))
+                await cmd.ExecuteNonQueryAsync();
+            await using(var cmd=Sql.Cmd(c,"INSERT INTO device_enrollment_issuance(id,device_id) VALUES($1,$2)",id,actor.DeviceId))
                 await cmd.ExecuteNonQueryAsync();
             await tx.CommitAsync();
             return Results.Ok(new { id, payload = Convert.ToBase64String(payload) });

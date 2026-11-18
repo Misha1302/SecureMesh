@@ -1,0 +1,5 @@
+UTC: 2026-11-18T21:24:01.214546+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/restore_v2.py']
+PASS: actual V2 schema with five migrations, consented KeyPackage/Welcome DM and durable message/outbox restored into an isolated database; API login/session/DM listing and original SQLCipher/OpenMLS recipient decrypt/cursor/receipt work. Source DB remained available. Object/media restore not covered.
+
+Exit code: 0
