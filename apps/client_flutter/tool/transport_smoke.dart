@@ -216,6 +216,13 @@ Future<void> main(List<String> args) async {
         'LOGICAL_DUP_OR_LOSS',
       );
     }
+    // Close an active real WSS while the proxy drops close frames. The child
+    // must still terminate; a cancelled raw reader used to leak CLOSE_WAIT.
+    mode.writeAsStringSync('halfopen');
+    for (final transport in transports) {
+      transport.close();
+    }
+    await Future<void>.delayed(const Duration(seconds: 7));
     stdout.writeln(
       'PASS: actual native Dart WSS/protobuf + Rust/OpenMLS/SQLCipher + TLS API/PG; production delivery cycle pipelines three immutable sends with sync and bounded receipts; half-open/blocked HTTPS fallback; lost ACK idempotence; WSS recovery; malformed ACK denied with outbox retained; paginated decrypt/cursors; both clients contain all 11 IDs once. Not a GUI or GPRS timing run.',
     );

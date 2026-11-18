@@ -1,0 +1,31 @@
+UTC: 2026-11-18T21:31:53.844836+00:00
+Command: ['make', 'native-network-severe']
+.local/venv/bin/python tests/chaos-2g/native_run.py --profile severe --seeds 7,19,41 --count 200
+ Container securemesh-netem-b-1 Starting 
+ Container securemesh-netem-a-1 Starting 
+ Container securemesh-netem-b-1 Started 
+ Container securemesh-netem-a-1 Started 
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10010 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10020 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10010 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10020 is small. Consider r2q change.
+{"profile":"severe","seed":7,"messages_each_direction":200,"delivery_p50":63.96458799999999,"delivery_p95":102.24552200000002,"delivery_p99":105.14065099999999,"duplicates":0,"missing_ids":0,"elapsed_seconds":404.694987,"retries":2,"recent_errors":["NETWORK","NETWORK"],"https_requests":16,"wss_application_bytes_sent":[165531,176842],"wss_application_bytes_received":[220328,226062],"platform":"Linux native Dart; production NativeDelivery/MeshTransport/FRB/OpenMLS/SQLCipher"}
+ Container securemesh-netem-a-1 Stopping 
+ Container securemesh-netem-b-1 Stopping 
+ Container securemesh-netem-b-1 Stopped 
+ Container securemesh-netem-a-1 Stopped 
+Traceback (most recent call last):
+  File "/home/micodiy/SecureMesh/tests/chaos-2g/native_run.py", line 62, in <module>
+    if __name__=='__main__':main()
+                            ~~~~^^
+  File "/home/micodiy/SecureMesh/tests/chaos-2g/native_run.py", line 56, in main
+    if process.returncode!=0:raise RuntimeError(f'Dart native network trial exited {process.returncode}: '+(root/'dart.stderr').read_text())
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Dart native network trial exited -15: 
+make: *** [Makefile:21: native-network-severe] Error 1
+
+Exit code: 2

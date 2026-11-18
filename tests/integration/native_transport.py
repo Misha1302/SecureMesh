@@ -112,9 +112,10 @@ def main():
         fixture.write_text(json.dumps(dict(endpoint=f'https://127.0.0.1:{proxy.port}',group=group,mode=str(mode),cert=str(d.ROOT/'.local/tls.pem'),library=str(d.ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so'),devices=[dict(id=who['device'].identity,path=str(who['device'].path),passphrase=who['device'].password,token=who['session']['accessToken']) for who in (a,b)])))
         fixture.chmod(0o600)
         try:
-            subprocess.run([str(d.ROOT/'.local/flutter/bin/dart'),'run','tool/transport_smoke.dart',str(fixture)],cwd=d.ROOT/'apps/client_flutter',env={**os.environ,'PUB_CACHE':str(d.ROOT/'.local/pub-cache')},check=True,timeout=120)
+            subprocess.run([str(d.ROOT/'.local/flutter/bin/dart'),'run','tool/transport_smoke.dart',str(fixture)],cwd=d.ROOT/'apps/client_flutter',env={**os.environ,'PUB_CACHE':str(d.ROOT/'.local/pub-cache')},check=True,timeout=45)
             assert proxy.dropped>0,'faults were not injected'
             print('Fault proxy dropped real TLS-decoded transport bytes:',proxy.dropped)
+            print('PASS: native child terminated within 45 seconds including lost close frames; no hanging process accepted as success.')
         finally:
             proxy.close()
             print('Fault proxy observed modes:',sorted({r['mode'] for r in proxy.observed}))

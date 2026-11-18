@@ -44,14 +44,13 @@ class MeshTransport {
   final HttpsRequest https;
   final Duration timeout, probeDelay;
   WebSocket? _socket;
-  StreamSubscription<dynamic>? _subscription;
   final Map<String, Completer<wire.Frame>> _pending = {};
   Future<void>? _connecting;
   DateTime _probeAfter = DateTime.fromMillisecondsSinceEpoch(0);
   bool _closed = false;
   int _operations = 0;
   String mode = 'disconnected';
-  int sentApplicationBytes=0,receivedApplicationBytes=0;
+  int sentApplicationBytes = 0, receivedApplicationBytes = 0;
   static const maxFrame = 131072;
   static const maxInFlight = 6;
 
@@ -63,9 +62,13 @@ class MeshTransport {
   void _disconnect() {
     final socket = _socket;
     _socket = null;
-    unawaited(_subscription?.cancel());
-    _subscription = null;
-    if (socket != null) unawaited(socket.close().catchError((_) {}));
+    // Let WebSocket.close own its incoming subscription through the close
+    // handshake/timeout. Cancelling first clears the SDK's raw subscription,
+    // preventing its close drain and leaking a CLOSE_WAIT socket on loss.
+    // The listener's socket-identity guard already discards abandoned data.
+    if (socket != null) {
+      unawaited(socket.close(WebSocketStatus.goingAway).catchError((_) {}));
+    }
     final pending = _pending.values.toList();
     _pending.clear();
     for (final request in pending) {
@@ -81,7 +84,7 @@ class MeshTransport {
       if (data is! List<int> || data.length > maxFrame + 5) {
         throw const FormatException('INVALID_STREAM_FRAME');
       }
-      receivedApplicationBytes+=data.length;
+      receivedApplicationBytes += data.length;
       var length = 0, offset = 0, shift = 0;
       while (true) {
         if (offset >= data.length || offset >= 5) {
@@ -137,7 +140,7 @@ class MeshTransport {
     // Install the timeout/error listener before sending on a possibly dead socket.
     final future = pending.future.timeout(timeout);
     try {
-      sentApplicationBytes+=prefix.length+bytes.length;
+      sentApplicationBytes += prefix.length + bytes.length;
       _socket!.add(Uint8List.fromList([...prefix, ...bytes]));
     } catch (_) {
       _disconnect();
@@ -189,7 +192,7 @@ class MeshTransport {
       throw const SocketException('TRANSPORT_CLOSED');
     }
     _socket = socket;
-    _subscription = socket.listen(
+    socket.listen(
       (data) {
         if (identical(socket, _socket)) _receive(data);
       },
