@@ -6,7 +6,7 @@ services:
       UPSTREAM_HOST: 10.239.238.1
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
-    ports: ["127.0.0.1:55990:15090"]
+    ports: ["127.0.0.1:15990:15090"]
     security_opt: ["no-new-privileges:true"]
   netem-b:
     image: securemesh-netem:local
@@ -14,5 +14,5 @@ services:
       UPSTREAM_HOST: 10.239.238.1
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
-    ports: ["127.0.0.1:55991:15090"]
+    ports: ["127.0.0.1:15991:15090"]
     security_opt: ["no-new-privileges:true"]

@@ -1,0 +1,2 @@
+# Preserve actual tool output, including progress padding, in execution evidence.
+reports/evidence/*.txt -whitespace

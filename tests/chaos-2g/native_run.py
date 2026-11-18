@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual production Dart delivery cycle over project-only Linux netem, real MLS/SQLCipher/API/PG/TLS."""
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -21,15 +22,18 @@ def docker(*args):return subprocess.check_output(COMPOSE+list(args),cwd=ROOT,tex
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--profile',choices=['gprs','severe'],required=True);parser.add_argument('--count',type=int,default=200);parser.add_argument('--seeds',default='7,19,41');args=parser.parse_args()
+    suite_lock=(ROOT/'.local/netem-suite.lock').open('w')
+    try:fcntl.flock(suite_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError:raise RuntimeError('SECUREMESH_NETEM_SUITE_ALREADY_RUNNING') from None
     d.BASE='https://127.0.0.1:5090';os.environ['SECUREMESH_TEST_URLS']='https://127.0.0.1:5090;https://10.239.238.1:5090'
-    docker('up','-d','netem-a','netem-b')
     try:
+        docker('up','-d','netem-a','netem-b')
         for seed in map(int,args.seeds.split(',')):
             for i,name in enumerate(('netem-a','netem-b')):docker('exec','-T',name,'sh','/netem/configure.sh','10000','0','0',str(seed+i))
             with d.Server(legacy_bootstrap=False),tempfile.TemporaryDirectory(prefix='securemesh-native-netem-',dir=ROOT/'.local') as tmp:
                 root=Path(tmp);a,b=[d.account(root) for _ in range(2)];a['device'].pin(b['device']);b['device'].pin(a['device']);group=establish(a,b)
                 output=ROOT/f'reports/evidence/native-netem-{args.profile}-{seed}-{args.count}.json'
-                fixture=root/'fixture.json';fixture.write_text(json.dumps(dict(profile=args.profile,seed=seed,count=args.count,group=group,output=str(output),progress=str(ROOT/'.local/native-network-progress.json'),cert=str(ROOT/'.local/tls.pem'),library=str(ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so'),devices=[dict(id=who['device'].identity,path=str(who['device'].path),passphrase=who['device'].password,session=who['session'],endpoint=f'https://127.0.0.1:{55990+i}') for i,who in enumerate((a,b))])));fixture.chmod(0o600)
+                fixture=root/'fixture.json';fixture.write_text(json.dumps(dict(profile=args.profile,seed=seed,count=args.count,group=group,output=str(output),progress=str(ROOT/'.local/native-network-progress.json'),cert=str(ROOT/'.local/tls.pem'),library=str(ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so'),devices=[dict(id=who['device'].identity,path=str(who['device'].path),passphrase=who['device'].password,session=who['session'],endpoint=f'https://127.0.0.1:{15990+i}') for i,who in enumerate((a,b))])));fixture.chmod(0o600)
                 source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
                 binary_hashes={str(p.relative_to(ROOT)):hashlib.file_digest(p.open('rb'),'sha256').hexdigest() for p in [ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so',ROOT/'src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll']}
                 source_hashes={str(p.relative_to(ROOT)):hashlib.file_digest(p.open('rb'),'sha256').hexdigest() for p in [ROOT/'apps/client_flutter/lib/delivery_client.dart',ROOT/'apps/client_flutter/lib/transport.dart',ROOT/'apps/client_flutter/lib/session.dart',ROOT/'apps/client_flutter/tool/network_trial.dart']}

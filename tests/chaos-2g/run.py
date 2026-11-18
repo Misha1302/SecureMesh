@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Measured TLS/OpenMLS traffic over actual Linux netem in project-only containers."""
 import argparse
+import fcntl
 import hashlib
 import asyncio
 import base64
@@ -59,8 +60,8 @@ class Duplex:
 
 async def trial(a,b,group,profile,seed,count):
     da,db=a['device'],b['device']
-    x=await Duplex().start(55990,da,a['session']['accessToken'])
-    y=await Duplex().start(55991,db,b['session']['accessToken'])
+    x=await Duplex().start(15990,da,a['session']['accessToken'])
+    y=await Duplex().start(15991,db,b['session']['accessToken'])
     rate,rtt,loss=(20,1500,3) if profile=='gprs' else (10,3000,10)
     setup={}
     for index,name in enumerate(['netem-a','netem-b']):
@@ -146,6 +147,9 @@ async def trial(a,b,group,profile,seed,count):
         await asyncio.gather(x.close(),y.close())
 
 def main():
+    suite_lock=(ROOT/'.local/netem-suite.lock').open('w')
+    try:fcntl.flock(suite_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError:raise RuntimeError('SECUREMESH_NETEM_SUITE_ALREADY_RUNNING') from None
     parser=argparse.ArgumentParser(); parser.add_argument('--profile',choices=['gprs','severe'],required=True); parser.add_argument('--seeds',default='7,19,41'); parser.add_argument('--count',type=int,default=200)
     args=parser.parse_args()
     os.environ['SECUREMESH_TEST_URLS']='https://127.0.0.1:5090;https://10.239.238.1:5090'
