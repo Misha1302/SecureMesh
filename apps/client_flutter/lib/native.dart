@@ -69,11 +69,11 @@ class _ClientAppState extends State<ClientApp> {
   @override
   void dispose() {
     timer?.cancel();
-    store?.dispose();
+    delivery?.close();
     transport?.close();
     session?.close();
-    delivery?.close();
     http?.close(force: true);
+    store?.dispose();
     path.dispose();
     pass.dispose();
     composer.dispose();
@@ -199,17 +199,14 @@ class _ClientAppState extends State<ClientApp> {
     final epoch = generation;
     busy = true;
     timer?.cancel();
-    final started = DateTime.now();
     var nextDelay = const Duration(seconds: 3);
     try {
       final progress = await delivery!.tick(profile!['group'] as String);
       nextDelay = progress.delay;
       failures = 0;
-      online = true;
-      connectionState = "connected";
-      lite =
-          DateTime.now().difference(started).inMilliseconds > 2500 ||
-          delivery!.receiptError != null;
+      online = progress.connected;
+      connectionState = online ? 'connected' : 'offline';
+      lite = progress.weak || delivery!.receiptError != null;
       error = null;
     } catch (failure) {
       if (epoch != generation) return;
@@ -328,12 +325,12 @@ class _ClientAppState extends State<ClientApp> {
   void lock() {
     generation++;
     timer?.cancel();
-    store?.dispose();
+    delivery?.close();
     transport?.close();
     session?.close();
-    delivery?.close();
     transport = null;
     http?.close(force: true);
+    store?.dispose();
     setState(() {
       store = null;
       profile = null;

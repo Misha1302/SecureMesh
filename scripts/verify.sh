@@ -39,6 +39,7 @@ else
   check flutter-sdk test -x .local/flutter/bin/flutter
 fi
 check network-report python3 scripts/render_network_report.py
+check native-network-report python3 scripts/render_native_network_report.py
 check acceptance-gate python3 tools/check_completion.py
 check v2-acceptance-gate python3 scripts/check_v2_completion.py
 

@@ -14,8 +14,9 @@ import delivery as d
 
 
 class FaultProxy:
-    def __init__(self, mode):
+    def __init__(self, mode, upstream_port=5095):
         self.mode=mode
+        self.upstream_port=upstream_port
         self.loop=asyncio.new_event_loop()
         self.thread=threading.Thread(target=self.loop.run_forever)
         self.thread.start()
@@ -36,13 +37,13 @@ class FaultProxy:
         try:
             header=await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'),10)
             websocket=False
-            source,upstream=await asyncio.open_connection('127.0.0.1',5095,ssl=d.TLS,server_hostname='localhost')
+            source,upstream=await asyncio.open_connection('127.0.0.1',self.upstream_port,ssl=d.TLS,server_hostname='localhost')
             self.writers.add(upstream)
             async def pipe(src,dst,downstream):
                 while data:=await src.read(16384):
                     mode=self.mode.read_text()
                     self.observed.append(dict(event='data',websocket=websocket,mode=mode,downstream=downstream,bytes=len(data)))
-                    if websocket and (mode=='halfopen' or (mode=='lostack' and downstream)):
+                    if mode=='offline' or (websocket and (mode=='halfopen' or (mode=='lostack' and downstream))):
                         self.dropped+=len(data);continue
                     if websocket and mode=='malformed' and downstream:
                         # Invalid server binary frame, not a simulated encrypted message or ACK.
@@ -94,14 +95,19 @@ class FaultProxy:
 
 
 def main():
-    d.BASE='https://127.0.0.1:5095'
+    d.BASE='https://127.0.0.1:5097'
     with d.Server(),tempfile.TemporaryDirectory(prefix='securemesh-native-transport-',dir=d.ROOT/'.local') as tmp:
+        try:
+            with d.Server(legacy_bootstrap=False):
+                raise AssertionError('Second fixture attached to an existing API')
+        except RuntimeError as error:
+            assert str(error)=='TEST_API_PORT_IN_USE_5097'
         root=Path(tmp);a,b=[d.account(root) for _ in range(2)]
         da,db=a['device'],b['device'];da.pin(db);db.pin(da)
         group=str(uuid.uuid4());da.call('create',group=group)
         welcome=da.call('add',group=group,keypackage=db.call('keypackage')['keypackage']);db.call('join',group=group,welcome=welcome['welcome'])
         d.request('/v1/conversations',dict(id=group,deviceIds=[da.identity,db.identity],initialEpoch=welcome['epoch']),token=a['session']['accessToken'],expected=201)
-        mode=root/'mode';mode.write_text('pass');proxy=FaultProxy(mode)
+        mode=root/'mode';mode.write_text('pass');proxy=FaultProxy(mode,upstream_port=5097)
         fixture=root/'fixture.json'
         fixture.write_text(json.dumps(dict(endpoint=f'https://127.0.0.1:{proxy.port}',group=group,mode=str(mode),cert=str(d.ROOT/'.local/tls.pem'),library=str(d.ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so'),devices=[dict(id=who['device'].identity,path=str(who['device'].path),passphrase=who['device'].password,token=who['session']['accessToken']) for who in (a,b)])))
         fixture.chmod(0o600)

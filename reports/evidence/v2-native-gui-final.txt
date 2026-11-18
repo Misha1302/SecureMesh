@@ -1,5 +1,6 @@
-UTC: 2026-11-18T21:04:53.538646+00:00
-Command: ['.local/venv/bin/python', 'tests/gui/native_v2.py', '--script', 'tests/gui/v2_scenario.json']
+UTC: 2026-11-18T21:15:21.859320+00:00
+Command: ['make', 'gui-smoke']
+.local/venv/bin/python tests/gui/native_v2.py --script tests/gui/v2_scenario.json
 Owned native GUI ready.
 {"completed": ["click", "wait", "capture"]}
 {"completed": ["resize", "wait", "capture"]}

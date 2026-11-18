@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Live HTTPS/WSS API + PostgreSQL + separate SQLCipher/OpenMLS client processes."""
 import base64
+import fcntl
 import concurrent.futures
 import importlib.util
 import json
 import os
 import secrets
 import ssl
+import socket
 import subprocess
 import sys
 import tempfile
@@ -102,13 +104,28 @@ class Server:
         self.database=database
         self.legacy_bootstrap=legacy_bootstrap
     def __enter__(self):
+        port=urllib.parse.urlparse(BASE).port
+        self.port_lock=(ROOT/'.local'/f'test-api-{port}.lock').open('w')
+        try: fcntl.flock(self.port_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.port_lock.close()
+            raise RuntimeError(f'TEST_API_PORT_IN_USE_{port}') from None
         password=dict(line.split('=',1) for line in (ROOT/'.env').read_text().splitlines())['SECUREMESH_DB_PASSWORD']
         self.env=dict(os.environ,ASPNETCORE_ENVIRONMENT='Development',ConnectionStrings__Database=f'Host=127.0.0.1;Port=55438;Database={self.database};Username=securemesh;Password={password}',Kestrel__Certificates__Default__Path=str(ROOT/'.local/tls.pem'),Kestrel__Certificates__Default__KeyPath=str(ROOT/'.local/tls.key'))
         self.env['EnableLegacyConversationBootstrap']=str(self.legacy_bootstrap).lower()
         self.log=(ROOT/'.local'/('api-'+BASE.rsplit(':',1)[-1]+'.log')).open('w')
-        self.start()
+        try:self.start()
+        except BaseException:
+            if hasattr(self,'p') and self.p.poll() is None:self.stop()
+            self.log.close();self.port_lock.close();raise
         return self
     def start(self):
+        # Never accept another process's readiness response as this fixture's.
+        endpoint=urllib.parse.urlparse(BASE)
+        with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+            try:probe.bind((endpoint.hostname,endpoint.port))
+            except OSError:raise RuntimeError(f'TEST_API_PORT_IN_USE_{endpoint.port}') from None
         self.p=subprocess.Popen(['dotnet','src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll','--urls',os.environ.get('SECUREMESH_TEST_URLS',BASE)],cwd=ROOT,env=self.env,stdout=self.log,stderr=self.log)
         for _ in range(150):
             if self.p.poll() is not None: raise RuntimeError('API died; inspect .local/api-delivery.log')
@@ -118,7 +135,7 @@ class Server:
     def stop(self): self.p.terminate(); self.p.wait(timeout=10)
     def restart(self): self.stop(); self.start()
     def __exit__(self,*_):
-        self.stop(); self.log.close()
+        self.stop(); self.log.close();self.port_lock.close()
 
 def main():
     with Server() as server, tempfile.TemporaryDirectory(prefix='securemesh-delivery-',dir=ROOT/'.local') as tmp:

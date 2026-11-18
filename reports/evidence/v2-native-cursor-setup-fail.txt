@@ -1,0 +1,8 @@
+UTC: 2026-11-18T21:08:49.376354+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/native_cursor_recovery.py']
+Traceback (most recent call last):
+  File "/home/micodiy/SecureMesh/tests/integration/native_cursor_recovery.py", line 13, in <module>
+    import psycopg
+ModuleNotFoundError: No module named 'psycopg'
+
+Exit code: 1

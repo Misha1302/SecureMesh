@@ -8,12 +8,21 @@ typedef CryptoCommand = Future<Map<String, dynamic>> Function(
 ]);
 
 class DeliveryProgress {
-  DeliveryProgress(this.sent, this.received, this.queued);
+  DeliveryProgress(
+    this.sent,
+    this.received,
+    this.queued, {
+    this.active = false,
+    this.connected = false,
+    this.weak = false,
+  });
   final int sent, received, queued;
+  final bool active;
+  final bool connected, weak;
   Duration get delay => Duration(
     milliseconds: queued > 0
         ? 50
-        : sent > 0 || received > 0
+        : active || sent > 0 || received > 0
         ? 250
         : 3000,
   );
@@ -27,6 +36,12 @@ class NativeDelivery {
   final MeshTransport transport;
   Future<void>? _receipt;
   final Map<String, int> _acknowledged = {};
+  final Map<String, Future<void>> _sends = {};
+  Future<void>? _pull;
+  Object? _error;
+  StackTrace? _errorStack;
+  int _sent = 0, _received = 0;
+  bool _connected = false, _weak = false;
   Object? receiptError;
   bool _closed = false, _busy = false;
   void close() {
@@ -37,71 +52,122 @@ class NativeDelivery {
     if (_closed || _busy) throw StateError('DELIVERY_NOT_AVAILABLE');
     _busy = true;
     try {
+      if (_error != null) {
+        final error = _error!, stack = _errorStack!;
+        _error = null;
+        _errorStack = null;
+        Error.throwWithStackTrace(error, stack);
+      }
       final pending = (await crypto('outbox'))['messages'] as List;
-      // Drain earlier application messages before a control commit. Control
-      // epochs are never raced with old-epoch application writes over HTTPS.
-      final batch = <Map<String, dynamic>>[];
-      for (final message in pending.take(3)) {
+      // Refill available write slots independently of a slow sync or another
+      // write's ACK. Waiting for a whole batch makes one TCP retransmission
+      // stall all future writes and builds an unbounded queue on 2G.
+      for (final raw in pending) {
+        final message = Map<String, dynamic>.from(raw as Map);
+        final key = '${message['group']}/${message['id']}';
+        // Control epochs remain serial barriers. Never overtake earlier
+        // application writes, including ones still awaiting durable ACKs.
         if (message['kind'] != 1) {
-          if (batch.isEmpty) {
-            batch.add(Map<String, dynamic>.from(message as Map));
-          }
+          if (_sends.isEmpty) _startSend(key, message);
           break;
         }
-        batch.add(Map<String, dynamic>.from(message as Map));
+        if (_sends.containsKey(key)) continue;
+        if (_sends.length >= 3) break;
+        _startSend(key, message);
       }
-      var received = 0;
-      final sending = batch.map((message) async {
-        final ack = await transport.send(message);
-        if (ack['durable'] != true) throw StateError('DURABLE_ACK_REQUIRED');
-        await crypto('saved', {
-          'group': message['group'],
-          'id': message['id'],
-          'seq': ack['serverSequence'],
-        });
-      });
-      final pulling = () async {
-        var cursor =
-            (await crypto('cursor', {'group': group}))['cursor'] as String;
-        for (var pages = 0; pages < 10; pages++) {
-          Map<String, dynamic> page;
-          try {
-            page = await transport.sync(group, cursor);
-          } on ApiFailure catch (failure) {
-            if (failure.code == 'INVALID_CURSOR' && cursor.isNotEmpty) {
-              cursor = '';
-              continue;
-            }
-            rethrow;
-          }
-          final messages = page['messages'] as List;
-          for (var i = 0; i < messages.length; i++) {
-            final message = messages[i] as Map;
-            await crypto('ingest', {
-              'group': group,
-              'id': message['clientMessageId'],
-              'sender': message['senderDeviceId'],
-              'seq': message['serverSequence'],
-              'epoch': message['mlsEpoch'],
-              'kind': message['envelopeKind'],
-              'ciphertext': message['ciphertext'],
-              'digest': message['ciphertextSha256'],
-              'cursor': i == messages.length - 1 ? page['nextCursor'] : '',
-            });
-          }
-          received += messages.length;
-          cursor = page['nextCursor'] as String;
-          if (page['hasMore'] != true) break;
-        }
-        final seq = (await crypto('cursor', {'group': group}))['seq'] as int;
-        _scheduleReceipt(group, seq);
-      }();
-      await Future.wait<void>([...sending, pulling]);
+      _pull ??= _pullMessages(group)
+          .catchError(_rememberError)
+          .whenComplete(() => _pull = null);
+      await Future.any<void>([
+        ..._sends.values,
+        ?_pull,
+        Future<void>.delayed(const Duration(milliseconds: 250)),
+      ]);
+      final sent = _sent, received = _received;
+      _sent = _received = 0;
       final remaining = (await crypto('outbox'))['messages'] as List;
-      return DeliveryProgress(batch.length, received, remaining.length);
+      return DeliveryProgress(
+        sent,
+        received,
+        remaining.length,
+        active: _pull != null || _sends.isNotEmpty,
+        connected: _connected,
+        weak: _weak,
+      );
     } finally {
       _busy = false;
     }
+  }
+
+  void _rememberError(Object error, StackTrace stack) {
+    if (_closed) return;
+    _connected = false;
+    _error ??= error;
+    _errorStack ??= stack;
+  }
+
+  void _startSend(String key, Map<String, dynamic> message) {
+    _sends[key] =
+        () async {
+          final elapsed = Stopwatch()..start();
+          final ack = await transport.send(message);
+          if (_closed) {
+            return; // durable ciphertext remains retryable after reopen.
+          }
+          _connected = true;
+          _weak = elapsed.elapsedMilliseconds > 2500;
+          if (ack['durable'] != true) throw StateError('DURABLE_ACK_REQUIRED');
+          await crypto('saved', {
+            'group': message['group'],
+            'id': message['id'],
+            'seq': ack['serverSequence'],
+          });
+          _sent++;
+        }().catchError(_rememberError).whenComplete(() {
+          _sends.remove(key);
+        });
+  }
+
+  Future<void> _pullMessages(String group) async {
+    var cursor = (await crypto('cursor', {'group': group}))['cursor'] as String;
+    for (var pages = 0; pages < 10 && !_closed; pages++) {
+      Map<String, dynamic> page;
+      try {
+        final elapsed = Stopwatch()..start();
+        page = await transport.sync(group, cursor);
+        _connected = true;
+        _weak = elapsed.elapsedMilliseconds > 2500;
+      } on ApiFailure catch (failure) {
+        if (failure.code == 'INVALID_CURSOR' && cursor.isNotEmpty) {
+          cursor = '';
+          continue;
+        }
+        rethrow;
+      }
+      if (_closed) return;
+      final messages = page['messages'] as List;
+      for (var i = 0; i < messages.length; i++) {
+        if (_closed) return;
+        final message = messages[i] as Map;
+        await crypto('ingest', {
+          'group': group,
+          'id': message['clientMessageId'],
+          'sender': message['senderDeviceId'],
+          'seq': message['serverSequence'],
+          'epoch': message['mlsEpoch'],
+          'kind': message['envelopeKind'],
+          'ciphertext': message['ciphertext'],
+          'digest': message['ciphertextSha256'],
+          'cursor': i == messages.length - 1 ? page['nextCursor'] : '',
+        });
+      }
+      _received += messages.length;
+      cursor = page['nextCursor'] as String;
+      if (page['hasMore'] != true) break;
+    }
+    if (_closed) return;
+    final seq = (await crypto('cursor', {'group': group}))['seq'] as int;
+    _scheduleReceipt(group, seq);
   }
 
   void _scheduleReceipt(String group, int seq) {

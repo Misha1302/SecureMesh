@@ -118,11 +118,18 @@ Future<void> main(List<String> args) async {
       transport: transports[0],
       crypto: (op, [args = const {}]) => crypto(stores[0], op, args),
     );
-    final progress = await cycle.tick(group);
-    require(
-      progress.sent == 3 && progress.queued == 0,
-      'PIPELINED_NATIVE_CYCLE_FAILED',
-    );
+    var saved = 0;
+    final draining = Stopwatch()..start();
+    while ((await crypto(stores[0], 'outbox'))['messages'].isNotEmpty) {
+      saved += (await cycle.tick(group)).sent;
+      require(
+        draining.elapsed < const Duration(seconds: 10),
+        'NATIVE_CYCLE_STALLED',
+      );
+    }
+    // Include completions since the final tick took its progress snapshot.
+    saved += (await cycle.tick(group)).sent;
+    require(saved == 3, 'PIPELINED_NATIVE_CYCLE_FAILED');
     cycle.close();
     require(transports.every((t) => t.mode == 'wss'), 'WSS_NOT_PRIMARY');
     mode.writeAsStringSync('halfopen');

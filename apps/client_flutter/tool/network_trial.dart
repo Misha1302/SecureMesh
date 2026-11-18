@@ -42,6 +42,7 @@ Future<void> main(List<String> args) async {
   var stop = false;
   var retries = 0, httpsRequests = 0;
   final errors = <String>[];
+  Timer? reporting;
   try {
     for (final device in fixture['devices'] as List) {
       final store = await NativeClient.open(
@@ -91,6 +92,18 @@ Future<void> main(List<String> args) async {
     await stdout.flush();
     await stdin.transform(utf8.decoder).transform(const LineSplitter()).first;
     clock.start();
+    reporting = Timer.periodic(const Duration(seconds: 10), (_) {
+      File(fixture['progress'] as String).writeAsStringSync(
+        jsonEncode({
+          'profile': fixture['profile'],
+          'seed': seed,
+          'offered': sent.length,
+          'received': received.length,
+          'elapsed_seconds': now(),
+          'retries': retries,
+        }),
+      );
+    });
     final interval = fixture['profile'] == 'gprs' ? 1000 : 1500;
     Future<void> offer(int index) async {
       final rng = Random(seed + index),
@@ -250,6 +263,7 @@ Future<void> main(List<String> args) async {
       throw StateError('GPRS_P95_EXCEEDED_15_SECONDS');
     }
   } finally {
+    reporting?.cancel();
     stop = true;
     for (final p in pumps) {
       p.close();

@@ -1,0 +1,19 @@
+UTC: 2026-11-18T21:17:52.915138+00:00
+Command: ['make', 'smoke']
+python3 tests/integration/smoke.py
+  SecureMesh.Api -> /home/micodiy/SecureMesh/src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:05.91
+time="2026-11-19T00:17:59+03:00" level=warning msg="Found orphan containers (securemesh-netem-a-1, securemesh-netem-b-1) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
+ Container securemesh-db-1 Running 
+ Container securemesh-db-1 Waiting 
+ Container securemesh-db-1 Healthy 
+PASS: API build; real PostgreSQL readiness; EF migration; restart and migration idempotence.
+.local/venv/bin/python tests/integration/delivery.py
+PASS: verified email + one-use token; Argon2 login; independent Ed25519 device proof; untrusted device denied; refresh rotation/reuse; real MLS HTTPS/WSS exchange; persistent offline queue; lost ACK/idempotent concurrent retries; digest/epoch conflict; encrypted receiver crash recovery; paginated scoped cursors; API restart; device revocation on active WSS; membership/IDOR denial; log secret checks; atomic message/outbox counts.
+
+Exit code: 0
