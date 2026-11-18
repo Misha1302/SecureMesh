@@ -16,6 +16,8 @@ Flutter 3.50.0 Linux debug собран и запущен в изолирова�
 ## Команды и фактические результаты
 
 - Подготовка GitHub: git switch -c main — exit 0; создание приватного Misha1302/SecureMesh через gh api — exit 0; git remote add origin — exit 0. До отправки scripts/scan_secrets.py проверил 209 текстовых файлов, отдельная проверка истории — 275 blobs: совпадений проверяемых шаблонов нет, exit 0. Это ограниченная проверка, не полная гарантия отсутствия секретов. Локальные .env, ключи, базы, SDK и сборки исключены из исходников.
+- GitHub push: git push -u origin main — exit 0; git ls-remote origin refs/heads/main — exit 0, удалённый SHA 270ff8bf6324695db78f08c908773e3589a9abf8 совпал с локальным HEAD на момент проверки. Приватность и default branch main подтверждены GitHub API, exit 0. Этот документирующий коммит может быть новее проверенного SHA.
+- GitHub Actions: https://github.com/Misha1302/SecureMesh/actions/runs/44261275576 — failure до запуска шагов. Аннотация GitHub сообщает о failed account payments или необходимости увеличить spending limit. Платёжные настройки не менялись; облачные тесты не выполнялись. После устранения ограничения владельцем можно повторить workflow; уже известные локальные RustSec/acceptance blockers при этом сохраняются.
 - python3 tools/verify_bundle.py: exit 0, 24 SHA-256 исходных файла неизменны.
 - make bootstrap: exit 0 в существующем локальном workspace (не полный clean-room прогон).
 - make smoke: exit 0, настоящие API/PostgreSQL/OpenMLS, аутентификация, WSS/HTTPS и повторная доставка.

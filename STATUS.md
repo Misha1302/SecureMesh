@@ -30,4 +30,6 @@ make bootstrap and make smoke: exit 0. make verify: exit 2 from make (underlying
 
 Acceptance: P0 11 PASS / 1 FAIL / 14 NOT_RUN; P1 2 PASS / 11 NOT_RUN / 1 BLOCKED. Partial coverage stays NOT_RUN. Compatibility probes failed upstream version constraints; no vulnerability ignored.
 
+GitHub handoff on 2026-11-18: private origin/main received 270ff8bf6324695db78f08c908773e3589a9abf8; push and remote SHA verification exited 0. Actions run 44261275576 failed before any job steps started: GitHub reports failed account payments or a spending limit that needs increasing. Billing was not changed. This is not a CI test result; the local verification results above remain authoritative.
+
 Next: dependency remediation, real directory/KeyPackage/Welcome/enrollment, native WSS-first manager, mixed 2G fault schedule and remaining P0, then all M4–M6 features. See reports/FINAL_HANDOFF_RU.md, PLAN.md and reports/ACCEPTANCE_MATRIX.csv. Do not recreate completed modules. Source checkpoint c1dfffb8870d56c23d2ad7988657c0f2ef072104; checkout HEAD: git rev-parse HEAD.
