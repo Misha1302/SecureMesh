@@ -1,5 +1,6 @@
-UTC: 2026-11-18T21:14:09.307610+00:00
-Command: ['.local/venv/bin/python', 'tests/integration/native_cursor_recovery.py']
+UTC: 2026-11-18T22:31:37.476840+00:00
+Command: ['make', 'native-cursor-recovery']
+.local/venv/bin/python tests/integration/native_cursor_recovery.py
 PASS: native 1000-event ordered cursor recovery; no delivery during blackout; local inbox and cursor committed before processed receipt.
 PASS: actual 60.000s blackout blocked WSS and HTTPS, all 1000 ordered IDs recovered, cursor/receipt=1000 and reopened SQLCipher state verified.
 

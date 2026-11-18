@@ -1,63 +1,73 @@
-# SecureMesh — локальный checkpoint, полный продукт не завершён
+# SecureMesh V2 — проверяемый локальный checkpoint
 
-Статус: PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.
-Репозиторий: /home/micodiy/SecureMesh.
-Ветка: main, создана из codex/securemesh-build; исходная ветка сохранена.
-По прямому запросу пользователя 2026-11-18 создан приватный репозиторий https://github.com/Misha1302/SecureMesh и настроен origin. Публикация исходников не является развёртыванием приложения.
-Проверенный исходный code checkpoint: c1dfffb8870d56c23d2ad7988657c0f2ef072104.
-Финальный checkout HEAD определяется командой git rev-parse HEAD (документирующий коммит может быть новее исходного checkpoint).
+PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.
+Рабочий каталог: /home/micodiy/SecureMesh. Разработка: codex/securemesh-v2 от dae7259. Проверенный runtime checkpoint: 4b003dd; штатный demo-path исправлен в fffe534, повтор сетевого advisory-запроса — 0819e00. Документирующие коммиты могут быть новее; git rev-parse HEAD определяет текущий checkout. Все исходные ТЗ/checks и docs/v2 сохранены. Развёртывания, DNS, платные ресурсы и production-данные не затронуты.
 
-## Реально реализовано и выполнено
+## Реально работает
 
-.NET 10 API, PostgreSQL и EF-миграции; Mailpit; Argon2id; подтверждение владения ключом устройства; одноразовые email-токены, refresh rotation/reuse revocation. Настоящий OpenMLS 0.9.2, отдельные клиентские процессы, Welcome, добавление/исключение третьего участника и rekey, отрицательные replay/key-substitution проверки. SQLCipher с общей транзакцией для MLS state и outbox/inbox/cursor. Серверный COMMIT message+outbox до durable ACK, idempotence/conflict, cursor pagination, protobuf WSS и HTTPS. Гонка MLS self-update коммитов с reject/rebase проверена.
+- API/.NET10/PostgreSQL17, шесть EF-миграций, Mailpit verification, Argon2id, отдельный device proof, rotating one-use refresh. Восемь одновременных запросов используют одну сохранённую ротацию. Fresh/upgrade/restart и isolated PG restore проверены: исходный сеанс, новый login и расшифрование исходным SQLCipher/OpenMLS-клиентом работают.
+- Новый вход другого устройства остаётся PENDING_TRUST. Signed request/proof/grant, независимая проверка закреплённого ключа и явная activation проверены настоящими API/клиентами. Само одобрение старым устройством доступа не активирует. Replay/expiry/race/owner/key/revocation/substitution negatives проходят. Квота 32 выдачи/скользящие сутки теперь сохраняется отдельно от истёкших заявок: старый бинарник проваливает тест, новый отклоняет 33-ю выдачу и после restart; повтор той же заявки лимит не расходует. Камеры QR, MLS leaf и старой истории это не добавляет.
+- DM: username-заявка и согласие получателя, настоящий public-only OpenMLS KeyPackage validator, одноразовый lease, signed server-routed Welcome и независимое сравнение ключей. Транзакционный join проверяет ровно двух участников; повтор Welcome не откатывает ratchet. Старый прямой bootstrap выключен по умолчанию. Seed-demo использует routed flow.
+- Настоящие OpenMLS/SQLCipher, атомарные ratchet+immutable outbox и decrypt+inbox+cursor, server COMMIT до durable ACK, конфликт/idempotence и epoch race/rebase. Standalone add/remove/rekey проверен; полная групповая/мультиустройственная система ещё отсутствует.
+- Linux Flutter UI: регистрация/письмо/login, отдельный локальный пароль, исправление ошибочного username, account hub, consent/key comparison, DM list/create/join и Unicode. Реальный GUI переживает offline COMMIT → SIGKILL → открытие того же store → доставку того же ciphertext ровно один раз. Pending UI и настоящая signed заявка проверены, сервер отказывает кандидату в приватных чатах. Пять исходных замечаний независимого UI-review закрыты; это narrow Linux verdict, не разрешение на выпуск продукта.
+- Production-controller Dart WSS/protobuf: bounded window6, три независимо пополняемые отправки, sync и coalesced receipts, HTTPS fallback/re-probe, строгие frame/ACK/Upgrade проверки. TLS socket после Upgrade имеет явного владельца и уничтожается на disconnect/close/timeout. SHA-1 здесь только стандартный RFC6455 accept challenge из vetted crypto package; TLS/MLS алгоритмы и проверка сертификата не ослаблены. Два прежних варианта close зависали и сохранены как FAIL, итоговый вариант проходит реальные fault/exit проверки.
 
-Flutter 3.50.0 Linux debug собран и запущен в изолированном Xvfb. Два GUI-процесса действительно обменялись текстом через TLS API/PostgreSQL; публичные ключи сравнены; offline очередь пережила SIGKILL и повторное открытие. Есть чат/настройки, RU/EN строки, light/dark, компактная компоновка. UI ещё использует HTTPS polling; WSS-first manager отсутствует. Регистрация в UI не подключена; make seed-demo создаёт реальные локальные тестовые аккаунты/профили. Браузерная сборка отключает приватные чаты явно.
+## Измерения и точные результаты
 
-## Команды и фактические результаты
+Финальный набор: 200 сообщений в каждом направлении, seeds7/19/41, реальные TLS/API/PG/OpenMLS/SQLCipher и netem только в двух контейнерах SecureMesh. Во всех шести trials совпадают source hashes текущего controller и набор бинарников, наблюдён child_exit_code=0. Все 2400 ID доставлены без потерь/логических дублей, outboxes обработаны.
 
-- Подготовка GitHub: git switch -c main — exit 0; создание приватного Misha1302/SecureMesh через gh api — exit 0; git remote add origin — exit 0. До отправки scripts/scan_secrets.py проверил 209 текстовых файлов, отдельная проверка истории — 275 blobs: совпадений проверяемых шаблонов нет, exit 0. Это ограниченная проверка, не полная гарантия отсутствия секретов. Локальные .env, ключи, базы, SDK и сборки исключены из исходников.
-- GitHub push: git push -u origin main — exit 0; git ls-remote origin refs/heads/main — exit 0, удалённый SHA 270ff8bf6324695db78f08c908773e3589a9abf8 совпал с локальным HEAD на момент проверки. Приватность и default branch main подтверждены GitHub API, exit 0. Этот документирующий коммит может быть новее проверенного SHA.
-- GitHub Actions: https://github.com/Misha1302/SecureMesh/actions/runs/44261275576 — failure до запуска шагов. Аннотация GitHub сообщает о failed account payments или необходимости увеличить spending limit. Платёжные настройки не менялись; облачные тесты не выполнялись. После устранения ограничения владельцем можно повторить workflow; уже известные локальные RustSec/acceptance blockers при этом сохраняются.
-- python3 tools/verify_bundle.py: exit 0, 24 SHA-256 исходных файла неизменны.
-- make bootstrap: exit 0 в существующем локальном workspace (не полный clean-room прогон).
-- make smoke: exit 0, настоящие API/PostgreSQL/OpenMLS, аутентификация, WSS/HTTPS и повторная доставка.
-- make verify: exit 2 от make, underlying script exit 1. Build/crypto/API/epochs/format/secret-pattern/Flutter checks проходят; RustSec и acceptance gate остаются красными. reports/evidence/verify.txt.
-- tests/crypto/process_spike.py, tests/integration/delivery.py, epochs.py: exit 0.
-- tests/integration/recovery.py: exit 0; остановка БД до COMMIT =>503 без ACK; изолированный pg_dump/pg_restore и расшифрование оригинальным клиентом. Объектное хранилище не проверено.
-- Dart/FRB native crypto smoke, Flutter analyzer и два layout-теста: exit 0.
-- Linux build: exit 0; последние исходники/бинарник отдельно проверены. Android/iOS/macOS артефактов нет.
-- NuGet scan exit 0; RustSec exit 1, четыре advisory. Secret-pattern scan exit 0 с ограниченным набором паттернов, не обещание отсутствия всех секретов.
-- make down: exit 0; только контейнеры/процессы SecureMesh остановлены, DB volume сохранён.
-- staging Compose config syntax: exit 0, без запуска. Deployment prerequisite gate: exit 1, NOT_READY.
+| Профиль | p95 seed7/19/41, секунды | Критерий |
+|---|---|---|
+| GPRS:20kbit/s, RTT1.5s, loss3% | 4.672/4.928/4.742 | <=15s в каждом полном trial, PASS |
+| Severe:10kbit/s, RTT3s, loss10% | 42.772/56.869/66.886 | eventual delivery, без временного SLA, PASS |
 
-## 2G evidence
+Запуски выполнены как make native-network-gprs, отдельный severe --seeds41 (сначала проблемный case), затем severe --seeds7,19; все по200 в каждом направлении. Точные команды/exit codes: v2-native-gprs-full.txt, v2-native-severe-41-owned.txt, v2-native-severe-7-19-owned.txt в reports/evidence. Строгий renderer: v2-native-network-report.txt, exit0, 6/6. Raw IDs/timings/tc counters/source+binary SHA — native-netem-*-200.json; таблица NATIVE_2G_REPORT.md. Старые Python-результаты отдельно в 2G_REPORT.md. Первая GPRS неудача и оба severe зависания сохранены; наличие готового JSON без успешного завершения процесса не засчитывается.
 
-GPRS 20 kbit/s на направление / RTT 1.5 s / loss3%: seed7/19/41, по200 сообщений A→B и B→A; все1200 ID доставлены, дублей нет; p95 4.351 / 4.375 / 4.754 s. Первоначальный FAIL p95 25.721 s сохранён; критерий не снижался.
+Отдельный текущий native recovery: blackout WSS+HTTPS 60.000s, 1000 событий в порядке без дублей/потерь и без доставки во время blackout; после повторного открытия SQLCipher cursor=1000, реальный PostgreSQL receipt=1000. Это отдельный сценарий, а не полный combined profile/crash/DB/media schedule. Статистика WSS — application bytes; точный100-character TLS accounting, battery/resource/load и media fairness не завершены. Outer retry counter не включает внутренние transport fallback; HTTPS request counts сохранены отдельно.
 
-Severe 10 kbit/s / RTT3s / loss10%, тот же объём и seeds: все1200 ID доставлены, дублей нет; p95 30.325 / 58.895 / 64.428 s; временной SLA нет. Настоящий netem только в контейнерах проекта. Raw IDs/тайминги/tc counters/хеши бинарников: reports/evidence/netem-v2-*.json; подробности reports/2G_REPORT.md.
+- make bootstrap и make smoke: exit0 в существующем workspace; clean-room не заявляется.
+- Linux debug build, analyzer,3 widget tests, native crypto/transport/session, enrollment/quota/migration/directory/restore checks: exit0.
+- Финальный make verify: exit2 (underlying script1). Все реализованные группы проходят;3 красных gate: RustSec, original acceptance и V2 acceptance. reports/evidence/v2-final-verify.txt. Первый aggregate с временным OSV network FAIL сохранён отдельно, повтор scan и aggregate выполнены; недоступный feed никогда не считается clearance.
+- Реальный make demo отдельно проверен через health и routed DM/decryption. Обнаруженный относительный validator-path при dotnet run исправлен абсолютной конфигурацией; negative/positive logs сохранены. make down: exit0, API/контейнеры проекта остановлены; volume securemesh_db сохранён (v2-volume-preserved.txt).
+- Оригинальные24 SHA-файла проверяются tools/verify_bundle.py; это проверка документов, не аудит безопасности.
 
-Это functioning-link baseline, не весь комбинированный crash/60s-blackout/half-open/media schedule и не испытание реальных операторов/батареи. AT-013 поэтому оставлен частичным. TLS accounting для100символов не завершён.
+Приёмка: P0 14PASS/1FAIL/11NOT_RUN; P1 2PASS/11NOT_RUN/1BLOCKED. V2 1PASS/18NOT_RUN/1BLOCKED. Частичные сценарии не повышены до PASS. Источники: обе working CSV-матрицы и TEST_RESULTS.md.
 
-## Приёмка и ограничения
+## Блокеры и оставшийся объём
 
-P0: 11 PASS, 1 FAIL, 14 NOT_RUN. P1: 2 PASS, 11 NOT_RUN, 1 BLOCKED. Частичное покрытие намеренно не названо PASS. Полная таблица: reports/ACCEPTANCE_MATRIX.csv и TEST_RESULTS.md.
+RustSec database472a4c9a785030434f15d7da84964d60fbe789ab: crypto-bigint0.5.5 (RUSTSEC-2026-0387), libcrux-kem0.0.9 (0330/0331), libsqlite3-sys0.35.0 (0459), плюс unmaintained proc-macro-error2. Совместимое обновление выбрало0 изменений; прямые версии нарушают upstream constraints. В advisory затронут также bundled SQLCipher новых wrappers — одного номера wrapper недостаточно. Ничего не проигнорировано, самописной криптографии/plaintext fallback нет. Независимого crypto/mobile/infra аудита не было. Реальные чувствительные данные использовать нельзя; production startup запрещён.
 
-RustSec: crypto-bigint 0.5.5 (RUSTSEC-2026-0387), libcrux-kem 0.0.9 (0330/0331), libsqlite3-sys 0.35.0 (0459), плюс unmaintained proc-macro-error2. Прямые обновления до исправленных major/minor несовместимы с текущими upstream constraints; реальные ошибки resolver сохранены. Ничего не проигнорировано и собственных криптопримитивов не добавлено. Независимого аудита нет; реальные чувствительные данные использовать нельзя. docs/SECURITY_LIMITATIONS.md.
+Pub OSV проверил55 hosted lock versions с настоящим известным affected positive control:0 reported package advisories. Тексты55/55 лицензий и хеши сохранены; SPDX/legal compatibility, полный SBOM/container/multi-ecosystem review не завершены. NuGet feed не сообщил известных уязвимых пакетов. Это ограниченные feed-checks, не безопасность продукта.
 
-Нет готового AS directory/одноразового leasing KeyPackages/серверной доставки Welcome, trusted enrollment/recovery, native WSS manager, полного mixed-fault набора. Основные M4–M6 отсутствуют: группы UI/социальные публичные пространства/медиа/голос/кружки/звонки/admin MFA/moderation. Не закрыты все hardening/load/storage/backup/platform checks. Android SDK36 существует, но лицензии/сборка bridge не проверены. Apple runner отсутствует. Полной framework-локализации и screen-reader проверки нет. Полный delivery candidate не заявляется.
+Не завершены: QR camera, MLS multi-device membership/revoke/rekey, history transfer/recovery/transparency и keyring/keystore. Crash между успешным onboarding login и полной записью local profile не покрыт готовым resume UI; encrypted draft не является recovery. Группы/каналы/посты, файлы/медиа/голос/кружки, disappearing/view-once, calls/push/admin/moderation и большая часть S2–S4 отсутствуют. Android SDK есть, build/licenses/bridge не проверены; Apple runner отсутствует; compact Linux не является Android evidence. Приватный web выключен. Полные clean-room/object+keyring restore/load/fuzz/platform/retention gates отсутствуют.
 
-## Локальный запуск
+## Запуск и продолжение
 
-make bootstrap; затем make demo в отдельном терминале.
-Для GUI: bash scripts/install-flutter.sh; make build-linux; make seed-demo; make client (два окна, разные профили из .local/demo/profiles.json). Файл содержит только синтетические локальные unlock-значения, ignored/mode600; не публиковать. make down останавливает только проект и сохраняет volume БД.
+```bash
+make bootstrap
+make demo
+# В другом терминале:
+make build-linux
+make client
+```
 
-## Продолжение
+API:https://127.0.0.1:5088; локальное письмо:http://127.0.0.1:58028. В GUI создайте два аккаунта, подтвердите письмо, примите username-заявку и независимо сравните ключи. Local passphrase не отправляется API; профили в ignored .local/profiles. make seed-demo необязателен; его ignored mode600 .local/demo/profiles.json содержит синтетические unlock-значения и не является recovery. make down сохраняет DB volume.
 
-1. Исправить dependency/provider/storage advisories через поддерживаемые upstream версии; повторить отрицательные crypto/persistence tests и RustSec без ignore.
-2. Подключить реальный KeyPackage/Welcome/device-trust flow и регистрацию к UI.
-3. Реализовать native WSS-first reconnect/fallback и смешанный воспроизводимый 2G fault schedule; не ослаблять AT-001..AT-024.
-4. Затем M4–M6, M7/M8 по исходному ТЗ. PLAN.md/STATUS.md и evidence позволяют продолжить без пересоздания реализованного.
+Дополнительные проверяемые команды:
 
-## Только позже для деплоя
+```bash
+make gui-smoke
+make gui-pending-smoke
+make native-cursor-recovery
+make enrollment-quota
+make restore-v2
+make native-network-gprs
+make native-network-severe
+make verify
+```
 
-После завершения функций/gates: независимый crypto/mobile/infra аудит, хост/юрисдикция, домен/DNS/TLS, SMTP/abuse, push/store signing, object/backup provider, admin MFA/bootstrap, мониторинг, retention/legal и операционное одобрение владельца. Сейчас удалённых действий, платных ресурсов и публикации нет. Шаблоны deploy не являются готовой инфраструктурой.
+Network suites запускаются последовательно и имеют общий exclusive lock; API fixtures не принимают чужой readiness. Порты15990/15991 вынесены из стандартного ephemeral range после реального TIME_WAIT-конфликта. Никакие host qdisc/sysctl или чужие контейнеры не менялись.
+
+Следующий критический путь: совместимый upstream security remediation без ignore; crash-safe onboarding draft resume с сохранением той же identity; полный mixed-fault schedule; MLS device/history/recovery по V2; затем остальные M4–M8/S2–S4 функции. Новые закрытые компоненты не пересоздавать. PLAN.md и матрицы сохраняют точный остаток.
+
+GitHub origin — существующий приватный https://github.com/Misha1302/SecureMesh. Финальная синхронизация/remote readback выполняются после локальных проверок; журнал будет в reports/evidence. Ранее Actions блокировался до запуска шагов по billing/spending limits; платёжные настройки не менялись. Локальные результаты не означают successful cloud CI. Публичный запуск требует завершённых gates, независимого аудита и отдельного разрешения владельца.

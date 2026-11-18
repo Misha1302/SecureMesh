@@ -1,0 +1,44 @@
+UTC: 2026-11-18T21:20:44.050279+00:00
+Command: ['make', 'native-network-gprs']
+.local/venv/bin/python tests/chaos-2g/native_run.py --profile gprs --seeds 7,19,41 --count 200
+ Container securemesh-netem-a-1 Recreate 
+ Container securemesh-netem-b-1 Recreate 
+ Container securemesh-netem-b-1 Recreated 
+ Container securemesh-netem-a-1 Recreated 
+ Container securemesh-netem-a-1 Starting 
+ Container securemesh-netem-b-1 Starting 
+ Container securemesh-netem-a-1 Started 
+ Container securemesh-netem-b-1 Started 
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10010 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10020 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10010 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10020 is small. Consider r2q change.
+{"profile":"gprs","seed":7,"messages_each_direction":200,"delivery_p50":2.873398000000009,"delivery_p95":4.922224,"delivery_p99":5.729273000000006,"duplicates":0,"missing_ids":0,"elapsed_seconds":201.490151,"retries":0,"recent_errors":[],"https_requests":0,"wss_application_bytes_sent":[189141,187886],"wss_application_bytes_received":[238900,236930],"platform":"Linux native Dart; production NativeDelivery/MeshTransport/FRB/OpenMLS/SQLCipher"}
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10010 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10020 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10010 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10020 is small. Consider r2q change.
+{"profile":"gprs","seed":19,"messages_each_direction":200,"delivery_p50":3.0072910000000093,"delivery_p95":4.742357000000002,"delivery_p99":5.289355999999998,"duplicates":0,"missing_ids":0,"elapsed_seconds":204.44464,"retries":0,"recent_errors":[],"https_requests":0,"wss_application_bytes_sent":[180033,182483],"wss_application_bytes_received":[230949,229892],"platform":"Linux native Dart; production NativeDelivery/MeshTransport/FRB/OpenMLS/SQLCipher"}
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10010 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10020 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10001 is big. Consider r2q change.
+Warning: sch_htb: quantum of class 10010 is small. Consider r2q change.
+Warning: sch_htb: quantum of class 10020 is small. Consider r2q change.
+{"profile":"gprs","seed":41,"messages_each_direction":200,"delivery_p50":3.001332000000005,"delivery_p95":4.918490000000006,"delivery_p99":6.393492000000002,"duplicates":0,"missing_ids":0,"elapsed_seconds":204.973549,"retries":0,"recent_errors":[],"https_requests":0,"wss_application_bytes_sent":[178977,189225],"wss_application_bytes_received":[235409,231118],"platform":"Linux native Dart; production NativeDelivery/MeshTransport/FRB/OpenMLS/SQLCipher"}
+ Container securemesh-netem-b-1 Stopping 
+ Container securemesh-netem-a-1 Stopping 
+ Container securemesh-netem-a-1 Stopped 
+ Container securemesh-netem-b-1 Stopped 
+
+Exit code: 0

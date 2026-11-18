@@ -1,0 +1,5 @@
+UTC: 2026-11-18T23:13:29.163768+00:00
+Command: ['docker', 'volume', 'inspect', 'securemesh_db', '--format', '{{.Name}}']
+securemesh_db
+
+Exit code: 0

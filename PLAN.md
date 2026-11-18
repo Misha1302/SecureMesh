@@ -24,8 +24,10 @@ Verified components and known failures are in STATUS.md and reports. No M0–M8 
 - [x] Native Linux build/launch, real two-GUI messaging, offline kill/reopen, body RU/EN/themes, layout tests.
 - [x] Execute security scans and record failures; raw evidence preserved.
 - [ ] Remediate four RustSec findings through compatible upstream/provider/storage versions; no suppressions/custom primitives.
-- [ ] Complete actual directory/KeyPackage/Welcome/enrollment/recovery and registration/trust UX.
-- [ ] Native WSS-first reconnect/HTTPS fallback; mixed blackout/crash/half-open/media fault schedule; all remaining P0.
+- [x] Consented initial-DM directory/KeyPackage/Welcome, signed manual device activation, native signup/trust/DM UX and real Linux GUI recovery tests.
+- [x] Native WSS-first reconnect/HTTPS fallback with real Dart fault and concurrent session tests.
+- [ ] Complete QR camera, multi-device MLS leaf enrollment/rekey, history transfer/recovery and trust transparency.
+- [ ] Full native 2G regressions and mixed blackout/crash/half-open/DB/media fault schedule; all remaining P0.
 - [ ] M4 groups/public channels/moderation, M5 all media, M6 calls/full native UX/platforms.
 - [ ] M7 complete security/resource/load/backup/retention/supply-chain matrix; independent audit remains future external gate.
 - [ ] M8 full local delivery candidate and approved future-deployment documentation; current handoff is a partial checkpoint.
@@ -41,10 +43,15 @@ Working branch: codex/securemesh-v2; original V1/V2 requirements stay immutable.
 3. S0 directory: authenticated signed one-use KeyPackage publication/leasing and routed Welcome with client pin verification, bounded quotas and transaction tests. Stage MLS membership commits until durable acceptance; preserve epoch conflict behavior (AT-007/040).
 4. S0 native transport: one bounded WSS protobuf connection, HTTPS fallback, timeouts/backoff and recovery with the same durable outbox/cursor. Exercise the actual Dart implementation against real API/MLS stores (AT-016).
 5. S0 native registration: connect account verification/login and device states to Flutter; no seed-only registration; honest partial chat availability. Preserve 320dp/RU/EN/theme behavior.
+   Current UI flow is connected and tested; remaining S0 edge: recover an encrypted onboarding draft after a crash between accepted server login and complete local profile persistence.
 6. S0/S1 network: warm GPRS/severe regressions and mixed blackout/lost-ACK/SIGKILL/half-open/DB interruptions, then media competition when real media exists (V2-08). Never promote partial coverage to PASS.
 7. S1 history transfer/recovery: independent user recovery secret, encrypted eligible-history snapshots, integrity/freshness/TTL exclusions; no live MLS secrets in archives. Test wrong-key/rollback and lost-all-devices trust reset (V2-04/05/06/09).
 8. Only after foundations: S2 DM/groups/public modes and ACL; S3 real E2EE media/capture/calls/push; S4 platform/load/restore/release provenance; S5 optional features. Missing stages retain NOT_RUN.
 
 Each completed component gets executed positive/negative tests, evidence, a meaningful commit and current STATUS/TEST_RESULTS/V2 matrix. Cloud billing, unavailable upstream fixes or platform runners do not justify bypassing gates; continue independent local S0 work. Exact continuation commands will be recorded at the checkpoint.
 
-V2 current component checkpoint: signed pending-device enrollment/activation, consented one-use KeyPackage/Welcome API, native registration/DM UI, WSS/HTTPS faults and session concurrency are implemented and exercised. Real GUI offline/SIGKILL/reopen passes. NativeDelivery now shares bounded pipelining with the Dart network driver; 20+20 GPRS probe passes, full native three-seed/200 trials are running. Next: finish the independent UI review/documentation, full GPRS/severe regression, mixed-fault schedule and remaining S0 security/P0 blockers. Do not start S2/S3 breadth to hide failed S0 gates.
+V2 current component checkpoint: signed pending-device enrollment/activation, persistent issuance quota (sixth migration), consented one-use KeyPackage/Welcome API, native registration/DM UI, WSS/HTTPS faults and session concurrency are implemented and exercised. True GUI offline/SIGKILL/reopen and current 60-second/1000-event recovery pass. NativeDelivery shares production code with the network driver. Both SDK-close attempts that leaked CLOSE_WAIT remain FAIL; explicit detached TLS socket ownership now passes all six final trials on 4b003dd (2400 IDs, normal process exit, matching source/binary provenance). GPRS p95 4.672/4.928/4.742s; severe eventual with no latency SLA. Actual make-demo DM launch is fixed/tested in fffe534.
+
+Final aggregate: make verify exits2 from the three mandatory red groups (RustSec and both acceptance matrices); all implemented groups pass. Current hosted Pub OSV positive-control scan and 55 retained license texts do not clear the four RustSec findings or complete supply-chain review.
+
+Next order: compatible upstream dependency/provider/storage remediation; crash-safe onboarding journal/resume using the same local identity; complete combined 2G blackout/lost-ACK/SIGKILL/half-open/DB/media schedule; then MLS multi-device leaf/rekey/history transfer/recovery and remaining S2–S4 features. No stage is complete, no production approval, no public deployment. Continue from reports/FINAL_HANDOFF_RU.md and the exact working matrices; do not recreate completed modules.

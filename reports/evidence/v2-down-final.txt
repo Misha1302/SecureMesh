@@ -1,0 +1,23 @@
+UTC: 2026-11-18T23:12:46.800588+00:00
+Command: ['make', 'down']
+bash scripts/down.sh
+ Container securemesh-db-1 Stopping 
+ Container securemesh-mailpit-1 Stopping 
+ Container securemesh-netem-b-1 Stopping 
+ Container securemesh-netem-a-1 Stopping 
+ Container securemesh-netem-b-1 Stopped 
+ Container securemesh-netem-b-1 Removing 
+ Container securemesh-netem-a-1 Stopped 
+ Container securemesh-netem-a-1 Removing 
+ Container securemesh-netem-b-1 Removed 
+ Container securemesh-netem-a-1 Removed 
+ Container securemesh-db-1 Stopped 
+ Container securemesh-db-1 Removing 
+ Container securemesh-db-1 Removed 
+ Container securemesh-mailpit-1 Stopped 
+ Container securemesh-mailpit-1 Removing 
+ Container securemesh-mailpit-1 Removed 
+ Network securemesh_default Removing 
+ Network securemesh_default Removed 
+
+Exit code: 0

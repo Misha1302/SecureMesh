@@ -1,4 +1,4 @@
-UTC: 2026-11-18T03:19:46.613235+00:00
+UTC: 2026-11-18T23:06:19.357389+00:00
 Command: ['.local/venv/bin/python', 'tests/integration/epochs.py']
 PASS: two real MLS commits race at epoch 1; exactly one accepted; lost ACK retry preserves commit; winner merges only after durable save; loser discards confirmed-rejected pending commit, processes winner, rebases at epoch 2; both clients resume encrypted text at epoch 3 with contiguous cursors. Group membership workflow remains separate.
 
