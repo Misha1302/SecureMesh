@@ -51,7 +51,7 @@ def main():
         da.call('enrollment_approve',reject=True,payload=payload,account=account,candidate_signature=proof,confirmed=False)
         da.call('enrollment_approve',reject=True,payload=payload,account=account,candidate_signature=base64.b64encode(bytes(64)).decode(),confirmed=True)
         grant=da.call('enrollment_approve',payload=payload,account=account,candidate_signature=proof,confirmed=True)['signature']
-        da.call('enrollment_approve',reject=True,payload=payload,account=account,candidate_signature=proof,confirmed=True)
+        assert da.call('enrollment_approve',payload=payload,account=account,candidate_signature=proof,confirmed=True)['signature']==grant
         d.request(f'/v1/devices/enrollment/{rid}/approve',dict(signature=proof),token=at,expected=403)
         candidate.call('enrollment_accept',reject=True,payload=payload,account=account,candidate_signature=proof,approver=da.identity,grant_signature=grant)
         # Independent comparison of the old device is still required; the server cannot pin it.
@@ -59,6 +59,8 @@ def main():
         candidate.call('enrollment_accept',reject=True,payload=payload,account=account,candidate_signature=proof,approver=da.identity,grant_signature=proof)
         accepted=candidate.call('enrollment_accept',payload=payload,account=account,candidate_signature=proof,approver=da.identity,grant_signature=grant)
         assert accepted['verified'] and not accepted['mls_joined']
+        assert candidate.call('enrollment_accept',payload=payload,account=account,candidate_signature=proof,approver=da.identity,grant_signature=grant)==accepted
+        d.request(f'/v1/devices/enrollment/{rid}/activate',dict(signature=accepted['activation_signature']),token=token,expected=409)
 
         def approve(_):
             import urllib.error,urllib.request
@@ -70,6 +72,11 @@ def main():
         assert sorted(results)==[204,409],results
         certificate=d.request(f'/v1/devices/enrollment/{rid}',token=token)
         assert certificate['approved'] and certificate['grantSignature']==grant
+        assert d.request('/v1/users/me',token=token)['trustState']=='DEVICE_PENDING_TRUST'
+        d.request('/v1/devices',token=token,expected=403)
+        d.request(f'/v1/devices/enrollment/{rid}/activate',dict(signature=proof),token=token,expected=403)
+        d.request(f'/v1/devices/enrollment/{rid}/activate',dict(signature=accepted['activation_signature']),token=token,expected=204)
+        d.request(f'/v1/devices/enrollment/{rid}/activate',dict(signature=accepted['activation_signature']),token=token,expected=204)
         assert d.request('/v1/users/me',token=token)['trustState']=='DEVICE_TRUSTED'
 
         # Device trust does not retroactively add a leaf or reveal old MLS history.
@@ -96,7 +103,7 @@ def main():
         d.request('/v1/sync?conversationId='+group,token=at,expected=401)
         # The remaining trusted candidate cannot replay another approver's signature.
         d.request(f"/v1/devices/enrollment/{fr['id']}/approve",dict(signature=fg),token=token,expected=403)
-        print('PASS: pending login isolation; independent device keys; signed owner/key-bound enrollment; client pinned approver; explicit confirmation; invalid proof/substitution/account mismatch/replay/expiry/cross-account/self-approval/race/revoked-approver denied; no automatic MLS/history access. QR camera/UI and MLS enrollment/rekey still unimplemented.')
+        print('PASS: pending login isolation; independent device keys; owner/key-bound two-device signatures; pinned approver and explicit confirmation; durable immutable approval retry; activation proof only after local grant verification; invalid activation/proof/substitution/account/replay/expiry/IDOR/self-approval/race/revoked-approver denied; no automatic MLS/history access. Camera QR and MLS multi-device enrollment/rekey still unimplemented.')
 
 
 if __name__=='__main__':main()

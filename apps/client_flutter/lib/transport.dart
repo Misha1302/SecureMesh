@@ -19,7 +19,8 @@ typedef HttpsRequest = Future<dynamic> Function(
   Map<String, dynamic>? data,
 });
 
-/// One bounded request at a time. Durable outbox and cursor ownership stay with
+/// A bounded window permits text and sync to share a high-RTT connection.
+/// Durable outbox and cursor ownership stay with
 /// the encrypted store; changing transport never creates another message ID.
 class MeshTransport {
   MeshTransport({
@@ -44,12 +45,15 @@ class MeshTransport {
   final Duration timeout, probeDelay;
   WebSocket? _socket;
   StreamSubscription<dynamic>? _subscription;
-  Completer<wire.Frame>? _pending;
-  List<int>? _requestId;
+  final Map<String, Completer<wire.Frame>> _pending = {};
+  Future<void>? _connecting;
   DateTime _probeAfter = DateTime.fromMillisecondsSinceEpoch(0);
-  bool _closed = false, _busy = false;
+  bool _closed = false;
+  int _operations = 0;
   String mode = 'disconnected';
+  int sentApplicationBytes=0,receivedApplicationBytes=0;
   static const maxFrame = 131072;
+  static const maxInFlight = 6;
 
   void close() {
     _closed = true;
@@ -62,11 +66,12 @@ class MeshTransport {
     unawaited(_subscription?.cancel());
     _subscription = null;
     if (socket != null) unawaited(socket.close().catchError((_) {}));
-    final pending = _pending;
-    _pending = null;
-    _requestId = null;
-    if (pending != null && !pending.isCompleted) {
-      pending.completeError(const SocketException('STREAM_DISCONNECTED'));
+    final pending = _pending.values.toList();
+    _pending.clear();
+    for (final request in pending) {
+      if (!request.isCompleted) {
+        request.completeError(const SocketException('STREAM_DISCONNECTED'));
+      }
     }
     if (_closed) mode = 'closed';
   }
@@ -76,6 +81,7 @@ class MeshTransport {
       if (data is! List<int> || data.length > maxFrame + 5) {
         throw const FormatException('INVALID_STREAM_FRAME');
       }
+      receivedApplicationBytes+=data.length;
       var length = 0, offset = 0, shift = 0;
       while (true) {
         if (offset >= data.length || offset >= 5) {
@@ -90,20 +96,20 @@ class MeshTransport {
         throw const FormatException('INVALID_FRAME_LENGTH');
       }
       final response = wire.Frame.fromBuffer(data.sublist(offset));
-      if (response.protocolVersion != 1 ||
-          _pending == null ||
-          base64Encode(response.requestId) != base64Encode(_requestId!)) {
+      final key = base64Encode(response.requestId);
+      final pending = _pending[key];
+      if (response.protocolVersion != 1 || pending == null) {
         throw const FormatException('STREAM_CORRELATION_FAILED');
       }
-      final pending = _pending!;
-      _pending = null;
-      _requestId = null;
+      _pending.remove(key);
       pending.complete(response);
     } catch (_) {
-      final pending = _pending;
-      _pending = null;
-      if (pending != null && !pending.isCompleted) {
-        pending.completeError(ApiFailure(502, 'INVALID_STREAM_FRAME'));
+      final pending = _pending.values.toList();
+      _pending.clear();
+      for (final request in pending) {
+        if (!request.isCompleted) {
+          request.completeError(ApiFailure(502, 'INVALID_STREAM_FRAME'));
+        }
       }
       _disconnect();
     }
@@ -111,7 +117,7 @@ class MeshTransport {
 
   Future<wire.Frame> _exchange(wire.Frame frame) async {
     if (_closed) throw const SocketException('TRANSPORT_CLOSED');
-    if (_pending != null) throw StateError('STREAM_BACKPRESSURE');
+    if (_pending.length >= maxInFlight) throw StateError('STREAM_BACKPRESSURE');
     final random = Random.secure();
     frame
       ..protocolVersion = 1
@@ -126,16 +132,22 @@ class MeshTransport {
     }
     prefix.add(remaining);
     final pending = Completer<wire.Frame>();
-    _pending = pending;
-    _requestId = frame.requestId;
+    final key = base64Encode(frame.requestId);
+    _pending[key] = pending;
     // Install the timeout/error listener before sending on a possibly dead socket.
     final future = pending.future.timeout(timeout);
     try {
+      sentApplicationBytes+=prefix.length+bytes.length;
       _socket!.add(Uint8List.fromList([...prefix, ...bytes]));
     } catch (_) {
       _disconnect();
     }
-    final response = await future;
+    wire.Frame response;
+    try {
+      response = await future;
+    } finally {
+      _pending.remove(key);
+    }
     if (response.kind == wire.FrameKind.SERVER_ERROR) {
       throw ApiFailure(
         response.serverError.code,
@@ -146,7 +158,13 @@ class MeshTransport {
   }
 
   Future<void> _connect() async {
+    if (_connecting != null) return _connecting;
     if (_socket != null) return;
+    _connecting = _openConnection().whenComplete(() => _connecting = null);
+    return _connecting;
+  }
+
+  Future<void> _openConnection() async {
     final uri = endpoint.resolve('/v1/stream').replace(scheme: 'wss');
     var abandoned = false;
     final connecting =
@@ -206,18 +224,21 @@ class MeshTransport {
     Map<String, dynamic>? data,
   }) async {
     if (_closed) throw const SocketException('TRANSPORT_CLOSED');
-    if (_busy) throw StateError('TRANSPORT_BACKPRESSURE');
-    _busy = true;
+    if (_operations >= maxInFlight) throw StateError('TRANSPORT_BACKPRESSURE');
+    _operations++;
     try {
       if (!DateTime.now().isBefore(_probeAfter)) {
         try {
           await _connect();
           return decode(await _exchange(frame));
         } on ApiFailure catch (failure) {
-          _disconnect();
           // Refresh remains HTTPS-only. Do not retry a rejected epoch/ID/key over
           // another transport as if it were an ambiguous network failure.
-          if (failure.status != 401) rethrow;
+          if (failure.status != 401) {
+            if (failure.status == 502) _disconnect();
+            rethrow;
+          }
+          _disconnect();
         } on TimeoutException {
           _disconnect();
         } on IOException {
@@ -229,7 +250,7 @@ class MeshTransport {
       mode = 'https';
       return await https(route, data: data);
     } finally {
-      _busy = false;
+      _operations--;
     }
   }
 

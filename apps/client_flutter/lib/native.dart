@@ -4,10 +4,13 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
-import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 import 'src/rust/api.dart';
-import 'src/rust/frb_generated.dart';
+import 'local_client.dart';
+import 'session.dart';
+import 'delivery_client.dart';
+import 'onboarding.dart';
+import 'account_hub.dart';
 import 'transport.dart';
 
 class CryptoFailure implements Exception {}
@@ -32,6 +35,8 @@ class _ClientAppState extends State<ClientApp> {
   NativeClient? store;
   HttpClient? http;
   MeshTransport? transport;
+  AccountSession? session;
+  NativeDelivery? delivery;
   Map<String, dynamic>? profile;
   List<dynamic> messages = [];
   List<dynamic> devices = [];
@@ -39,7 +44,7 @@ class _ClientAppState extends State<ClientApp> {
   bool busy = false, loading = false, online = false, lite = false, ru = true;
   String? error;
   int tab = 0, failures = 0;
-  bool bridgeReady = false;
+  Future<void> profileWrites = Future.value();
   ThemeMode theme = ThemeMode.system;
   String tr(String a, String b) => ru ? a : b;
   int get queued => messages.where((m) => m['status'] == 'queued').length;
@@ -66,6 +71,8 @@ class _ClientAppState extends State<ClientApp> {
     timer?.cancel();
     store?.dispose();
     transport?.close();
+    session?.close();
+    delivery?.close();
     http?.close(force: true);
     path.dispose();
     pass.dispose();
@@ -83,30 +90,20 @@ class _ClientAppState extends State<ClientApp> {
       if (!File(path.text.trim()).existsSync()) {
         throw StateError('PROFILE_FILE_MISSING');
       }
-      if (!bridgeReady) {
-        try {
-          await RustLib.init(
-            externalLibrary: ExternalLibrary.open(
-              Platform.environment['SECUREMESH_CRYPTO_LIB'] ??
-                  '../../src/crypto_core/target/debug/libsecuremesh_crypto.so',
-            ),
-          );
-          bridgeReady = true;
-        } on StateError {
-          rethrow;
-        }
-      }
+      await initializeNativeBridge();
       final opened = await NativeClient.open(
         path: path.text.trim(),
         passphrase: pass.text,
       );
       store = opened;
       profile = await crypto('profile');
-      final context = SecurityContext(withTrustedRoots: true);
-      final cert = Platform.environment['SECUREMESH_CERT_FILE'];
-      if (cert != null) context.setTrustedCertificates(cert);
-      http = HttpClient(context: context)
-        ..connectionTimeout = const Duration(seconds: 12);
+      http = nativeHttpClient();
+      session = AccountSession(
+        http: http!,
+        endpoint: Uri.parse(profile!['endpoint'] as String),
+        profile: () => profile!,
+        persist: (value) => persistProfile(value, sessionOnly: true),
+      );
       transport = MeshTransport(
         endpoint: Uri.parse(profile!['endpoint'] as String),
         device: profile!['deviceId'] as String,
@@ -114,12 +111,15 @@ class _ClientAppState extends State<ClientApp> {
         http: http!,
         https: (route, {data}) => api(route, data: data),
       );
+      delivery = NativeDelivery(crypto: crypto, transport: transport!);
       pass.clear();
       await reload();
       timer?.cancel();
-      unawaited(pump());
+      if (profile?['group'] != null) unawaited(pump());
     } catch (_) {
       transport?.close();
+      session?.close();
+      delivery?.close();
       transport = null;
       http?.close(force: true);
       store?.dispose();
@@ -135,6 +135,10 @@ class _ClientAppState extends State<ClientApp> {
   }
 
   Future<void> reload({bool follow = false}) async {
+    if (profile?['group'] == null) {
+      if (mounted) setState(() => messages = []);
+      return;
+    }
     final nearEnd =
         follow ||
         !chatScroll.hasClients ||
@@ -157,115 +161,55 @@ class _ClientAppState extends State<ClientApp> {
     }
   }
 
+  Future<void> persistProfile(
+    Map<String, dynamic> value, {
+    bool sessionOnly = false,
+  }) {
+    final epoch = generation;
+    final write = profileWrites.then((_) async {
+      if (epoch != generation || profile == null) throw CryptoFailure();
+      final updated = sessionOnly
+          ? {...profile!, ...value}
+          : {
+              ...value,
+              for (final key in [
+                'accessToken',
+                'refreshToken',
+                'deviceId',
+                'expiresIn',
+              ])
+                key: profile![key],
+            };
+      await crypto('profile_put', {'profile': updated});
+      profile = updated;
+    });
+    // Preserve the queue after a failed write; this caller still receives the failure.
+    profileWrites = write.catchError((_) {});
+    return write;
+  }
+
   Future<dynamic> api(
     String route, {
     Map<String, dynamic>? data,
     String? method,
-    bool refreshing = false,
-  }) async {
-    final epoch = generation;
-    final base = Uri.parse(profile!['endpoint'] as String);
-    if (base.scheme != 'https') throw StateError('TLS_REQUIRED');
-    final req = await http!.openUrl(
-      method ?? (data == null ? 'GET' : 'POST'),
-      base.resolve(route),
-    );
-    req.followRedirects = false;
-    req.headers.set(
-      HttpHeaders.authorizationHeader,
-      'Bearer ${profile!['accessToken']}',
-    );
-    req.headers.contentType = ContentType.json;
-    if (data != null) req.write(jsonEncode(data));
-    final response = await req.close().timeout(const Duration(seconds: 20));
-    final bytes = <int>[];
-    await for (final chunk in response.timeout(const Duration(seconds: 20))) {
-      if (bytes.length + chunk.length > 262144) {
-        req.abort();
-        throw ApiFailure(502, 'RESPONSE_TOO_LARGE');
-      }
-      bytes.addAll(chunk);
-    }
-    final raw = utf8.decode(bytes);
-    if (epoch != generation) throw ApiFailure(499);
-    if (response.statusCode == 401 && !refreshing) {
-      final rotated = await api(
-        '/v1/auth/refresh',
-        data: {'token': profile!['refreshToken']},
-        refreshing: true,
-      ) as Map<String, dynamic>;
-      profile!.addAll(rotated);
-      await crypto('profile_put', {'profile': profile});
-      return api(route, data: data, method: method, refreshing: true);
-    }
-    if (response.statusCode >= 300) {
-      String code = '';
-      try {
-        final body = jsonDecode(raw);
-        if (body is Map && body['code'] is String) {
-          code = body['code'] as String;
-        }
-      } catch (_) {}
-      throw ApiFailure(response.statusCode, code);
-    }
-    return raw.isEmpty ? null : jsonDecode(raw);
-  }
+  }) => session!.request(route, data: data, method: method);
 
   Future<void> pump() async {
-    if (busy || store == null || !mounted) return;
+    if (busy || store == null || !mounted || profile?['group'] == null) return;
     final epoch = generation;
     busy = true;
     timer?.cancel();
     final started = DateTime.now();
+    var nextDelay = const Duration(seconds: 3);
     try {
-      final pending = (await crypto('outbox'))['messages'] as List<dynamic>;
-      for (final m in pending.take(20)) {
-        final ack = await transport!.send(Map<String, dynamic>.from(m as Map));
-        if (ack['durable'] != true) throw StateError('DURABLE_ACK_REQUIRED');
-        await crypto('saved', {
-          'group': m['group'],
-          'id': m['id'],
-          'seq': ack['serverSequence'],
-        });
-      }
-      var cursor =
-          (await crypto('cursor', {'group': profile!['group']}))['cursor']
-              as String;
-      for (var pages = 0; pages < 10; pages++) {
-        Map<String, dynamic> page;
-        try {
-          page = await transport!.sync(profile!['group'] as String, cursor);
-        } on ApiFailure catch (failure) {
-          if (failure.code == 'INVALID_CURSOR' && cursor.isNotEmpty) {
-            cursor = '';
-            continue;
-          }
-          rethrow;
-        }
-        final events = page['messages'] as List<dynamic>;
-        for (var i = 0; i < events.length; i++) {
-          final m = events[i];
-          await crypto('ingest', {
-            'group': profile!['group'],
-            'id': m['clientMessageId'],
-            'sender': m['senderDeviceId'],
-            'seq': m['serverSequence'],
-            'epoch': m['mlsEpoch'],
-            'kind': m['envelopeKind'],
-            'ciphertext': m['ciphertext'],
-            'digest': m['ciphertextSha256'],
-            'cursor': i == events.length - 1 ? page['nextCursor'] : '',
-          });
-        }
-        cursor = page['nextCursor'] as String;
-        if (page['hasMore'] != true) break;
-      }
-      final seq = (await crypto('cursor', {'group': profile!['group']}))['seq'];
-      await transport!.ack(profile!['group'] as String, seq as int);
+      final progress = await delivery!.tick(profile!['group'] as String);
+      nextDelay = progress.delay;
       failures = 0;
       online = true;
       connectionState = "connected";
-      lite = DateTime.now().difference(started).inMilliseconds > 2500;
+      lite =
+          DateTime.now().difference(started).inMilliseconds > 2500 ||
+          delivery!.receiptError != null;
       error = null;
     } catch (failure) {
       if (epoch != generation) return;
@@ -313,11 +257,18 @@ class _ClientAppState extends State<ClientApp> {
           }
         }
         busy = false;
-        if (mounted && store != null) {
+        if (mounted && store != null && profile?['group'] != null) {
           setState(() {});
-          final seconds = failures == 0 ? 3 : min(30, 1 << min(failures, 5));
+          final delay = failures == 0
+              ? nextDelay
+              : Duration(seconds: min(30, 1 << min(failures, 5)));
           timer = Timer(
-            Duration(milliseconds: seconds * 1000 + Random().nextInt(600)),
+            delay +
+                Duration(
+                  milliseconds: Random().nextInt(
+                    delay.inMilliseconds < 1000 ? 100 : 600,
+                  ),
+                ),
             () => unawaited(pump()),
           );
         }
@@ -379,6 +330,8 @@ class _ClientAppState extends State<ClientApp> {
     timer?.cancel();
     store?.dispose();
     transport?.close();
+    session?.close();
+    delivery?.close();
     transport = null;
     http?.close(force: true);
     setState(() {
@@ -454,8 +407,7 @@ class _ClientAppState extends State<ClientApp> {
                           'confirmed': true,
                         });
                         final verified = {...profile!, 'trustConfirmed': true};
-                        await crypto('profile_put', {'profile': verified});
-                        profile = verified;
+                        await persistProfile(verified);
                         if (ctx.mounted) Navigator.pop(ctx);
                         if (mounted) setState(() {});
                       } catch (_) {
@@ -535,7 +487,34 @@ class _ClientAppState extends State<ClientApp> {
                             ),
                           ],
                         ),
-                      Expanded(child: tab == 0 ? chat(ctx) : settings(ctx)),
+                      Expanded(
+                        child: tab == 0
+                            ? (profile?['group'] == null
+                                  ? AccountHub(
+                                      russian: ru,
+                                      profile: profile!,
+                                      crypto: crypto,
+                                      api: (route, {data}) =>
+                                          api(route, data: data),
+                                      saveProfile: persistProfile,
+                                      openChat: (group, peer, name, key) async {
+                                        final selected = {
+                                          ...profile!,
+                                          'group': group,
+                                          'peerDevice': peer,
+                                          'peerName': name,
+                                          'peerKey': key,
+                                          'trustConfirmed': true,
+                                        };
+                                        await persistProfile(selected);
+                                        await reload();
+                                        if (mounted) setState(() {});
+                                        unawaited(pump());
+                                      },
+                                    )
+                                  : chat(ctx))
+                            : settings(ctx),
+                      ),
                     ],
                   ),
                 ),
@@ -632,10 +611,24 @@ class _ClientAppState extends State<ClientApp> {
                   ),
                 ),
               const SizedBox(height: 24),
-              Text(
-                tr(
-                  'Профили локальной демонстрации создаются командой make seed-demo. Регистрация в интерфейсе ещё не подключена.',
-                  'Create local demonstration profiles with make seed-demo. Registration is not connected to this interface yet.',
+              TextButton(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => AccountOnboarding(
+                            russian: ru,
+                            onReady: (created, secret) async {
+                              path.text = created;
+                              pass.text = secret;
+                              await unlock();
+                              if (store == null) throw CryptoFailure();
+                            },
+                          ),
+                        ),
+                      ),
+                child: Text(
+                  tr('Создать аккаунт или войти', 'Create account or sign in'),
                 ),
               ),
             ],
@@ -648,7 +641,18 @@ class _ClientAppState extends State<ClientApp> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       ListTile(
-        leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+        leading: IconButton(
+          tooltip: tr('Все чаты', 'All chats'),
+          onPressed: busy || sending
+              ? null
+              : () async {
+                  timer?.cancel();
+                  final updated = {...profile!}..remove('group');
+                  await persistProfile(updated);
+                  if (mounted) setState(() => messages = []);
+                },
+          icon: const Icon(Icons.arrow_back),
+        ),
         title: Text(profile!['peerName'] as String),
         subtitle: Text(
           profile!['trustConfirmed'] == true

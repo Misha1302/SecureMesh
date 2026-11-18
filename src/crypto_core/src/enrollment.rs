@@ -71,6 +71,23 @@ pub(super) fn execute(
     identity: &str,
     signer: &SignatureKeyPair,
 ) -> Result<Value> {
+    if s(req, "op")? == "enrollment_accept" {
+        let saved = db
+            .query_row(
+                "SELECT value FROM app_meta WHERE key='enrollment-accepted'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?;
+        if let Some(saved) = saved {
+            let saved: Value = serde_json::from_str(&saved)?;
+            // A locally verified certificate retry is not a new trust decision.
+            // It recovers a lost activation ACK even after the challenge expired.
+            if saved["request"] == *req {
+                return Ok(saved["result"].clone());
+            }
+        }
+    }
     let request = parse(req)?;
     let fingerprint = B64.encode(Sha256::digest(&request.raw));
     match s(req, "op")? {
@@ -111,23 +128,30 @@ pub(super) fn execute(
                 &proof,
             )?;
             let consumed = format!("enrollment-approved:{}", request.id);
-            ensure!(
-                db.query_row(
-                    "SELECT count(*) FROM app_meta WHERE key=?",
-                    [&consumed],
-                    |r| r.get::<_, i64>(0)
-                )? == 0,
-                "grant already signed"
-            );
+            let old = db
+                .query_row("SELECT value FROM app_meta WHERE key=?", [&consumed], |r| {
+                    r.get::<_, String>(0)
+                })
+                .optional()?;
+            if let Some(old) = old {
+                if let Ok(saved) = serde_json::from_str::<Value>(&old) {
+                    ensure!(
+                        saved["fingerprint"] == fingerprint
+                            && saved["candidate_signature"] == req["candidate_signature"],
+                        "grant changed"
+                    );
+                    return Ok(saved);
+                }
+                ensure!(old == fingerprint, "grant changed");
+            }
             // Existing pins cannot be replaced, even after the user confirms a new request.
             execute_pin(db, &request.device, &request.key)?;
             let signature = signer
                 .sign(&grant_payload(identity, &request.raw, &proof))
                 .map_err(|_| anyhow!("signature rejected"))?;
-            set_meta(db, &consumed, &fingerprint)?;
-            Ok(
-                json!({"signature":B64.encode(signature),"approver":identity,"account":request.account,"fingerprint":fingerprint}),
-            )
+            let result = json!({"signature":B64.encode(signature),"approver":identity,"account":request.account,"fingerprint":fingerprint,"candidate_signature":req["candidate_signature"]});
+            set_meta(db, &consumed, &serde_json::to_string(&result)?)?;
+            Ok(result)
         }
         "enrollment_accept" => {
             ensure!(
@@ -163,9 +187,21 @@ pub(super) fn execute(
             )?;
             // Store only the public trust certificate. This does not join MLS or import old secrets.
             set_meta(db, "enrollment-certificate", &serde_json::to_string(req)?)?;
-            Ok(
-                json!({"verified":true,"account":request.account,"device":identity,"mls_joined":false}),
-            )
+            let activation = format!(
+                "SecureMesh/enrollment-activate/v1\n{}\n{}",
+                request.id,
+                s(req, "grant_signature")?
+            );
+            let activation = signer
+                .sign(activation.as_bytes())
+                .map_err(|_| anyhow!("signature rejected"))?;
+            let result = json!({"verified":true,"account":request.account,"device":identity,"mls_joined":false,"activation_signature":B64.encode(activation)});
+            set_meta(
+                db,
+                "enrollment-accepted",
+                &serde_json::to_string(&json!({"request":req,"result":result}))?,
+            )?;
+            Ok(result)
         }
         _ => bail!("unsupported enrollment operation"),
     }

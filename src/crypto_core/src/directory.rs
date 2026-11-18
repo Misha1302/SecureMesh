@@ -54,6 +54,20 @@ pub(super) fn execute(
     identity: &str,
     signer: &SignatureKeyPair,
 ) -> Result<Value> {
+    if s(req, "op")? == "directory_pending" {
+        let key = format!("bootstrap:{}", s(req, "invitation")?);
+        let saved = db
+            .query_row("SELECT value FROM app_meta WHERE key=?", [key], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?;
+        return Ok(match saved {
+            Some(saved) => {
+                json!({"prepared":true,"request":serde_json::from_str::<Value>(&saved)?})
+            }
+            None => json!({"prepared":false}),
+        });
+    }
     if s(req, "op")? == "directory_prepare" {
         let invitation = s(req, "invitation")?;
         let meta_key = format!("bootstrap:{invitation}");

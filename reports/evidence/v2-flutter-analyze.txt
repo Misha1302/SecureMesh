@@ -1,0 +1,6 @@
+UTC: 2026-11-18T20:28:50.925029+00:00
+Command: ['bash', '-c', 'PUB_CACHE="$PWD/.local/pub-cache" .local/flutter/bin/flutter analyze --no-pub apps/client_flutter']
+Analyzing client_flutter...                                     
+No issues found! (ran in 0.8s)
+
+Exit code: 0

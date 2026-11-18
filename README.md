@@ -2,7 +2,7 @@
 
 **PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.** A real encrypted-text vertical slice, not the complete product in the immutable Russian brief. Known RustSec findings block release: see [security limitations](docs/SECURITY_LIMITATIONS.md). Do not use this alpha with real sensitive data.
 
-Implemented/exercised: .NET 10 API and PostgreSQL migrations; local Mailpit email verification; Argon2id/device proof/rotating sessions; OpenMLS 0.9.2 and SQLCipher state/outbox; durable idempotent message+outbox transaction; protobuf WSS and HTTPS services; scoped sync/cursors and epoch conflict recovery; Linux Flutter chat/settings. Native UI currently polls HTTPS. WSS-first automatic fallback and real KeyPackage/Welcome directory workflow remain missing.
+Implemented/exercised: .NET 10 API/PostgreSQL migrations; Mailpit verification; Argon2id/device proof/rotating sessions; OpenMLS 0.9.2 and SQLCipher; durable message/outbox and scoped cursors. Native Flutter now has registration/verification/login, consented DM requests by username, independently compared device keys and server-routed signed Welcome. WSS-first protobuf delivery has bounded pipelining, HTTPS fallback and recovery. Additional-device login stays pending until a trusted-device grant is verified locally and activated. Full multi-device MLS/history recovery remains incomplete.
 
 ```sh
 make bootstrap
@@ -21,14 +21,15 @@ For the actual Linux UI:
 bash scripts/install-flutter.sh   # pinned 3.50.0, ~1.5 GB archive, SHA-256 checked
 make build-linux                 # GTK toolchain in project-only container
 # keep make demo running, then:
-make seed-demo                   # two real local accounts/stores, no fake messages
 make client
 ```
 
-Open make client twice; use each database path and synthetic local unlock value from .local/demo/profiles.json. That mode-600 ignored file is for local test data only, never real recovery. Compare public keys independently before sending. Private keys stay in each SQLCipher store. UI covers unlock/chat/settings, not registration/groups/media/calls/admin.
+Choose “Создать аккаунт или войти”, register and retrieve the development verification code from Mailpit at http://127.0.0.1:58028. The local-store passphrase is separate and never sent to the API. New Linux profiles are kept under ignored .local/profiles by make client. Use a second account/device to accept a username request and independently compare public keys before messaging. Approval alone does not import old history: transfer/recovery is still unavailable.
+
+Optional synthetic two-account setup: make seed-demo, then open make client twice with the two paths/unlock values in ignored mode-600 .local/demo/profiles.json. The seed now uses the actual accepted-request/KeyPackage/Welcome API; no chat messages are prewritten. Never use that file as real recovery. Groups, channels, media, calls and admin UI remain incomplete.
 
 The full suites are exposed as make network-gprs and make network-severe; their Python driver was executed with 200 messages each direction and seeds 7/19/41 (exact commands in evidence). All 2400 IDs delivered without logical duplicates. GPRS p95 4.351–4.754 seconds after a retained failed attempt and fix. Functioning-link synthetic baselines do not complete the mixed-fault suite or prove carrier performance: [2G report](reports/2G_REPORT.md).
 
 make verify aggregates implemented build/crypto/API/epoch/secret-pattern/format/UI checks, available RustSec scan and the recorded acceptance gate. Long network/disruptive DB restore checks have separate commands and retained evidence. A component pass does not complete an unfinished acceptance row. See [STATUS](STATUS.md), [matrix](reports/TEST_RESULTS.md), [handoff](reports/FINAL_HANDOFF_RU.md).
 
-Linux was built/launched in Xvfb; compact Linux is layout evidence, not Android verification. Android and Apple artifacts remain unverified. Browser builds with private chat disabled pending a distinct WASM integration. Social/media/WebRTC/admin features are missing. Nothing was deployed or pushed.
+Linux was built/launched in Xvfb, including real GUI signup, routed DM, Unicode exchange and offline/SIGKILL/reopen delivery. Compact Linux is layout evidence, not Android verification. Android and Apple artifacts remain unverified. Browser private chat stays disabled pending a distinct WASM integration. No production deployment. V2 work is on codex/securemesh-v2; git status/log and STATUS.md are authoritative.

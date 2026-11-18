@@ -22,7 +22,7 @@ public static class StreamTransport
             {
                 while(ws.State==WebSocketState.Open && !ctx.RequestAborted.IsCancellationRequested)
                 {
-                    using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
+                    using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted,app.Lifetime.ApplicationStopping);
                     timeout.CancelAfter(TimeSpan.FromSeconds(45));
                     var count=0;
                     ValueWebSocketReceiveResult result;

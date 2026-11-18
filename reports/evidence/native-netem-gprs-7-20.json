@@ -1,0 +1,359 @@
+{
+  "profile": "gprs",
+  "seed": 7,
+  "messages_each_direction": 20,
+  "delivery_p50": 3.9327070000000006,
+  "delivery_p95": 5.837556999999999,
+  "delivery_p99": 6.837218,
+  "duplicates": 0,
+  "missing_ids": 0,
+  "elapsed_seconds": 22.951582,
+  "retries": 0,
+  "recent_errors": [],
+  "https_requests": 0,
+  "wss_application_bytes_sent": [
+    18640,
+    19385
+  ],
+  "wss_application_bytes_received": [
+    24826,
+    24081
+  ],
+  "records": [
+    {
+      "id": "fffb5004-02c2-449b-bf6c-0641e8302d25",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 0.005599,
+      "characters": 221,
+      "utf8_bytes": 425,
+      "delivery_seconds": 4.734615
+    },
+    {
+      "id": "62552b33-06f3-48e4-a3f9-d2d31fd514ad",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 0.006191,
+      "characters": 125,
+      "utf8_bytes": 238,
+      "delivery_seconds": 3.2032410000000002
+    },
+    {
+      "id": "defcceb4-2b15-4144-a4f5-738e8181cc81",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 1.001054,
+      "characters": 239,
+      "utf8_bytes": 463,
+      "delivery_seconds": 2.2083909999999998
+    },
+    {
+      "id": "b626c1d5-8f5a-4bb8-a241-60dc31bad129",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 1.001558,
+      "characters": 197,
+      "utf8_bytes": 358,
+      "delivery_seconds": 3.7386599999999994
+    },
+    {
+      "id": "22ce87c4-c598-4f7e-be35-faa49c8766b8",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 2.00174,
+      "characters": 295,
+      "utf8_bytes": 561,
+      "delivery_seconds": 2.8397630000000005
+    },
+    {
+      "id": "26018d9b-ee2d-40ce-b2d2-2d49b879b5c2",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 2.002196,
+      "characters": 45,
+      "utf8_bytes": 87,
+      "delivery_seconds": 4.437813
+    },
+    {
+      "id": "bd889fc8-55a0-4a84-90b7-b91377044acf",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 3.002369,
+      "characters": 399,
+      "utf8_bytes": 759,
+      "delivery_seconds": 3.4376440000000006
+    },
+    {
+      "id": "f048fc73-b8b2-4f4b-b5c3-3b56611f61e8",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 3.003004,
+      "characters": 325,
+      "utf8_bytes": 612,
+      "delivery_seconds": 1.8385480000000003
+    },
+    {
+      "id": "cf2cee93-3a7f-4d76-8919-dfff5404410a",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 4.000731,
+      "characters": 40,
+      "utf8_bytes": 72,
+      "delivery_seconds": 2.470566
+    },
+    {
+      "id": "21095f8d-c5c8-49dc-b003-279944aa1fa3",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 4.00179,
+      "characters": 337,
+      "utf8_bytes": 641,
+      "delivery_seconds": 4.123267
+    },
+    {
+      "id": "02d477a8-ce27-4939-97b6-b28a7df4803f",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 5.001942,
+      "characters": 366,
+      "utf8_bytes": 704,
+      "delivery_seconds": 6.837218
+    },
+    {
+      "id": "efbbbb27-be37-48d6-814c-78ceef1593ee",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 5.002271,
+      "characters": 74,
+      "utf8_bytes": 142,
+      "delivery_seconds": 3.12279
+    },
+    {
+      "id": "8fca51e0-82dd-4ca0-9573-85ee55f72436",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 6.000691,
+      "characters": 194,
+      "utf8_bytes": 354,
+      "delivery_seconds": 2.124371
+    },
+    {
+      "id": "b2357f86-c74e-491b-8da8-9adcd09a43b0",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 6.001606,
+      "characters": 396,
+      "utf8_bytes": 770,
+      "delivery_seconds": 5.837556999999999
+    },
+    {
+      "id": "b15baaac-b055-4a8c-8173-8a4a0cabc98c",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 7.000686,
+      "characters": 30,
+      "utf8_bytes": 55,
+      "delivery_seconds": 4.409427000000001
+    },
+    {
+      "id": "45b5ea72-a609-4ee8-9f9e-ae389825499e",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 7.000989,
+      "characters": 239,
+      "utf8_bytes": 435,
+      "delivery_seconds": 4.838175000000001
+    },
+    {
+      "id": "a36b1685-b57e-4b60-bcda-a5733534fffc",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 8.001616,
+      "characters": 259,
+      "utf8_bytes": 496,
+      "delivery_seconds": 3.408498999999999
+    },
+    {
+      "id": "cb39c090-3fb6-44da-bc39-8d6dfe055057",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 8.001984,
+      "characters": 132,
+      "utf8_bytes": 254,
+      "delivery_seconds": 3.8371840000000006
+    },
+    {
+      "id": "68342335-caa2-4c98-b0b4-9c2e5f597d75",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 9.001797,
+      "characters": 166,
+      "utf8_bytes": 339,
+      "delivery_seconds": 5.279052999999999
+    },
+    {
+      "id": "7005955e-7e7d-414c-9393-1a0f977d3775",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 9.0021,
+      "characters": 77,
+      "utf8_bytes": 140,
+      "delivery_seconds": 5.681091
+    },
+    {
+      "id": "a21a4aea-eb1e-4fb1-8be5-919a939d193b",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 10.000545,
+      "characters": 10,
+      "utf8_bytes": 17,
+      "delivery_seconds": 4.682653999999999
+    },
+    {
+      "id": "9f8dc9b4-0369-41cb-bbaa-f1960ba9868c",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 10.00148,
+      "characters": 338,
+      "utf8_bytes": 646,
+      "delivery_seconds": 4.279375999999999
+    },
+    {
+      "id": "ea318444-c661-4c76-9ffa-9abdd749cc78",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 11.000634,
+      "characters": 275,
+      "utf8_bytes": 523,
+      "delivery_seconds": 3.6825650000000003
+    },
+    {
+      "id": "b3e5cba8-2762-444b-9380-7ec3f80eda4c",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 11.001554,
+      "characters": 293,
+      "utf8_bytes": 554,
+      "delivery_seconds": 3.2793029999999987
+    },
+    {
+      "id": "379ed248-3f91-45cc-83cc-323e7f3dd3f0",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 12.001628,
+      "characters": 219,
+      "utf8_bytes": 419,
+      "delivery_seconds": 6.5891829999999985
+    },
+    {
+      "id": "63ba8391-8cdd-4521-9712-37d1cb9dc812",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 12.001962,
+      "characters": 4,
+      "utf8_bytes": 12,
+      "delivery_seconds": 3.9114839999999997
+    },
+    {
+      "id": "5a2201b6-c140-4ad3-ba33-7c49367d99e1",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 13.000493,
+      "characters": 111,
+      "utf8_bytes": 217,
+      "delivery_seconds": 5.590321000000001
+    },
+    {
+      "id": "aa55f62d-3f39-48b7-95b9-2e0e26f6cf76",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 13.001811,
+      "characters": 98,
+      "utf8_bytes": 182,
+      "delivery_seconds": 2.911638
+    },
+    {
+      "id": "257f6314-b6cc-456d-b159-bd34663582ab",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 14.00075,
+      "characters": 359,
+      "utf8_bytes": 690,
+      "delivery_seconds": 4.590064000000002
+    },
+    {
+      "id": "6a7e6281-f50b-4739-9f42-748da7d6a9d4",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 14.001096,
+      "characters": 109,
+      "utf8_bytes": 201,
+      "delivery_seconds": 5.110399000000001
+    },
+    {
+      "id": "e53ff9c3-87f2-4697-a042-66476007babb",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 15.000623,
+      "characters": 399,
+      "utf8_bytes": 767,
+      "delivery_seconds": 3.590192
+    },
+    {
+      "id": "f9b8fb4a-aedc-47b4-b95e-43ff289f6beb",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 15.001561,
+      "characters": 271,
+      "utf8_bytes": 525,
+      "delivery_seconds": 5.779362999999998
+    },
+    {
+      "id": "f3f25463-456d-44ef-8c43-ffa6ad7139bc",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 16.000528,
+      "characters": 144,
+      "utf8_bytes": 284,
+      "delivery_seconds": 4.933828999999999
+    },
+    {
+      "id": "0c4e3b68-78e4-4277-9ac8-65000cf5cf26",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 16.001502,
+      "characters": 56,
+      "utf8_bytes": 93,
+      "delivery_seconds": 4.779424000000002
+    },
+    {
+      "id": "aad556b1-54aa-49f5-8f55-7f1ba06e1f5f",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 17.001653,
+      "characters": 94,
+      "utf8_bytes": 174,
+      "delivery_seconds": 3.9327070000000006
+    },
+    {
+      "id": "e0cdcb2e-9763-4946-a78c-0f26aedd5a1a",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 17.001964,
+      "characters": 299,
+      "utf8_bytes": 545,
+      "delivery_seconds": 3.7789649999999995
+    },
+    {
+      "id": "f49cc384-0305-42de-bf57-6dc987519d84",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 18.000711,
+      "characters": 197,
+      "utf8_bytes": 380,
+      "delivery_seconds": 4.598535999999999
+    },
+    {
+      "id": "db8e62c1-96a8-4e5d-8932-5475b11cef84",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 18.001561,
+      "characters": 346,
+      "utf8_bytes": 654,
+      "delivery_seconds": 4.607521000000002
+    },
+    {
+      "id": "fb3c5da3-a61b-48f9-9499-d254652697c3",
+      "sender": "18fa6ae1-b6e1-463e-a848-5cada5b02176",
+      "start": 19.001619,
+      "characters": 329,
+      "utf8_bytes": 620,
+      "delivery_seconds": 3.597631
+    },
+    {
+      "id": "f2c1da21-9e18-471e-a204-d6d9bbdb801b",
+      "sender": "46f3d25f-e2f6-484a-96d6-7d42eacbb2ae",
+      "start": 19.001943,
+      "characters": 232,
+      "utf8_bytes": 433,
+      "delivery_seconds": 3.6071419999999996
+    }
+  ],
+  "platform": "Linux native Dart; production NativeDelivery/MeshTransport/FRB/OpenMLS/SQLCipher",
+  "rate_kbps_each_direction": 20,
+  "rtt_ms": 1500,
+  "packet_loss_percent": 3,
+  "setup": {
+    "netem-a": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 750ms loss 3% seed 7\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 750ms loss 3% seed 1007\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+    "netem-b": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 750ms loss 3% seed 107\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 750ms loss 3% seed 1107\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n"
+  },
+  "source_head_at_start": "3d8b40532bc8942a0371bbeb1530c6898323f89c",
+  "binary_sha256": {
+    "src/crypto_core/target/debug/libsecuremesh_crypto.so": "d46dfff1f10094e3185d0625190d430c716fb649a93bb51399576fd57cddb52f",
+    "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "e1aea709d30f6803511f93e4c73a5ead7c8e32058bddd8930bdc5691c7e544f8"
+  },
+  "netem-a_tc_stats": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 58580 bytes 196 pkt (dropped 3, overlimits 39 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 750ms loss 3% seed 7\n Sent 26153 bytes 93 pkt (dropped 2, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 750ms loss 3% seed 1007\n Sent 32427 bytes 103 pkt (dropped 1, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+  "netem-b_tc_stats": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 58088 bytes 189 pkt (dropped 5, overlimits 36 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 750ms loss 3% seed 107\n Sent 26724 bytes 91 pkt (dropped 1, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 750ms loss 3% seed 1107\n Sent 31364 bytes 98 pkt (dropped 4, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n"
+}

@@ -27,11 +27,16 @@ check secrets python3 scripts/scan_secrets.py
 check rust-format cargo fmt --manifest-path src/crypto_core/Cargo.toml -- --check
 if [[ -x .local/security/bin/cargo-audit ]]; then
   check rustsec-current .local/security/bin/cargo-audit audit --file src/crypto_core/Cargo.lock --db .local/advisory-db --json
+else
+  check rustsec-tool test -x .local/security/bin/cargo-audit
 fi
 if [[ -x .local/flutter/bin/flutter ]]; then
   check flutter-check bash -c 'FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$PWD/.local/pub-cache" .local/flutter/bin/flutter analyze --no-pub apps/client_flutter'
   check flutter-layout bash -c 'cd apps/client_flutter && FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$(pwd)/../../.local/pub-cache" ../../.local/flutter/bin/flutter test --no-pub test'
   check native-transport .local/venv/bin/python tests/integration/native_transport.py
+  check native-session .local/venv/bin/python tests/integration/native_session.py
+else
+  check flutter-sdk test -x .local/flutter/bin/flutter
 fi
 check network-report python3 scripts/render_network_report.py
 check acceptance-gate python3 tools/check_completion.py

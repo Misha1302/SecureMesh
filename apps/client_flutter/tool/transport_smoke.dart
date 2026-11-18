@@ -7,6 +7,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:securemesh_client/src/rust/api.dart';
 import 'package:securemesh_client/src/rust/frb_generated.dart';
 import 'package:securemesh_client/transport.dart';
+import 'package:securemesh_client/delivery_client.dart';
 
 void require(bool value, String code) {
   if (!value) throw StateError(code);
@@ -71,11 +72,12 @@ Future<void> main(List<String> args) async {
             );
             final body = await utf8.decoder.bind(response).join();
             final value = body.isEmpty ? null : jsonDecode(body);
-            if (response.statusCode >= 400)
+            if (response.statusCode >= 400) {
               throw ApiFailure(
                 response.statusCode,
                 (value as Map)['code'] as String,
               );
+            }
             return value;
           },
         ),
@@ -109,6 +111,19 @@ Future<void> main(List<String> args) async {
 
     await send(0);
     await send(1);
+    for (var i = 0; i < 3; i++) {
+      await queue(0);
+    }
+    final cycle = NativeDelivery(
+      transport: transports[0],
+      crypto: (op, [args = const {}]) => crypto(stores[0], op, args),
+    );
+    final progress = await cycle.tick(group);
+    require(
+      progress.sent == 3 && progress.queued == 0,
+      'PIPELINED_NATIVE_CYCLE_FAILED',
+    );
+    cycle.close();
     require(transports.every((t) => t.mode == 'wss'), 'WSS_NOT_PRIMARY');
     mode.writeAsStringSync('halfopen');
     await send(0);
@@ -195,7 +210,7 @@ Future<void> main(List<String> args) async {
       );
     }
     stdout.writeln(
-      'PASS: actual native Dart WSS/protobuf + Rust/OpenMLS/SQLCipher + TLS API/PG; half-open/blocked stream HTTPS fallback; lost durable ACK retries exact ciphertext once; WSS recovery; malformed ACK rejected with outbox retained; paginated decrypt/cursor/receipts; both clients contain all 8 IDs once. Not a GUI or GPRS timing run.',
+      'PASS: actual native Dart WSS/protobuf + Rust/OpenMLS/SQLCipher + TLS API/PG; production delivery cycle pipelines three immutable sends with sync and bounded receipts; half-open/blocked HTTPS fallback; lost ACK idempotence; WSS recovery; malformed ACK denied with outbox retained; paginated decrypt/cursors; both clients contain all 11 IDs once. Not a GUI or GPRS timing run.',
     );
   } finally {
     mode.writeAsStringSync('pass');

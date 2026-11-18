@@ -32,6 +32,8 @@ public static class DeviceTrust
             await using (var r = await existing.ExecuteReaderAsync())
                 if (await r.ReadAsync())
                     return Results.Ok(new { id = r.GetGuid(0), payload = Convert.ToBase64String((byte[])r[1]) });
+            await using(var quota=Sql.Cmd(c,"SELECT count(*) FROM device_enrollments WHERE device_id=$1 AND expires_at>now()-interval '1 day'",actor.DeviceId))
+                if((long)(await quota.ExecuteScalarAsync())!>=32) throw new ApiError(429,"ENROLLMENT_LIMIT");
             var id = Guid.NewGuid();
             var issued = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var expires = issued + 300;
@@ -112,10 +114,36 @@ public static class DeviceTrust
                 throw new ApiError(403, "INVALID_ENROLLMENT_GRANT");
             await using (var cmd = Sql.Cmd(c, "UPDATE device_enrollments SET approver_id=$2,grant_signature=$3,approved_at=now() WHERE id=$1", id, actor.DeviceId, input.Signature))
                 await cmd.ExecuteNonQueryAsync();
-            await using (var cmd = Sql.Cmd(c, "UPDATE devices SET trusted=true WHERE id=$1 AND NOT revoked", candidate))
-                if (await cmd.ExecuteNonQueryAsync() != 1) throw new ApiError(409, "DEVICE_REVOKED");
             await tx.CommitAsync();
             return Results.NoContent();
+        });
+
+        app.MapPost("/v1/devices/enrollment/{id:guid}/activate",async(Guid id,EnrollmentSignature input,HttpContext ctx,NpgsqlDataSource db)=>
+        {
+            var actor=await Sql.Authenticate(ctx,db,false);
+            await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
+            await LockAccount(c,actor.UserId);
+            byte[] grant,key;bool activated;
+            await using(var cmd=Sql.Cmd(c,"""
+                SELECT e.grant_signature,d.public_key,e.activated_at IS NOT NULL
+                FROM device_enrollments e JOIN devices d ON d.id=e.device_id JOIN devices a ON a.id=e.approver_id
+                WHERE e.id=$1 AND e.device_id=$2 AND e.user_id=$3 AND e.approved_at IS NOT NULL
+                  AND (e.expires_at>now() OR e.activated_at IS NOT NULL) AND NOT d.revoked AND a.trusted AND NOT a.revoked FOR UPDATE OF e
+                """,id,actor.DeviceId,actor.UserId))
+            await using(var r=await cmd.ExecuteReaderAsync())
+            {
+                if(!await r.ReadAsync()) throw new ApiError(409,"ACTIVATION_NOT_AVAILABLE");
+                grant=(byte[])r[0];key=(byte[])r[1];activated=r.GetBoolean(2);
+            }
+            var payload=Encoding.UTF8.GetBytes($"SecureMesh/enrollment-activate/v1\n{id:D}\n{Convert.ToBase64String(grant)}");
+            if(!Verify(key,payload,input.Signature)) throw new ApiError(403,"INVALID_ACTIVATION_PROOF");
+            if(!activated)
+            {
+                await using(var cmd=Sql.Cmd(c,"UPDATE device_enrollments SET activation_signature=$2,activated_at=now() WHERE id=$1",id,input.Signature)) await cmd.ExecuteNonQueryAsync();
+                await using(var cmd=Sql.Cmd(c,"UPDATE devices SET trusted=true WHERE id=$1 AND NOT revoked",actor.DeviceId))
+                    if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(409,"DEVICE_REVOKED");
+            }
+            await tx.CommitAsync();return Results.NoContent();
         });
     }
 

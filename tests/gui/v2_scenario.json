@@ -1,0 +1,232 @@
+[
+  {
+    "click": [
+      640,
+      585
+    ],
+    "wait": 1,
+    "capture": ".impeccable/review/desktop.png"
+  },
+  {
+    "resize": [
+      320,
+      844
+    ],
+    "wait": 1,
+    "capture": ".impeccable/review/phone.png"
+  },
+  {
+    "resize": [
+      1280,
+      720
+    ],
+    "wait": 1
+  },
+  {
+    "click": [
+      600,
+      350
+    ],
+    "fill": "username"
+  },
+  {
+    "key": "Tab",
+    "fill": "email"
+  },
+  {
+    "key": "Tab",
+    "fill": "password"
+  },
+  {
+    "click": [
+      640,
+      565
+    ],
+    "wait": 2
+  },
+  {
+    "click": [
+      600,
+      450
+    ],
+    "fill": "verification"
+  },
+  {
+    "click": [
+      640,
+      515
+    ],
+    "wait": 2,
+    "capture": ".impeccable/review/v2-login.png"
+  },
+  {
+    "click": [
+      600,
+      475
+    ],
+    "fill": "localpass"
+  },
+  {
+    "click": [
+      600,
+      332
+    ],
+    "key": "ctrl+a",
+    "fill": "badusername"
+  },
+  {
+    "click": [
+      640,
+      605
+    ],
+    "wait": 2,
+    "capture": ".impeccable/review/v2-failed-login.png"
+  },
+  {
+    "click": [
+      600,
+      310
+    ],
+    "key": "ctrl+a",
+    "fill": "username"
+  },
+  {
+    "click": [
+      640,
+      635
+    ],
+    "wait": 3
+  },
+  {
+    "verify_account": true
+  },
+  {
+    "click": [
+      500,
+      328
+    ],
+    "fill": "invalidcontact"
+  },
+  {
+    "click": [
+      240,
+      392
+    ],
+    "wait": 9,
+    "capture": ".impeccable/review/v2-persistent-action-error.png"
+  },
+  {
+    "click": [
+      500,
+      350
+    ],
+    "fill": "peer",
+    "key": "ctrl+a"
+  },
+  {
+    "click": [
+      240,
+      412
+    ],
+    "wait": 2
+  },
+  {
+    "accept_peer": true
+  },
+  {
+    "wait": 9
+  },
+  {
+    "click": [
+      1195,
+      450
+    ],
+    "wait": 1
+  },
+  {
+    "click": [
+      985,
+      424
+    ]
+  },
+  {
+    "click": [
+      928,
+      500
+    ],
+    "wait": 3
+  },
+  {
+    "join_peer": true
+  },
+  {
+    "click": [
+      500,
+      675
+    ],
+    "fill": "text"
+  },
+  {
+    "click": [
+      1240,
+      680
+    ],
+    "wait": 4
+  },
+  {
+    "verify_message": true
+  },
+  {
+    "wait": 4,
+    "verify_reply": true,
+    "capture": ".impeccable/review/v2-conversation.png"
+  },
+  {
+    "offline": true
+  },
+  {
+    "click": [
+      500,
+      675
+    ],
+    "fill": "queued"
+  },
+  {
+    "click": [
+      1240,
+      680
+    ],
+    "wait": 1,
+    "capture": ".impeccable/review/v2-offline.png"
+  },
+  {
+    "crash_reopen": true,
+    "wait": 1
+  },
+  {
+    "click": [
+      600,
+      443
+    ],
+    "fill": "localpass"
+  },
+  {
+    "click": [
+      640,
+      514
+    ],
+    "wait": 4
+  },
+  {
+    "verify_recovered": true,
+    "capture": ".impeccable/review/v2-recovered.png"
+  },
+  {
+    "resize": [
+      320,
+      844
+    ],
+    "wait": 1,
+    "capture": ".impeccable/review/v2-conversation-compact.png"
+  }
+]
