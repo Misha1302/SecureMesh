@@ -14,7 +14,9 @@ M0 PARTIAL: .NET API builds, real PostgreSQL health and EF migration restart/ide
 
 M1 PARTIAL: real OpenMLS 0.9.2 CLI + SQLCipher process spike passed (`reports/evidence/m1-crypto.txt`): independent keys, Welcome, encrypted Unicode, membership/rekey, replay/key substitution, process crash rollback. Flutter bridge and platform gates pending. No 2G claim.
 
-M2/M3 in progress. Working matrix copied to `reports/ACCEPTANCE_MATRIX.csv`; statuses remain conservative until entire corresponding scenario is exercised.
+M2/M3 PARTIAL: live TLS integration passed (`reports/evidence/m2-m3-delivery.txt`): local Mailpit verification, Argon2id login, device key possession, refresh reuse revocation, real OpenMLS texts via WSS + HTTPS, lost ACK and concurrent idempotent retries, conflict rejection, receiver abort recovery, signed scoped cursor pagination and persisted state, API restart, active-stream device revocation, negative membership/IDOR and log checks. Standalone CLI is not a finished user-facing app. KeyPackage directory/Welcome routing, automated connection manager and concurrent MLS conflict recovery remain missing.
+
+WASM probe failed with getrandom target features; full native SQLCipher provider also needs a distinct web architecture. Evidence `reports/evidence/wasm-probe.txt`; no web E2EE claim. Flutter 3.50.0 SDK archive is being downloaded inside `.local` after checking official release metadata; Flutter and platform gates have not run yet.
 
 ## Next
 

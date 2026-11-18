@@ -271,6 +271,79 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 _ => bail!("unsupported event"),
             }
         }
+        "ingest" => {
+            let gid = s(req, "group")?;
+            let seq = req["seq"].as_i64().context("sequence")?;
+            let last: Option<i64> = db
+                .query_row(
+                    "SELECT seq FROM local_cursors WHERE group_id=?",
+                    [gid],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let last = last.unwrap_or(0);
+            let envelope = json!({"ciphertext":s(req,"ciphertext")?,"sender":s(req,"sender")?,"id":s(req,"id")?,"epoch":req["epoch"],"kind":req["kind"]});
+            let canonical = serde_json::to_string(&envelope)?;
+            if seq <= last {
+                let old: String = db.query_row(
+                    "SELECT envelope FROM received WHERE group_id=? AND seq=?",
+                    params![gid, seq],
+                    |r| r.get(0),
+                )?;
+                ensure!(old == canonical, "sequence payload changed");
+                return Ok(json!({"duplicate":true,"seq":last}));
+            }
+            ensure!(seq == last + 1, "SYNC_GAP");
+            ensure!(
+                req["kind"].as_i64() == Some(1),
+                "application ingest only; membership workflow required"
+            );
+            let group = load_group(p, gid)?;
+            ensure!(
+                req["epoch"].as_u64() == Some(group.epoch().as_u64()),
+                "epoch mismatch"
+            );
+            let result = if s(req, "sender")? == identity {
+                let own: String = db.query_row(
+                    "SELECT envelope FROM outgoing WHERE group_id=? AND id=?",
+                    params![gid, s(req, "id")?],
+                    |r| r.get(0),
+                )?;
+                let own: Value = serde_json::from_str(&own)?;
+                ensure!(
+                    s(&own, "ciphertext")? == s(req, "ciphertext")?,
+                    "own ciphertext mismatch"
+                );
+                db.execute(
+                    "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
+                    params![seq, gid, s(req, "id")?],
+                )?;
+                json!({"own":true})
+            } else {
+                let mut process = req.clone();
+                process["op"] = json!("process");
+                let event = execute(db, p, &process)?;
+                ensure!(s(&event, "id")? == s(req, "id")?, "message id mismatch");
+                event
+            };
+            db.execute(
+                "INSERT INTO received VALUES(?,?,?)",
+                params![gid, seq, canonical],
+            )?;
+            db.execute("INSERT INTO local_cursors VALUES(?,?,?) ON CONFLICT(group_id) DO UPDATE SET seq=excluded.seq,cursor=excluded.cursor",params![gid,seq,req["cursor"].as_str().unwrap_or("")])?;
+            Ok(json!({"event":result,"seq":seq}))
+        }
+        "cursor" => {
+            let value: Option<(i64, String)> = db
+                .query_row(
+                    "SELECT seq,cursor FROM local_cursors WHERE group_id=?",
+                    [s(req, "group")?],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let (seq, cursor) = value.unwrap_or((0, String::new()));
+            Ok(json!({"seq":seq,"cursor":cursor}))
+        }
         "outbox" => {
             let mut q = db.prepare(
                 "SELECT envelope FROM outgoing WHERE status='queued' ORDER BY rowid LIMIT 100",
@@ -325,7 +398,9 @@ fn run() -> Result<Value> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pins(identity TEXT PRIMARY KEY,public_key BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS outgoing(group_id TEXT,id TEXT,envelope TEXT NOT NULL,status TEXT NOT NULL,seq INTEGER,PRIMARY KEY(group_id,id));
-      CREATE TABLE IF NOT EXISTS incoming(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
+      CREATE TABLE IF NOT EXISTS incoming(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));
+      CREATE TABLE IF NOT EXISTS received(group_id TEXT,seq INTEGER,envelope TEXT NOT NULL,PRIMARY KEY(group_id,seq));
+      CREATE TABLE IF NOT EXISTS local_cursors(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL,cursor TEXT NOT NULL);")?;
     db.execute_batch("BEGIN IMMEDIATE")?;
     let p = Provider {
         crypto: RustCrypto::default(),

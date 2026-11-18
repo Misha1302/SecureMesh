@@ -7,6 +7,7 @@ crypto:
 	python3 tests/crypto/process_spike.py
 smoke:
 	python3 tests/integration/smoke.py
+	.local/venv/bin/python tests/integration/delivery.py
 verify:
 	bash scripts/verify.sh
 down:

@@ -1,0 +1,13 @@
+# Implemented protocol slice
+
+API v1 supports verified local accounts, per-device Ed25519 proof of possession, opaque bearer sessions and single-use rotating refresh families. Every active WebSocket frame revalidates the database session and device revocation. Authentication uses the Authorization header; no query-string tokens or cookies.
+
+`/v1/messages` commits `messages`, immutable idempotency identity, per-conversation sequence/epoch update and `outbox` in one PostgreSQL transaction, returning durable ACK only after COMMIT. Conversation row locking serializes concurrent writers. Identical retries preserve ID/sequence even after epoch changes; changed ciphertext, kind or epoch gives 409. Sender device comes from authentication.
+
+`/v1/sync?conversationId=...&cursor=...&limit=...` has at most 100 events and 64 KiB ciphertext per page. Cursor is ASP.NET Data Protection authenticated and scoped to device+conversation. Keys persist in `.local/cursor-keys`; these are server cursor keys, not E2EE keys. Receipts are monotonic and cannot exceed the committed conversation sequence. Receipt remains a client assertion of local persistence, not proof a human read anything.
+
+`/v1/stream` carries the immutable source protobuf contract with a varint length prefix per WebSocket binary message. Max 128 KiB, HELLO version/device negotiation, one bounded request/response loop, send/sync/processed-ACK/ping, per-operation 45 second timeout. Durable/sync semantics reuse the HTTPS service. There is no proactive push worker yet: clients issue sync requests. HTTP uses JSON/base64 for fallback. Development tests use a generated localhost certificate and explicit CA trust, never disabled TLS verification.
+
+Client `queue` updates the MLS sender ratchet and immutable outbox in a SQLCipher transaction. `ingest` authenticates content/inner message identity with OpenMLS, persists inbox/deduplication and sequence+cursor in one transaction. Sender echoes match local ciphertext. Failed decryption or gaps do not advance the cursor. Repeated server sequences must contain the same envelope.
+
+Missing: complete AS key directory/one-use KeyPackage leasing and routed Welcome workflow; the test harness exchanges pinned public keys and Welcome locally before registering an existing group with `initialEpoch`. Group add/remove works in the standalone crypto spike; server membership/epoch conflict rebase is incomplete. No automatic trust enrollment of additional devices, password reset, external recovery, background delivery, metadata retention worker or delivered/read UI. Outbox relay table is durable but has no pruning/fanout worker yet. Do not infer a complete M2/M3 gate from component checks.

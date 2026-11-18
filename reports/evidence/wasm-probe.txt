@@ -1,0 +1,59 @@
+UTC: 2026-11-18T02:14:20.891837+00:00
+Command: ['cargo', 'check', '--locked', '--manifest-path', 'src/crypto_core/Cargo.toml', '--target', 'wasm32-unknown-unknown']
+ Downloading crates ...
+  Downloaded wasm-bindgen-macro v0.2.130
+  Downloaded rustversion v1.0.23
+  Downloaded wasm-bindgen-shared v0.2.130
+  Downloaded wasm-bindgen v0.2.130
+  Downloaded wasm-bindgen-macro-support v0.2.130
+  Downloaded bumpalo v3.20.4
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+    Checking cfg-if v1.0.5
+    Checking typenum v1.20.1
+   Compiling version_check v0.9.5
+    Checking subtle v2.6.1
+    Checking const-oid v0.9.6
+    Checking rand_core v0.10.1
+   Compiling getrandom v0.4.3
+   Compiling serde_core v1.0.229
+    Checking cmov v0.5.4
+   Compiling icu_properties_data v2.4.0
+   Compiling icu_normalizer_data v2.4.0
+    Checking const-oid v0.10.3
+    Checking stable_deref_trait v1.2.1
+    Checking base64ct v1.8.3
+   Compiling semver v1.0.28
+   Compiling thiserror v2.0.21
+   Compiling libc v0.2.191
+    Checking getrandom v0.2.17
+   Compiling shlex v2.0.1
+error: the wasm*-unknown-unknown targets are not supported by default, you may need to enable the "js" feature. For more information see: https://docs.rs/getrandom/#webassembly-support
+   --> /home/micodiy/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.2.17/src/lib.rs:346:9
+    |
+346 | /         compile_error!("the wasm*-unknown-unknown targets are not supported by \
+347 | |                         default, you may need to enable the \"js\" feature. \
+348 | |                         For more information see: \
+349 | |                         https://docs.rs/getrandom/#webassembly-support");
+    | |________________________________________________________________________^
+
+   Compiling serde v1.0.229
+   Compiling find-msvc-tools v0.1.15
+    Checking litemap v0.8.3
+   Compiling vcpkg v0.2.15
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `imp`
+   --> /home/micodiy/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.2.17/src/lib.rs:402:9
+    |
+402 |         imp::getrandom_inner(dest)?;
+    |         ^^^ use of unresolved module or unlinked crate `imp`
+    |
+    = help: if you wanted to use a crate named `imp`, use `cargo add imp` to add it to your `Cargo.toml`
+
+    Checking base16ct v0.2.0
+    Checking writeable v0.6.4
+For more information about this error, try `rustc --explain E0433`.
+error: could not compile `getrandom` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+
+Exit code: 101
