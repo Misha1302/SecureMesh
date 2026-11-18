@@ -1,6 +1,6 @@
 # SecureMesh — execution plan
 
-Source brief remains immutable. Work on `codex/securemesh-build`, local resources only.
+Source brief remains immutable. Implementation work used `codex/securemesh-build`, which is retained. At the user's explicit request on 2026-11-18, `main` was created from that branch for synchronization with the private repository https://github.com/Misha1302/SecureMesh. Runtime resources remain local; no deployment.
 
 1. M0: pin available SDK, API, PostgreSQL migrations, isolated Compose, health, Make/CI.
 2. M1: real OpenMLS independent processes, Welcome, add/remove/rekey, encrypted durable state, restart, replay and pinned identity rejection. Probe Flutter/native/WASM tooling.

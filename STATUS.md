@@ -5,7 +5,7 @@ PRODUCTION_APPROVED=false
 
 ## Environment and boundaries
 
-2026-11-18, Fedora 43 x86_64. Bundle SHA-256: all 24 files verified, unchanged. Empty-code intake; local branch codex/securemesh-build, no remote/deployment. .NET 10.0.111 / runtime 10.0.11, Rust 1.93.1, PostgreSQL container 17 pinned by digest, Docker 29.8 / Compose 5.5.1. Flutter 3.50.0 / Dart 3.14 downloaded, SHA-256 checked, installed inside .local. GTK build toolchain isolated in project container. Android SDK 36 exists, licenses and Android bridge build unverified. No Apple builds. Workspace TMPDIR avoids host temporary-file quota failures.
+2026-11-18, Fedora 43 x86_64. Bundle SHA-256: all 24 files verified, unchanged. Empty-code intake; implementation branch codex/securemesh-build retained. Active branch main; origin is the private repository https://github.com/Misha1302/SecureMesh, created at the user's explicit request. No deployment. .NET 10.0.111 / runtime 10.0.11, Rust 1.93.1, PostgreSQL container 17 pinned by digest, Docker 29.8 / Compose 5.5.1. Flutter 3.50.0 / Dart 3.14 downloaded, SHA-256 checked, installed inside .local. GTK build toolchain isolated in project container. Android SDK 36 exists, licenses and Android bridge build unverified. No Apple builds. Workspace TMPDIR avoids host temporary-file quota failures.
 
 ## Verified components (not complete milestones)
 
