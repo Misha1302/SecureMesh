@@ -22,6 +22,7 @@ check delivery .local/venv/bin/python tests/integration/delivery.py
 check epochs .local/venv/bin/python tests/integration/epochs.py
 check device-enrollment .local/venv/bin/python tests/integration/enrollment.py
 check migrations .local/venv/bin/python tests/integration/migrations.py
+check mls-directory .local/venv/bin/python tests/integration/directory.py
 check secrets python3 scripts/scan_secrets.py
 check rust-format cargo fmt --manifest-path src/crypto_core/Cargo.toml -- --check
 if [[ -x .local/security/bin/cargo-audit ]]; then
@@ -34,6 +35,7 @@ if [[ -x .local/flutter/bin/flutter ]]; then
 fi
 check network-report python3 scripts/render_network_report.py
 check acceptance-gate python3 tools/check_completion.py
+check v2-acceptance-gate python3 scripts/check_v2_completion.py
 
 if (( failures > 0 )); then
   echo "Verification failed: $failures check groups failed; see reports/evidence."

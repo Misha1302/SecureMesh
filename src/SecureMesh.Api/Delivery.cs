@@ -98,6 +98,7 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         app.MapPost("/v1/conversations",async(ConversationRequest input,HttpContext ctx,NpgsqlDataSource db)=>
         {
             var a=await Sql.Authenticate(ctx,db);
+            if(!app.Configuration.GetValue<bool>("EnableLegacyConversationBootstrap")) throw new ApiError(403,"LEGACY_BOOTSTRAP_DISABLED");
             if(input.Id==Guid.Empty || input.InitialEpoch<0 || input.DeviceIds.Length is <2 or >100 || !input.DeviceIds.Contains(a.DeviceId) || input.DeviceIds.Distinct().Count()!=input.DeviceIds.Length) throw new ApiError(400,"INVALID_MEMBERS");
             await using var c=await db.OpenConnectionAsync(); await using var tx=await c.BeginTransactionAsync();
             await using(var cmd=Sql.Cmd(c,"INSERT INTO conversations(id,epoch) VALUES($1,$2)",input.Id,input.InitialEpoch)) await cmd.ExecuteNonQueryAsync();

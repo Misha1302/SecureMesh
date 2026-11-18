@@ -97,12 +97,14 @@ def sync(device,token,group,limit=100):
     request('/v1/acks',dict(conversationId=group,sequence=sequence),token=token,expected=204)
 
 class Server:
-    def __init__(self,database='securemesh'):
+    def __init__(self,database='securemesh',legacy_bootstrap=True):
         assert database.replace('_','').isalnum()
         self.database=database
+        self.legacy_bootstrap=legacy_bootstrap
     def __enter__(self):
         password=dict(line.split('=',1) for line in (ROOT/'.env').read_text().splitlines())['SECUREMESH_DB_PASSWORD']
         self.env=dict(os.environ,ASPNETCORE_ENVIRONMENT='Development',ConnectionStrings__Database=f'Host=127.0.0.1;Port=55438;Database={self.database};Username=securemesh;Password={password}',Kestrel__Certificates__Default__Path=str(ROOT/'.local/tls.pem'),Kestrel__Certificates__Default__KeyPath=str(ROOT/'.local/tls.key'))
+        self.env['EnableLegacyConversationBootstrap']=str(self.legacy_bootstrap).lower()
         self.log=(ROOT/'.local'/('api-'+BASE.rsplit(':',1)[-1]+'.log')).open('w')
         self.start()
         return self

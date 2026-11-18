@@ -1,5 +1,21 @@
 use std::io::{self, BufRead, Read, Write};
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--validate-keypackage") {
+        let result = (|| -> anyhow::Result<String> {
+            let mut input = String::new();
+            io::stdin().take(65537).read_to_string(&mut input)?;
+            anyhow::ensure!(input.len() <= 65536, "input too large");
+            securemesh_crypto::validate_keypackage(&input)
+        })();
+        match result {
+            Ok(value) => println!("{value}"),
+            Err(_) => {
+                eprintln!("PUBLIC_KEYPACKAGE_REJECTED");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--serve") {
         if serve().is_err() {
             eprintln!("CRYPTO_OR_STORE_REJECTED");

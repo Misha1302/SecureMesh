@@ -1,0 +1,5 @@
+UTC: 2026-11-18T20:08:18.033981+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/directory.py']
+PASS: real OpenMLS public KeyPackage validation; credential/key/signature substitution denied; trusted publication; explicit recipient consent; atomic one-use lease/race/idempotency; signed recipient-scoped Welcome; legacy bootstrap disabled; crash before local join COMMIT recovers; redelivery cannot roll back MLS; TLS two-way ciphertext delivery and membership IDOR; late bootstrap ACK retry after lease expiry; no private keys in server helper.
+
+Exit code: 0

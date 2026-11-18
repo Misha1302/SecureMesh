@@ -1,6 +1,7 @@
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 // Local client process. No server keys, no plaintext fallback, no crypto primitives.
 pub mod api;
+mod directory;
 mod enrollment;
 use ::tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -116,6 +117,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     if op.starts_with("enrollment_") {
         return enrollment::execute(db, p, req, &identity, &signer);
     }
+    if op.starts_with("directory_") {
+        return directory::execute(db, p, req, &identity, &signer);
+    }
     match op {
         "identity" => Ok(json!({"identity":identity,"public_key":B64.encode(public)})),
         "sign" => Ok(
@@ -143,8 +147,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             Ok(json!({"verified":true}))
         }
         "keypackage" => {
-            let kp =
-                KeyPackage::builder().build(SUITE, p, &signer, credential(&identity, &signer))?;
+            let kp = KeyPackage::builder()
+                .key_package_lifetime(Lifetime::new(7 * 24 * 3600))
+                .build(SUITE, p, &signer, credential(&identity, &signer))?;
             Ok(json!({"keypackage":B64.encode(kp.key_package().tls_serialize_detached()?)}))
         }
         "create" => {
@@ -184,6 +189,15 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             )
         }
         "join" => {
+            let gid = s(req, "group")?;
+            let digest = B64.encode(Sha256::digest(bytes(req, "welcome")?));
+            if MlsGroup::load(p.storage(), &GroupId::from_slice(gid.as_bytes()))?.is_some() {
+                ensure!(
+                    meta(db, &format!("welcome:{gid}"))? == digest,
+                    "group already exists"
+                );
+                return Ok(json!({"already_joined":true}));
+            }
             let msg = MlsMessageIn::tls_deserialize_exact(&bytes(req, "welcome")?)?;
             let welcome = match msg.extract() {
                 MlsMessageBodyIn::Welcome(w) => w,
@@ -198,6 +212,22 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 "wrong group"
             );
             check_group(db, &g)?;
+            if let Some(expected) = req["expected_members"].as_array() {
+                let actual: std::collections::BTreeSet<_> = g
+                    .members()
+                    .map(|m| BasicCredential::try_from(m.credential).map(|c| c.identity().to_vec()))
+                    .collect::<std::result::Result<_, _>>()?;
+                let expected = expected
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(|v| v.as_bytes().to_vec())
+                            .context("invalid member")
+                    })
+                    .collect::<Result<std::collections::BTreeSet<_>>>()?;
+                ensure!(actual == expected, "unexpected MLS participant");
+            }
+            set_meta(db, &format!("welcome:{gid}"), &digest)?;
             Ok(json!({"epoch":g.epoch().as_u64()}))
         }
         "remove" => {
@@ -552,6 +582,12 @@ pub fn execute_json(path: &str, input: &str) -> Result<String> {
     let pass = s(&req, "passphrase")?;
     let db = open_store(path, pass)?;
     transact(&db, &req)
+}
+
+pub fn validate_keypackage(input: &str) -> Result<String> {
+    Ok(serde_json::to_string(&directory::validate(
+        &serde_json::from_str(input)?,
+    )?)?)
 }
 
 pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {

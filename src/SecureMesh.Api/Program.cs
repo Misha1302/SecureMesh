@@ -20,6 +20,7 @@ builder.Services.AddSingleton(NpgsqlDataSource.Create(connection));
 var stateDirectory=builder.Configuration["StateDirectory"] ?? Path.Combine(Directory.GetCurrentDirectory(),".local");
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(stateDirectory,"cursor-keys")));
 builder.Services.AddSingleton<Delivery>();
+builder.Services.AddSingleton<PublicKeyPackageValidator>();
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode=429;
@@ -43,6 +44,7 @@ app.Use(async(ctx,next)=>
 app.UseRateLimiter();
 app.MapIdentity();
 app.MapDeviceTrust();
+app.MapMlsDirectory();
 Delivery.MapDelivery(app);
 app.MapStream();
 app.MapGet("/health/live", () => Results.Ok(new { status = "live", productionApproved = false }));

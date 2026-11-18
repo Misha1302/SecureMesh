@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tests/integration'))
 import delivery
+from directory import establish
 
 def main():
     os.umask(0o077)
@@ -17,9 +18,7 @@ def main():
     if manifest.exists():
         print('Local demo profiles already exist at .local/demo/profiles.json; not overwritten.');return
     a,b=[delivery.account(root) for _ in range(2)]; da,db=a['device'],b['device'];da.pin(db);db.pin(da)
-    group=str(uuid.uuid4());da.call('create',group=group)
-    welcome=da.call('add',group=group,keypackage=db.call('keypackage')['keypackage']);db.call('join',group=group,welcome=welcome['welcome'])
-    delivery.request('/v1/conversations',dict(id=group,deviceIds=[da.identity,db.identity],initialEpoch=welcome['epoch']),token=a['session']['accessToken'],expected=201)
+    group=establish(a,b)
     profiles=[]
     for who,peer in [(a,b),(b,a)]:
         device=who['device']; other=peer['device']
