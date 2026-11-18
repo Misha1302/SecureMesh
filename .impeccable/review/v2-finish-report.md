@@ -1,0 +1,15 @@
+## verdict
+
+1. **Resolved — failed-login correction.** `v2-failed-login.png` shows the rejected username in an enabled field with a readable error; `onboarding.dart` now releases the unused prepared store/identity after a conclusive unauthenticated rejection, preserving the encrypted file. The retained GUI scenario corrects the username on the same screen and completes sign-in (`reports/evidence/v2-native-gui-review-fixes.txt`, exit 0).
+2. **Resolved — persistent action errors.** `v2-persistent-action-error.png`, captured after the automatic refresh interval, visibly retains the invalid-username error. `account_hub.dart` separates action and refresh errors, and successful refresh clears only its own failure. Both new error captures render #BA1A1A text on #F5FBF7, measured from PNG pixels at 6.16:1 contrast; error text is readable without relying on color alone.
+3. **Resolved — truthful history limits.** The updated `v2-login.png`, `v2-pending.png` and `v2-pending-request.png` explicitly state that old-history transfer and recovery are unavailable in this alpha. RU/EN source strings agree; approval is no longer presented as supplying old conversations.
+4. **Resolved — enrollment navigation.** `v2-pending-request.png` visibly directs the user to the actual Chat destination and the back arrow when a conversation is open. Both controls are present in the account/conversation captures; RU/EN source no longer names the nonexistent All chats destination.
+5. **Resolved — persisted design documentation.** `DESIGN.md` and `.impeccable/design.json` now record registration, email verification, credential separation, failed-login recovery, account consent/comparison, persistent errors, enrollment stages, history limits and the Linux-only evidence scope. Existing Material tokens and component preview styling are retained. The documenter records exact frontmatter preservation and successful JSON/diff validation in `v2-documentation-report.md`.
+
+## remaining
+
+Clear for the five scored fixes. No regressions from this fix batch were observed in the supplied recaptures. Re-read `desktop.png` (1280×720), `phone.png` (320×844), the updated login/error captures and `v2-conversation-compact.png`; both newly supplied pending-device captures are valid 1280×720 native Linux renders. This pass scored the original findings without reopening the defect hunt. The retained GUI log was inspected, not rerun by this reviewer; the pixel-contrast check exited 0.
+
+Ship covers the scored fixes, not the whole surface. Evidence remains Linux GTK/Xvfb: `phone.png` is a compact Linux window. New dark account flows, Android/iOS execution, full native enrollment, screen readers, system back/IME behavior and independent security assurance remain unverified. The product remains **PARTIAL / NOT_READY**, with four reported RustSec findings and incomplete full multi-device MLS/history/recovery, groups, media, calls and remaining acceptance/platform work. **PRODUCTION_APPROVED=false**.
+
+disposition: ship

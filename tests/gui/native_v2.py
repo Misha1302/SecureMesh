@@ -76,6 +76,10 @@ class NativeGui:
         return matches[0]
 
     def execute(self,command):
+        if command.get('prepare_pending'):
+            self.approver=d.account(self.root)
+            self.values.update(username=self.approver['username'],password=self.approver['password'])
+            print('Existing verified account has its own trusted device; GUI will enroll an independent candidate.',flush=True)
         if 'resize' in command:
             self.run('xdotool','windowsize',self.window,*command['resize'])
             time.sleep(.5)
@@ -100,6 +104,20 @@ class NativeGui:
             d.request('/v1/users/me',token=self.profile['accessToken'])
             self.peer=d.account(self.root);self.values['peer']=self.peer['username']
             print('Real GUI account and independent peer ready.',flush=True)
+        if command.get('verify_pending'):
+            self.device,self.profile=self.account()
+            me=d.request('/v1/users/me',token=self.profile['accessToken'])
+            assert me['trustState']=='DEVICE_PENDING_TRUST'
+            assert self.device.identity!=self.approver['device'].identity
+            d.request('/v1/conversations',token=self.profile['accessToken'],expected=403)
+            assert not self.device.call('outbox')['messages']
+            print('PASS: real GUI password login creates independent PENDING_TRUST device; server denies private conversations.',flush=True)
+        if command.get('verify_enrollment_request'):
+            _,profile=self.account()
+            request=d.request('/v1/devices/enrollment/'+profile['enrollmentId'],token=profile['accessToken'])
+            payload=base64.b64decode(request['payload']).decode().splitlines()
+            assert payload[2]==self.device.identity and request['candidateSignature'] and not request['approved']
+            print('PASS: GUI created a real signed pending enrollment request; no approval or history access implied.',flush=True)
         if command.get('accept_peer'):
             requests=d.request('/v1/chat-requests',token=self.peer['session']['accessToken'])
             request=next(r for r in requests if r['senderDevice']==self.device.identity)

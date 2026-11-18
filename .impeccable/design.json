@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-18T03:26:20Z",
+  "generatedAt": "2026-11-18T20:55:58Z",
   "title": "Design System: SecureMesh native interface",
   "extensions": {
     "colorMeta": {
@@ -256,11 +256,11 @@
     "typographyMeta": {
       "headline-medium": {
         "displayName": "Headline Medium",
-        "purpose": "Unlock and Settings headings."
+        "purpose": "Unlock, account-form, account-hub and Settings headings."
       },
       "title-large": {
         "displayName": "Title Large",
-        "purpose": "AppBar title and Account devices heading."
+        "purpose": "AppBar title, chat/device sections and Account devices heading."
       },
       "body-large": {
         "displayName": "Body Large",
@@ -308,7 +308,7 @@
       "name": "Filled action · light",
       "kind": "button",
       "refersTo": "button-primary-light",
-      "description": "Schematic Material FilledButton; native painting, state layers and padded targets remain Flutter behavior.",
+      "description": "Schematic Material FilledButton reused for account submission, chat requests and key/approval confirmation; native painting, state layers and padded targets remain Flutter behavior.",
       "html": "<button class=\"ds-filled\">Keys match</button>",
       "css": ".ds-filled{font-family:Roboto,Arial,sans-serif;font-size:14px;font-weight:500;line-height:1.43;letter-spacing:.1px;border-radius:9999px;cursor:pointer;min-height:48px;padding:10px 24px;border:0;background:#026B5D;color:#FFFFFF;transition:box-shadow 200ms;} .ds-filled:hover{box-shadow:inset 0 0 0 999px rgba(255,255,255,.08);} .ds-filled:focus-visible,.ds-filled:active{box-shadow:inset 0 0 0 999px rgba(255,255,255,.1);} .ds-filled:disabled{background:rgba(23,29,27,.12);color:rgba(23,29,27,.38);cursor:default;}"
     },
@@ -324,7 +324,7 @@
       "name": "Text action",
       "kind": "button",
       "refersTo": "button-text-light",
-      "description": "Schematic Material text action for retry and dialog dismissal.",
+      "description": "Schematic Material text action for account-mode switching, refresh/retry and dialog dismissal.",
       "html": "<button class=\"ds-text\">Later</button>",
       "css": ".ds-text{font-family:Roboto,Arial,sans-serif;font-size:14px;font-weight:500;line-height:1.43;letter-spacing:.1px;border-radius:9999px;cursor:pointer;min-height:48px;padding:10px 12px;border:0;background:transparent;color:#026B5D;transition:background 200ms;} .ds-text:hover{background:rgba(2,107,93,.08);} .ds-text:focus-visible,.ds-text:active{background:rgba(2,107,93,.1);}"
     },
@@ -340,7 +340,7 @@
       "name": "Labeled outlined field",
       "kind": "input",
       "refersTo": "field-outlined-light",
-      "description": "Schematic outlined profile/message field; native floating labels, text scaling and selection are Flutter behavior.",
+      "description": "Schematic labeled outlined field reused by profile, account, contact/device-request and message inputs. Onboarding adds native Form length validation; secret credentials are obscured. Native floating labels, text scaling and selection remain Flutter behavior.",
       "html": "<label class=\"ds-field\">Message<input aria-label=\"Message\" placeholder=\" \" /></label>",
       "css": ".ds-field{position:relative;display:block;font:12px Roboto,Arial,sans-serif;color:#3F4946;padding:0 12px 4px;border:1px solid #6F7976;border-radius:4px;background:#F5FBF7;} .ds-field input{display:block;width:100%;min-height:40px;padding:0;border:0;outline:none;background:transparent;color:#171D1B;font:16px/1.5 Roboto,Arial,sans-serif;letter-spacing:.5px;} .ds-field:hover{border-color:#171D1B;} .ds-field:focus-within{border-color:#026B5D;box-shadow:inset 0 0 0 1px #026B5D;color:#026B5D;}"
     },
@@ -348,7 +348,7 @@
       "name": "Compact navigation",
       "kind": "nav",
       "refersTo": "navigation-compact-light",
-      "description": "Schematic two-destination NavigationBar below the native 760-logical-pixel breakpoint; this is not a private-chat web implementation.",
+      "description": "Schematic two-destination NavigationBar below the native 760-logical-pixel breakpoint. Chat contains the account hub or selected conversation; a conversation back arrow returns to the hub. This is not a private-chat web implementation.",
       "html": "<nav class=\"ds-nav\" aria-label=\"SecureMesh\"><button aria-current=\"page\"><span><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><path d=\"M4 4h16v13H8l-4 4z\"/></svg></span>Chat</button><button><span><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"m9 3-1 3-3 1 1 3-2 2 2 2-1 3 3 1 1 3h6l1-3 3-1-1-3 2-2-2-2 1-3-3-1-1-3z\"/></svg></span>Settings</button></nav>",
       "css": ".ds-nav{display:flex;min-height:80px;background:#E9EFEC;} .ds-nav button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:48px;border:0;background:transparent;color:#3F4946;font:500 12px/1.33 Roboto,Arial,sans-serif;letter-spacing:.5px;cursor:pointer;} .ds-nav span{display:flex;align-items:center;justify-content:center;width:64px;height:32px;border-radius:9999px;} .ds-nav button[aria-current] span{background:#CDE8E0;color:#334B46;} .ds-nav button:hover span{box-shadow:inset 0 0 0 999px rgba(23,29,27,.08);} .ds-nav button:focus-visible span,.ds-nav button:active span{box-shadow:inset 0 0 0 999px rgba(23,29,27,.1);}"
     },
@@ -379,9 +379,11 @@
   ],
   "narrative": {
     "northStar": "Visible durable state",
-    "overview": "SecureMesh uses the Material 3 direction pinned by the product brief. The interface is quiet, task focused and explicit about local persistence, connection state and key comparison. Native controls and readable labels carry the design; the green seed supplies continuity across light and dark themes.\n\nThis document records the implemented local alpha, not a new visual direction. Sources are `apps/client_flutter/lib/native.dart`, `public_web.dart`, resolved `material_ui` 1.11.1 defaults and Linux v3 chat/settings screenshots in `reports/evidence/`. Generated colors were reproduced with resolved `material_color_utilities` 0.13.0, tonal spot and standard contrast. Frontmatter uses portable CSS units corresponding to Flutter logical pixels and unscaled type sizes. Message component `width` means maximum width in Flutter. Current source adds padded targets and standard density after the v3 captures; screenshots are composition references, not proof of those new target sizes.",
+    "overview": "SecureMesh uses the Material 3 direction pinned by the product brief. The interface is quiet, task focused and explicit about local persistence, connection state and key comparison. Native controls and readable labels carry the design; the green seed supplies continuity across light and dark themes.\n\nThis document records the implemented local alpha and its account-access extension. Current native sources include native.dart, onboarding.dart and account_hub.dart with the shared HTTP, local-client, session and delivery/transport code. Reusable account forms keep the account password separate from the local encrypted-store passphrase. The account hub separates chat consent, unchecked explicit key comparison and device enrollment. Pending, server-approved, locally verified and activated states remain distinct; local verification is an intermediate operation, not a separate success screen. Approval never implies old-history transfer or recovery, which remain unavailable. A conclusive unauthenticated rejection releases the prepared form identity for correction while retaining the unused encrypted file; action errors persist across successful background refreshes.\n\nThe extension preserves the incumbent token frontmatter and preview CSS. Frontmatter uses portable CSS units corresponding to Flutter logical pixels and unscaled type sizes; message width is a maximum. Actual Linux GTK/Xvfb review captures include 1280×720 desktop and 320×844 compact registration, login, comparison, conversation and offline/recovered states. phone.png is a compact Linux window, not a mobile build. Screenshots are test evidence, not shipping raster assets. Retained analyzer, widget, Linux-build, GUI and enrollment process logs were inspected, not rerun by the documenter. New account dark flows, mobile platforms, full native enrollment, assistive technology and independent security assurance remain unverified. Product status is PARTIAL / NOT_READY; four reported RustSec findings remain and PRODUCTION_APPROVED=false.",
     "keyCharacteristics": [
       "Material controls with one green seed and semantic light/dark roles.",
+      "Reusable account forms that distinguish server credentials from the local encrypted-store passphrase.",
+      "Explicit contact comparison and staged device approval before account use.",
       "Separate connection, queue and message-persistence labels.",
       "Compact bottom navigation and expanded navigation rail.",
       "Russian/English application labels and selectable message/key text.",
@@ -397,6 +399,8 @@
     "dos": [
       "Do use Material 3 controls and current theme roles for new native UI.",
       "Do keep persistence, connection and key confirmation explicit in text.",
+      "Do distinguish account credentials, local-store ownership, server approval, local verification and device activation.",
+      "Do preserve readable action errors across background refreshes and give a deliberate retry path.",
       "Do retain RU/EN strings, selectable message/key text and labeled actions.",
       "Do validate compact/expanded, light/dark and large-text behavior after UI changes.",
       "Do preserve the local-alpha scope notice until implementation and evidence change."
@@ -404,6 +408,7 @@
     "donts": [
       "Don't hardcode the light palette into dark-mode widgets.",
       "Don't imply read or peer-delivered receipts from server acknowledgement.",
+      "Don't imply that an account password or device approval transfers old history or provides recovery.",
       "Don't substitute visual polish for device-trust, offline-queue or accessibility verification.",
       "Don't claim completed groups, media, calls, browser private chat, mobile verification or independent audit.",
       "Don't treat the sidecar's HTML previews as production Flutter widgets or platform test evidence."

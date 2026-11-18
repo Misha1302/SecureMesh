@@ -1,0 +1,50 @@
+UTC: 2026-11-18T21:04:53.538646+00:00
+Command: ['.local/venv/bin/python', 'tests/gui/native_v2.py', '--script', 'tests/gui/v2_scenario.json']
+Owned native GUI ready.
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["resize", "wait", "capture"]}
+{"completed": ["resize", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["key", "fill"]}
+{"completed": ["key", "fill"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "key", "fill"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["click", "key", "fill"]}
+{"completed": ["click", "wait"]}
+Real GUI account and independent peer ready.
+{"completed": ["verify_account"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["click", "fill", "key"]}
+{"completed": ["click", "wait"]}
+Peer independently pinned GUI device, published real KeyPackage and accepted request.
+{"completed": ["accept_peer"]}
+{"completed": ["wait"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click"]}
+{"completed": ["click", "wait"]}
+Peer joined MLS via signed server-routed Welcome.
+{"completed": ["join_peer"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait"]}
+Real GUI message decrypted by independent recipient; encrypted reply saved.
+{"completed": ["verify_message"]}
+PASS: actual Flutter GUI registration/email verification/login, independent key, username consent/key comparison, routed Welcome, two-way encrypted text, local encrypted persistence and log-secret checks.
+{"completed": ["wait", "verify_reply", "capture"]}
+Owned API stopped; GUI remains running offline.
+{"completed": ["offline"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "capture"]}
+SIGKILL applied to owned native container after durable queue; API and GUI restarted with the same encrypted profile.
+{"completed": ["crash_reopen", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait"]}
+PASS: actual GUI offline enqueue; encrypted local COMMIT verified; native SIGKILL; reopen same store; exact immutable ciphertext delivered once; both histories and cursor persisted.
+{"completed": ["verify_recovered", "capture"]}
+{"completed": ["resize", "wait", "capture"]}
+
+Exit code: 0
