@@ -27,7 +27,7 @@ make client
 
 Open make client twice; use each database path and synthetic local unlock value from .local/demo/profiles.json. That mode-600 ignored file is for local test data only, never real recovery. Compare public keys independently before sending. Private keys stay in each SQLCipher store. UI covers unlock/chat/settings, not registration/groups/media/calls/admin.
 
-Executed: make network-gprs and make network-severe, 200 messages each direction, seeds 7/19/41. All 2400 IDs delivered without logical duplicates. GPRS p95 4.351–4.754 seconds after a retained failed attempt and fix. Functioning-link synthetic baselines do not complete the mixed-fault suite or prove carrier performance: [2G report](reports/2G_REPORT.md).
+The full suites are exposed as make network-gprs and make network-severe; their Python driver was executed with 200 messages each direction and seeds 7/19/41 (exact commands in evidence). All 2400 IDs delivered without logical duplicates. GPRS p95 4.351–4.754 seconds after a retained failed attempt and fix. Functioning-link synthetic baselines do not complete the mixed-fault suite or prove carrier performance: [2G report](reports/2G_REPORT.md).
 
 make verify aggregates implemented build/crypto/API/epoch/secret-pattern/format/UI checks, available RustSec scan and the recorded acceptance gate. Long network/disruptive DB restore checks have separate commands and retained evidence. A component pass does not complete an unfinished acceptance row. See [STATUS](STATUS.md), [matrix](reports/TEST_RESULTS.md), [handoff](reports/FINAL_HANDOFF_RU.md).
 
