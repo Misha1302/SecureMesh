@@ -1,0 +1,12 @@
+UTC: 2026-11-19T07:38:25.259107+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/refresh_recovery.py', '--legacy-baseline']
+Traceback (most recent call last):
+  File "/home/micodiy/SecureMesh/tests/integration/refresh_recovery.py", line 87, in <module>
+    main()
+    ~~~~^^
+  File "/home/micodiy/SecureMesh/tests/integration/refresh_recovery.py", line 72, in main
+    assert second.returncode == 0 and result.get('ok'), 'Recovery rejected: ' + str(result.get('code', 'native failure'))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Recovery rejected: REFRESH_REUSE
+
+Exit code: 1
