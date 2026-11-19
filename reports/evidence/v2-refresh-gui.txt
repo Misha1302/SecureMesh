@@ -1,0 +1,20 @@
+UTC: 2026-11-19T08:21:09.635095+00:00
+Command: ['make', 'gui-reauthentication']
+.local/venv/bin/python tests/gui/reauthentication.py --script tests/gui/v2_reauthentication_scenario.json
+Reauthentication GUI ready.
+Prepared same-key profile with real consented DM, immutable queued ciphertext and revoked sessions; owned GUI restarted.
+{"completed": ["prepare_profile", "resize", "wait", "capture"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["click", "fill"]}
+PASS: failed real GUI password login preserved identity, original profile and exact ciphertext; no additional session.
+{"completed": ["click", "wait", "verify_preserved", "capture"]}
+{"completed": ["resize", "wait", "capture"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["resize", "click", "wait"]}
+{"completed": ["click", "key", "fill"]}
+PASS: actual GTK password repair uses same device and MLS keys; exactly one new bound session; original ciphertext delivered/decrypted once; log secrets absent.
+{"completed": ["key", "wait", "verify_signed_in", "capture"]}
+
+Exit code: 0

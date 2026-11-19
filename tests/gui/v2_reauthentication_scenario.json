@@ -1,0 +1,13 @@
+[
+  {"prepare_profile":true,"resize":[1280,720],"wait":1,"capture":".impeccable/review/v2-reauth-unlock.png"},
+  {"click":[600,443],"fill":"localpass"},
+  {"click":[640,514],"wait":6,"capture":".impeccable/review/v2-reauth-required.png"},
+  {"click":[1088,160],"wait":1,"capture":".impeccable/review/v2-reauth-desktop.png"},
+  {"click":[600,420],"fill":"wrongpassword"},
+  {"click":[640,544],"wait":4,"verify_preserved":true,"capture":".impeccable/review/v2-reauth-password-error.png"},
+  {"resize":[320,844],"wait":1,"capture":".impeccable/review/v2-reauth-error-compact.png"},
+  {"click":[280,28],"wait":1,"capture":".impeccable/review/v2-reauth-error-compact-en.png"},
+  {"resize":[1280,720],"click":[1240,28],"wait":1},
+  {"click":[600,392],"key":"ctrl+a","fill":"password"},
+  {"key":"Return","wait":8,"verify_signed_in":true,"capture":".impeccable/review/v2-reauth-recovered.png"}
+]

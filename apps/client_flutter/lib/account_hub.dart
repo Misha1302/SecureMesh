@@ -20,6 +20,7 @@ class AccountHub extends StatefulWidget {
     required this.api,
     required this.saveProfile,
     required this.openChat,
+    this.onReauthenticate,
     this.russian = true,
   });
   final Map<String, dynamic> profile;
@@ -28,6 +29,7 @@ class AccountHub extends StatefulWidget {
   final Future<void> Function(Map<String, dynamic>) saveProfile;
   final Future<void> Function(String, String, String, String) openChat;
   final bool russian;
+  final VoidCallback? onReauthenticate;
   @override
   State<AccountHub> createState() => _AccountHubState();
 }
@@ -407,13 +409,21 @@ class _AccountHubState extends State<AccountHub> {
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
         ),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: working || fetching ? null : refresh,
-          icon: const Icon(Icons.refresh),
-          label: Text(tr('Обновить', 'Refresh')),
-        ),
+      Wrap(
+        spacing: 12,
+        children: [
+          TextButton.icon(
+            onPressed: working || fetching ? null : refresh,
+            icon: const Icon(Icons.refresh),
+            label: Text(tr('Обновить', 'Refresh')),
+          ),
+          if (widget.onReauthenticate != null)
+            TextButton.icon(
+              onPressed: working ? null : widget.onReauthenticate,
+              icon: const Icon(Icons.login),
+              label: Text(tr('Войти снова', 'Sign in again')),
+            ),
+        ],
       ),
       if (!trusted) ...[
         Text(

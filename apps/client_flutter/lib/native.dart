@@ -11,6 +11,7 @@ import 'session.dart';
 import 'delivery_client.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
+import 'reauthentication.dart';
 import 'account_hub.dart';
 import 'transport.dart';
 
@@ -30,6 +31,7 @@ class _ClientAppState extends State<ClientApp> {
   final composer = TextEditingController();
   final chatScroll = ScrollController();
   bool sending = false, unread = false;
+  bool reauthenticationOpen = false;
   int generation = 0;
   String connectionState = "offline";
   String? sendError, deviceError;
@@ -142,7 +144,13 @@ class _ClientAppState extends State<ClientApp> {
         http: http!,
         endpoint: Uri.parse(profile!['endpoint'] as String),
         profile: () => profile!,
-        persist: (value) => persistProfile(value, sessionOnly: true),
+        prepareRefresh: () async =>
+            (await crypto('refresh_prepare', {
+                  'endpoint': profile!['endpoint'],
+                }))['request']
+                as Map<String, dynamic>,
+        commitRefresh: (value) =>
+            persistSession('refresh_complete', {'response': value}),
       );
       transport = MeshTransport(
         endpoint: Uri.parse(profile!['endpoint'] as String),
@@ -284,31 +292,75 @@ class _ClientAppState extends State<ClientApp> {
     }
   }
 
-  Future<void> persistProfile(
-    Map<String, dynamic> value, {
-    bool sessionOnly = false,
-  }) {
+  Future<void> persistProfile(Map<String, dynamic> value) {
     final epoch = generation;
     final write = profileWrites.then((_) async {
       if (epoch != generation || profile == null) throw CryptoFailure();
-      final updated = sessionOnly
-          ? {...profile!, ...value}
-          : {
-              ...value,
-              for (final key in [
-                'accessToken',
-                'refreshToken',
-                'deviceId',
-                'expiresIn',
-              ])
-                key: profile![key],
-            };
+      final updated = {
+        ...value,
+        for (final key in [
+          'accessToken',
+          'refreshToken',
+          'deviceId',
+          'expiresIn',
+          'refreshBinding',
+        ])
+          key: profile![key],
+      };
       await crypto('profile_put', {'profile': updated});
       profile = updated;
     });
     // Preserve the queue after a failed write; this caller still receives the failure.
     profileWrites = write.catchError((_) {});
     return write;
+  }
+
+  Future<void> persistSession(String operation, Map<String, dynamic> fields) {
+    final epoch = generation;
+    final write = profileWrites.then((_) async {
+      if (epoch != generation || profile == null) throw CryptoFailure();
+      final result = await crypto(operation, fields);
+      profile = result['profile'] as Map<String, dynamic>;
+    });
+    profileWrites = write.catchError((_) {});
+    return write;
+  }
+
+  Future<void> showReauthentication(BuildContext pageContext) async {
+    if (reauthenticationOpen || profile == null || session == null) return;
+    reauthenticationOpen = true;
+    timer?.cancel();
+    final current = session!;
+    try {
+      final result = await Navigator.of(pageContext).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => ProfileReauthentication(
+            username: profile!['username'] as String?,
+            russian: ru,
+            onSignIn: (username, password) => current.reauthenticate(
+              username: username,
+              password: password,
+              command: crypto,
+              commit: (tokens, account) => persistSession(
+                'session_reauthenticate',
+                {'session': tokens, 'account': account},
+              ),
+            ),
+          ),
+        ),
+      );
+      if (result == true && mounted) {
+        setState(() {
+          error = null;
+          deviceError = null;
+          failures = 0;
+          connectionState = 'offline';
+        });
+      }
+    } finally {
+      reauthenticationOpen = false;
+      if (mounted && store != null) unawaited(pump());
+    }
   }
 
   Future<dynamic> api(
@@ -318,7 +370,13 @@ class _ClientAppState extends State<ClientApp> {
   }) => session!.request(route, data: data, method: method);
 
   Future<void> pump() async {
-    if (busy || store == null || !mounted || profile?['group'] == null) return;
+    if (busy ||
+        reauthenticationOpen ||
+        store == null ||
+        !mounted ||
+        profile?['group'] == null) {
+      return;
+    }
     final epoch = generation;
     busy = true;
     timer?.cancel();
@@ -345,8 +403,8 @@ class _ClientAppState extends State<ClientApp> {
           (failure.status == 401 || failure.status == 403)) {
         connectionState = 'auth';
         error = tr(
-          'Доступ отозван. Нужен повторный вход через API; очередь сохранена.',
-          'Access revoked. Sign in again through the API; your queue is saved.',
+          'Доступ ограничен. При необходимости войдите снова. Очередь и ключи сохранены.',
+          'Access is restricted. Sign in again if needed. Your queue and keys are preserved.',
         );
       } else if (failure is ApiFailure) {
         connectionState = 'server';
@@ -377,7 +435,10 @@ class _ClientAppState extends State<ClientApp> {
           }
         }
         busy = false;
-        if (mounted && store != null && profile?['group'] != null) {
+        if (mounted &&
+            !reauthenticationOpen &&
+            store != null &&
+            profile?['group'] != null) {
           setState(() {});
           final delay = failures == 0
               ? nextDelay
@@ -617,6 +678,9 @@ class _ClientAppState extends State<ClientApp> {
                                       api: (route, {data}) =>
                                           api(route, data: data),
                                       saveProfile: persistProfile,
+                                      onReauthenticate: () => unawaited(
+                                        showReauthentication(context),
+                                      ),
                                       openChat: (group, peer, name, key) async {
                                         final selected = {
                                           ...profile!,
@@ -808,6 +872,12 @@ class _ClientAppState extends State<ClientApp> {
                     : tr('Офлайн', 'Offline'),
               ),
             ),
+            if (connectionState == 'auth')
+              IconButton(
+                tooltip: tr('Войти снова', 'Sign in again'),
+                onPressed: () => unawaited(showReauthentication(context)),
+                icon: const Icon(Icons.login),
+              ),
             Semantics(
               liveRegion: true,
               child: Text(tr('В очереди: $queued', 'Queued: $queued')),
@@ -1078,6 +1148,15 @@ class _ClientAppState extends State<ClientApp> {
         ),
       ),
       const SizedBox(height: 24),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          onPressed: () => unawaited(showReauthentication(context)),
+          icon: const Icon(Icons.login),
+          label: Text(tr('Войти снова', 'Sign in again')),
+        ),
+      ),
+      const SizedBox(height: 16),
       Align(
         alignment: Alignment.centerLeft,
         child: OutlinedButton.icon(

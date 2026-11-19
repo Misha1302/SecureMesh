@@ -1,10 +1,48 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:securemesh_client/native.dart';
 import 'package:securemesh_client/onboarding.dart';
+import 'package:securemesh_client/reauthentication.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:securemesh_client/public_web.dart' as public;
 
 void main() {
+  testWidgets(
+    'same-profile sign-in fits compact enlarged text; validation follows locale without sending credentials',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 844);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProfileReauthentication(
+            username: 'u_existing',
+            onSignIn: (_, _) async {
+              throw StateError('Invalid form must not send credentials');
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Войти'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Войти'));
+      await tester.pumpAndSettle();
+      expect(find.text('Введите от 12 до 256 символов.'), findsOneWidget);
+      await tester.tap(find.text('RU / EN'));
+      await tester.pumpAndSettle();
+      expect(find.text('Enter 12–256 characters.'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextFormField>(find.byType(TextFormField).first)
+            .initialValue,
+        'u_existing',
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   testWidgets(
     'registration and login fit 320 dp, support EN and reject empty inputs before network',
     (tester) async {

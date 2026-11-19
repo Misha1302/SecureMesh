@@ -22,7 +22,8 @@ def main():
     profiles=[]
     for who,peer in [(a,b),(b,a)]:
         device=who['device']; other=peer['device']
-        device.call('profile_put',profile=dict(endpoint=delivery.BASE,group=group,peerName=peer['username'],peerDevice=other.identity,peerKey=other.public,trustConfirmed=False,**who['session']))
+        account=delivery.request('/v1/users/me',token=who['session']['accessToken'])
+        device.call('profile_put',profile=dict(endpoint=delivery.BASE,username=who['username'],userId=account['userId'],requiresEnrollment=False,enrollmentVerified=True,group=group,peerName=peer['username'],peerDevice=other.identity,peerKey=other.public,trustConfirmed=False,**who['session']))
         profiles.append(dict(database=str(device.path),passphrase=device.password,username=who['username']))
     manifest.write_text(json.dumps(profiles,indent=2)+'\n')
     print('Two real verified local accounts and MLS profiles created. Unlock details are in ignored .local/demo/profiles.json (mode 600). No messages seeded. Compare keys before sending.')
