@@ -46,7 +46,7 @@ make build-linux
 make client
 ```
 
-API:https://127.0.0.1:5088; локальное письмо:http://127.0.0.1:58028. Для нового DM создайте два аккаунта, подтвердите почту, примите username-заявку и независимо сравните ключи. Профили make client хранит в ignored.local/profiles. Folder action выбирает прежний файл для resume, не заменяет потерянный пароль.
+API:https://127.0.0.1:5088; локальное письмо:http://127.0.0.1:58028. Для нового DM создайте два аккаунта, подтвердите почту, примите username-заявку и независимо сравните ключи. Профили make client хранит в ignored .local/profiles. Folder action выбирает прежний файл для resume, не заменяет потерянный пароль.
 
 Адресные команды:
 
@@ -67,4 +67,4 @@ make down
 
 Следующий порядок: совместимое upstream security remediation; оставшиеся pre-journal/refresh crash edges; полный mixed-fault schedule; multi-device MLS/history/recovery; затем остальные S2–S4/M4–M8 функции. Продолжать существующие модули, не пересоздавать приложение.
 
-GitHub origin: существующий приватный https://github.com/Misha1302/SecureMesh. Последний ранее подтверждённый sync6b2aefc; новые push/readback записываются отдельно после локальной проверки. Source synchronization — не deployment. Прежние Actions44419726144/44419726028 не запустили шаги из-за billing/spending limits; платёжные настройки не менялись. Локальные PASS не равны cloud CI PASS. Публичный запуск требует завершённых gates, независимого аудита и отдельного разрешения.
+GitHub origin: существующий приватный https://github.com/Misha1302/SecureMesh. Atomic push завершился0; remote Git readback подтвердил dfda7ca в main и codex/securemesh-v2. Доказательства — evidence/v2-resume-github-push.txt и v2-resume-github-readback.json. Следующий документационный коммит сохраняет их; git rev-parse HEAD определяет более новый итоговый checkout. REST/Actions readback после push завершился TLS timeout: cloud CI этого checkpoint NOT_CONFIRMED. Прежние Actions44419726144/44419726028 не запустили шаги из-за billing/spending limits; платёжные настройки не менялись. Source synchronization — не deployment. Публичный запуск требует завершённых gates, независимого аудита и отдельного разрешения.

@@ -21,6 +21,8 @@ Unlock the chosen file with its original store passphrase. A prepared or authent
 
 Private-data access still follows the existing pending-device rules. Resuming does not approve a device, insert an MLS leaf, import another device's keys, transfer history, recover a forgotten passphrase or restore lost-all-devices access. Interruptions of registration/email verification before journal creation are outside this component. OS keyring, QR camera and full onboarding recovery remain separate roadmap work.
 
+Completed legacy profiles remain usable. An older incomplete file without this journal is not automatically converted or assigned a new identity; it needs a separate explicit migration/recovery path. The new flow prevents this gap for sign-ins prepared with the journal.
+
 ## Executed evidence
 
 `make onboarding-recovery` runs the production Dart controller, actual OpenMLS/SQLCipher, local TLS API and PostgreSQL. An owned test-only TLS proxy delays real responses after server commit. Actual owned Dart process groups receive SIGKILL. The scenario checks lost login replies, a later incorrect password, saved and expired sessions, same-key continuity, foreign-session/account denial, abort before local COMMIT, restart after COMMIT, wrong local passphrase and pending-device API denial. Additional negative responses change the real challenge's purpose, ID, device or username; the controller must reject them before signing or sending a login POST, with zero issued sessions.

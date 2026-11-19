@@ -49,3 +49,5 @@ GUI использует реальные accepted API logins как fixtures и
 Остаются pre-journal registration/email interruption, отдельная qualification refresh lost-reply/crash, keyring/keystore, QR, MLS multi-device membership/revoke/rekey, history transfer/recovery/transparency; полный mixed 2G/ACK/SIGKILL/DB/media schedule; группы/каналы/медиа/звонки и остальные M4–M8. Независимого security-аудита нет.
 
 Шесть 2G-trials/2400 IDs остаются измерениями runtime `4b003dd` с совпадающими transport/controller source hashes и одним набором измеренных бинарников. После journal-изменения они не объявляются новым прогоном текущего crypto binary. Схема API остаётся с шестью миграциями; новый журнал использует существующую encrypted app_meta, серверная миграция не требовалась. Исходные ТЗ/checks/docs/v2 неизменны. Production не развёрнут.
+
+Приватный GitHub: atomic push exit0 и remote Git readback обеих веток подтвердили dfda7ca. Отдельные v2-resume-github-push.txt/readback.json сохраняют наблюдение до последующего документационного коммита. Новые REST/Actions metadata не получены из-за TLS timeout; cloud CI не объявляется успешным. Точный итоговый SHA — git rev-parse HEAD.
