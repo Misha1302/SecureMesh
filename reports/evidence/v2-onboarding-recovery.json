@@ -1,0 +1,18 @@
+{
+  "source_head": "6b2aefc4233fbcc4fb2c5cf8f804bc4b07f151f3",
+  "source_tree_dirty": true,
+  "cases": [
+    "server challenge purpose/ID/device/username substitutions denied before signing/login POST; zero server sessions",
+    "lost accepted login reply + SIGKILL + wrong-password retry preserves same trusted key and one server device",
+    "durable session + SIGKILL resumes without password/new login; foreign binding and pre-COMMIT abort rejected; pending device remains private-data denied",
+    "expired saved session requests password with same key; SIGKILL after profile COMMIT reopens without another login",
+    "wrong local passphrase denied; invalid initializer rolls back identity+journal; legacy initialized store remains compatible"
+  ],
+  "production_approved": false,
+  "source_sha256": {
+    "apps/client_flutter/lib/account_setup.dart": "78cf656a4a509e000e5e5f46ccaf8402b865465c91c2b739d285de62c23cb74e",
+    "src/crypto_core/src/onboarding.rs": "92b2d4e08787b9613fdebea1f027c27acef32178978e6997a9ffb91416a2e267",
+    "apps/client_flutter/tool/onboarding_trial.dart": "d29ed7cccf5d2611efa683e2cf999bedce58732712e4b32bf73c5600feb21e97"
+  },
+  "resolved_source_snapshot_commit": "1c086591518d05e92bb8b0517b9f0c6d2f149624"
+}

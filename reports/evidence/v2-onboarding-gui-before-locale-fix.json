@@ -1,0 +1,116 @@
+{
+  "recorded_at_utc": "2026-11-19T06:29:56.616306+00:00",
+  "source_head": "6b2aefc4233fbcc4fb2c5cf8f804bc4b07f151f3",
+  "source_tree_dirty": true,
+  "platform": "Linux GTK/Xvfb; not Android/iOS",
+  "process_exit_code": 0,
+  "observed_completed_modes": 3,
+  "session_counts_asserted_by_gui_test": {
+    "prepared": 2,
+    "authenticated": 1,
+    "expired": 2
+  },
+  "evidence": "reports/evidence/v2-onboarding-gui-before-locale-fix.txt",
+  "evidence_sha256": "623dcb16d755353a4171ac533ad8f2013605d3a10b14eb37194e2a628099ef89",
+  "source_sha256": {
+    "apps/client_flutter/lib/native.dart": "18ad83e84ae566d245c224d62d79517e0efb0afc630dd76534a7d999ec20b82f",
+    "apps/client_flutter/lib/onboarding.dart": "1c44a58a7ddc1d11240950f015b1ce719045fd1cd72f6e2d4c55de9be7d0cc77",
+    "apps/client_flutter/lib/account_setup.dart": "78cf656a4a509e000e5e5f46ccaf8402b865465c91c2b739d285de62c23cb74e",
+    "apps/client_flutter/lib/profile_files.dart": "34a8a0e735896f199c3290e2294553de212ca1233dc73cfc715049c4c268cad0",
+    "src/crypto_core/src/onboarding.rs": "92b2d4e08787b9613fdebea1f027c27acef32178978e6997a9ffb91416a2e267",
+    "tests/gui/onboarding_resume.py": "f3f3426fbbe04a440ff185d5eb4f87061cd9584fdc3e646a971430c852a6a312",
+    "tests/gui/v2_resume_scenario.json": "21b61f80c351e35ba8b8d8ef91e90c07e136332e35d97b4a3708d407e2946c6b"
+  },
+  "binary_sha256": {
+    "apps/client_flutter/build/linux/x64/debug/bundle/securemesh_client": "0d65d49f660386731f4dd9378931a70c656eda86481d67461bfaf6b3be8eeb4d",
+    "src/crypto_core/target/debug/libsecuremesh_crypto.so": "5e10f7180dbe9e68ab747920c7e4cd144e59c5bfa0b409c6208bfbe3e1d2eac8",
+    "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "fb5226d39ed34ebfebbd9999d02420fe52aadcbd62bdfb65c9ea2febb350f363",
+    "apps/client_flutter/build/linux/x64/debug/bundle/data/flutter_assets/kernel_blob.bin": "66c4310a226f1a8c1fa0006dd4cacc80e511676bc95d007184194092073fc4f6"
+  },
+  "captures": {
+    ".impeccable/review/before-locale-fix-v2-resume-empty.png": {
+      "sha256": "372ab81f6d3ca5281c4c0bf05fbc8b1b261b2371904989f7ac2a3d1d7ee9f009",
+      "size": [
+        1280,
+        720
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-picker.png": {
+      "sha256": "ff3cdfc75e33eb3426b9dbfc40db0d6e8a0c6ab11433c808e77dfcedea65c9b6",
+      "size": [
+        1280,
+        720
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-wrong-passphrase.png": {
+      "sha256": "53e2c8074e4520090f787747b7c258d1985005751bd3e9edb1a64be55e44720c",
+      "size": [
+        1280,
+        720
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-prepared.png": {
+      "sha256": "50e7134195e90ebf8e79f679165666ee03da950a917bcac1ebce8daa11d79f6f",
+      "size": [
+        1280,
+        720
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-completed.png": {
+      "sha256": "9af8bdc5940b681f6f23313f765d4c2639bc64302c4769b49d71689dd4c1b437",
+      "size": [
+        1280,
+        720
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-authenticated.png": {
+      "sha256": "d78db3ba130fc814eea299d7dc668992435dd08249e2073b890ed1ff8c9dba07",
+      "size": [
+        1280,
+        720
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-authenticated-complete.png": {
+      "sha256": "9af8bdc5940b681f6f23313f765d4c2639bc64302c4769b49d71689dd4c1b437",
+      "size": [
+        1280,
+        720
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-expired.png": {
+      "sha256": "421cd26599c54a0d587f6b912e7239343c0dcfba0a727749d4b12f029baa489a",
+      "size": [
+        1280,
+        720
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-expired-compact.png": {
+      "sha256": "be72441a79b4b92e285de6fad64059b70de6f0003d53c87b566f6946c81ffb07",
+      "size": [
+        320,
+        844
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-expired-compact-en.png": {
+      "sha256": "2cbacba3bbf0390a73719d04136f2d34e8805d21ca722e195464a9e33dc156fc",
+      "size": [
+        320,
+        844
+      ]
+    },
+    ".impeccable/review/before-locale-fix-v2-resume-expired-complete.png": {
+      "sha256": "023676f0337d7de6af6e6981bd831d693333e9458ecc0d47298eebd30262b497",
+      "size": [
+        1280,
+        720
+      ]
+    }
+  },
+  "PRODUCTION_APPROVED": false,
+  "limits": [
+    "Light Linux captures only; compact default scale",
+    "Crash boundaries exercised by separate production-controller test; GUI fixtures use actual API accepted sessions",
+    "No full device/history recovery or security-audit clearance"
+  ],
+  "resolved_source_snapshot_commit": "1c086591518d05e92bb8b0517b9f0c6d2f149624"
+}

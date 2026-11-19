@@ -1,0 +1,269 @@
+{
+  "generated_at_utc": "2026-11-18T23:15:54.456633+00:00",
+  "runtime_source": "4b003dd3fe9971926983daa3a29d1edad02d8256",
+  "implementation": "PARTIAL / NOT_READY",
+  "PRODUCTION_APPROVED": false,
+  "make_verify_exit_code": 2,
+  "checks": {
+    "bundle": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-bundle.txt",
+      "sha256": "1cb6a81fec76e250389167485314742d2fb8dfc747794e79781d9e8a90f6302d"
+    },
+    "build": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-build.txt",
+      "sha256": "de8248f9d07987e93ca4817d3a93c8afbae5eafbe79680c420e82396188e0561"
+    },
+    "crypto-build": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-crypto-build.txt",
+      "sha256": "c6f300ec526e1964a9e04c560a9fd69b2b64e6227bdaea392be5eff915562c93"
+    },
+    "crypto": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-crypto.txt",
+      "sha256": "26d7d53cfd9800ff6d00189ecfaf8bfb08dec8c26989aeeb9b3f7ae1d313c409"
+    },
+    "smoke": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-smoke.txt",
+      "sha256": "078d94487ae89aa762348f67f819b033e57aae9f00a7e9045ac903ba2bb4beee"
+    },
+    "delivery": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-delivery.txt",
+      "sha256": "c8ca098209875e724f485d9f1e7b94bb2db6eb382097bc967449031ebb7653f5"
+    },
+    "epochs": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-epochs.txt",
+      "sha256": "84443d853f7d8e31fd8f85ed220b8b34f7c714df6a197d6f343ad01aa0397cb9"
+    },
+    "device-enrollment": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-device-enrollment.txt",
+      "sha256": "04bc8df8eef3e66e7b04bba01c2be222dc840a4845411862b2c8f218e0829f23"
+    },
+    "enrollment-quota": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-enrollment-quota.txt",
+      "sha256": "be0242fd9030377115ea8391c379cba1369a3b2a209f22ea8dbe0b675906d6cb"
+    },
+    "migrations": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-migrations.txt",
+      "sha256": "538841ce8ab0ee8236ff13d922c015a87955b145ab3ef718c309a57e8ecce92d"
+    },
+    "mls-directory": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-mls-directory.txt",
+      "sha256": "87fd6f4908a86fc0a212affedd4c240f123e33ecd5dd51f53fd1050d09a59195"
+    },
+    "restore-v2": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-restore-v2.txt",
+      "sha256": "9c748620eb2bbc1358db1ffb85fa2858954584944c172713fd0f95d719996c4d"
+    },
+    "secrets": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-secrets.txt",
+      "sha256": "cd5106857ed9817dd1ced27eca1ba55f245548f98225f18ebea10f2981bbc225"
+    },
+    "pub-osv": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-pub-osv.txt",
+      "sha256": "d6e0e6ae08e1d69386656300804a36493ddb0c8cd15e06ea02f2d3297c3568ac"
+    },
+    "rust-format": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-rust-format.txt",
+      "sha256": "0fd681a5e6029641f029df62b36f2ec8e0abbd80c13fa40152c82df7ba35c7fc"
+    },
+    "rustsec-current": {
+      "exit_code": 1,
+      "evidence": "reports/evidence/baseline-6b2aefc-rustsec-current.txt",
+      "sha256": "998b947f6c77f32f57f099e84073b36cf63aa46e6ed44fdb1b3743af53ec6afb"
+    },
+    "pub-dependency-graph": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-pub-dependency-graph.txt",
+      "sha256": "bd5fc9d5ea83fd27fff204102845fd2c433f6b1d34ffe4b6f515196af4902651"
+    },
+    "pub-license-inventory": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-pub-license-inventory.txt",
+      "sha256": "cf64d5e510e33714fb529996d97b8ab87e63682fe828913ac43b149e20b9abfa"
+    },
+    "flutter-check": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-flutter-check.txt",
+      "sha256": "90d953183c4d6044154ff1fd056e594bd8bfdc85be56e27cc04b11eb2844720e"
+    },
+    "flutter-layout": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-flutter-layout.txt",
+      "sha256": "ea79270e3b754c7ae3bcf7719e4580fd095cd90e19791b35def82e4863b26b89"
+    },
+    "native-transport": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-native-transport.txt",
+      "sha256": "8a1d94a9217af5e8647feaec372b5d013b9a56f6b42825aaf9e8687a20639071"
+    },
+    "native-session": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-native-session.txt",
+      "sha256": "35d9f43b4574dee65b5e1b77b0e826d568cf46290f3df307769e3b6c2d023a9e"
+    },
+    "network-report": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-network-report.txt",
+      "sha256": "271813fc0c5b1519693c9f55ee77a0ca4ce2fb244425289fa21c21ce506d1f67"
+    },
+    "native-network-report": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/baseline-6b2aefc-native-network-report.txt",
+      "sha256": "22c93f4f47a26c017ca904cbb73aedcc3528dd1a0da50f5a9806d8ec11d6f2d7"
+    },
+    "acceptance-gate": {
+      "exit_code": 1,
+      "evidence": "reports/evidence/baseline-6b2aefc-acceptance-gate.txt",
+      "sha256": "8373139a72a366a739a2d9860a247602f3bc084909cf07b690e2c8307b665232"
+    },
+    "v2-acceptance-gate": {
+      "exit_code": 1,
+      "evidence": "reports/evidence/baseline-6b2aefc-v2-acceptance-gate.txt",
+      "sha256": "674248ed55993ba6f607f1b35eadc98abae6e54f5766e0c001db0035f1879159"
+    }
+  },
+  "native_unique_ids": 2400,
+  "native_trials": [
+    {
+      "profile": "gprs",
+      "seed": 7,
+      "messages_each_direction": 200,
+      "delivery_p95": 4.671861000000007,
+      "duplicates": 0,
+      "missing_ids": 0,
+      "child_exit_code": 0,
+      "source_head_at_start": "4b003dd3fe9971926983daa3a29d1edad02d8256",
+      "source_sha256": {
+        "apps/client_flutter/lib/delivery_client.dart": "92658ec3dce2f897e014362e1deb8d308eda164c4d87e52207365bdb23564f94",
+        "apps/client_flutter/lib/transport.dart": "3614f87efaa441b003c81bba0eec0445ba7b17e167716fddf05178563daa86f9",
+        "apps/client_flutter/lib/session.dart": "0be40b1ea126a16b422de2422b8a22843ed9723bda839b1047c7e1b508ab9870",
+        "apps/client_flutter/tool/network_trial.dart": "81cf294448ed3171046b62cde46b75073fc920d7eaad58d89e9757d619ecc61f"
+      },
+      "binary_sha256": {
+        "src/crypto_core/target/debug/libsecuremesh_crypto.so": "d46dfff1f10094e3185d0625190d430c716fb649a93bb51399576fd57cddb52f",
+        "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "43a52b59365b333c3a48b9fc6a5dd3c13514be7ea8431fd605725ccbfdd230cd"
+      }
+    },
+    {
+      "profile": "gprs",
+      "seed": 19,
+      "messages_each_direction": 200,
+      "delivery_p95": 4.9280880000000025,
+      "duplicates": 0,
+      "missing_ids": 0,
+      "child_exit_code": 0,
+      "source_head_at_start": "4b003dd3fe9971926983daa3a29d1edad02d8256",
+      "source_sha256": {
+        "apps/client_flutter/lib/delivery_client.dart": "92658ec3dce2f897e014362e1deb8d308eda164c4d87e52207365bdb23564f94",
+        "apps/client_flutter/lib/transport.dart": "3614f87efaa441b003c81bba0eec0445ba7b17e167716fddf05178563daa86f9",
+        "apps/client_flutter/lib/session.dart": "0be40b1ea126a16b422de2422b8a22843ed9723bda839b1047c7e1b508ab9870",
+        "apps/client_flutter/tool/network_trial.dart": "81cf294448ed3171046b62cde46b75073fc920d7eaad58d89e9757d619ecc61f"
+      },
+      "binary_sha256": {
+        "src/crypto_core/target/debug/libsecuremesh_crypto.so": "d46dfff1f10094e3185d0625190d430c716fb649a93bb51399576fd57cddb52f",
+        "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "43a52b59365b333c3a48b9fc6a5dd3c13514be7ea8431fd605725ccbfdd230cd"
+      }
+    },
+    {
+      "profile": "gprs",
+      "seed": 41,
+      "messages_each_direction": 200,
+      "delivery_p95": 4.7420999999999935,
+      "duplicates": 0,
+      "missing_ids": 0,
+      "child_exit_code": 0,
+      "source_head_at_start": "4b003dd3fe9971926983daa3a29d1edad02d8256",
+      "source_sha256": {
+        "apps/client_flutter/lib/delivery_client.dart": "92658ec3dce2f897e014362e1deb8d308eda164c4d87e52207365bdb23564f94",
+        "apps/client_flutter/lib/transport.dart": "3614f87efaa441b003c81bba0eec0445ba7b17e167716fddf05178563daa86f9",
+        "apps/client_flutter/lib/session.dart": "0be40b1ea126a16b422de2422b8a22843ed9723bda839b1047c7e1b508ab9870",
+        "apps/client_flutter/tool/network_trial.dart": "81cf294448ed3171046b62cde46b75073fc920d7eaad58d89e9757d619ecc61f"
+      },
+      "binary_sha256": {
+        "src/crypto_core/target/debug/libsecuremesh_crypto.so": "d46dfff1f10094e3185d0625190d430c716fb649a93bb51399576fd57cddb52f",
+        "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "43a52b59365b333c3a48b9fc6a5dd3c13514be7ea8431fd605725ccbfdd230cd"
+      }
+    },
+    {
+      "profile": "severe",
+      "seed": 7,
+      "messages_each_direction": 200,
+      "delivery_p95": 42.772227999999984,
+      "duplicates": 0,
+      "missing_ids": 0,
+      "child_exit_code": 0,
+      "source_head_at_start": "4b003dd3fe9971926983daa3a29d1edad02d8256",
+      "source_sha256": {
+        "apps/client_flutter/lib/delivery_client.dart": "92658ec3dce2f897e014362e1deb8d308eda164c4d87e52207365bdb23564f94",
+        "apps/client_flutter/lib/transport.dart": "3614f87efaa441b003c81bba0eec0445ba7b17e167716fddf05178563daa86f9",
+        "apps/client_flutter/lib/session.dart": "0be40b1ea126a16b422de2422b8a22843ed9723bda839b1047c7e1b508ab9870",
+        "apps/client_flutter/tool/network_trial.dart": "81cf294448ed3171046b62cde46b75073fc920d7eaad58d89e9757d619ecc61f"
+      },
+      "binary_sha256": {
+        "src/crypto_core/target/debug/libsecuremesh_crypto.so": "d46dfff1f10094e3185d0625190d430c716fb649a93bb51399576fd57cddb52f",
+        "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "43a52b59365b333c3a48b9fc6a5dd3c13514be7ea8431fd605725ccbfdd230cd"
+      }
+    },
+    {
+      "profile": "severe",
+      "seed": 19,
+      "messages_each_direction": 200,
+      "delivery_p95": 56.868810999999994,
+      "duplicates": 0,
+      "missing_ids": 0,
+      "child_exit_code": 0,
+      "source_head_at_start": "4b003dd3fe9971926983daa3a29d1edad02d8256",
+      "source_sha256": {
+        "apps/client_flutter/lib/delivery_client.dart": "92658ec3dce2f897e014362e1deb8d308eda164c4d87e52207365bdb23564f94",
+        "apps/client_flutter/lib/transport.dart": "3614f87efaa441b003c81bba0eec0445ba7b17e167716fddf05178563daa86f9",
+        "apps/client_flutter/lib/session.dart": "0be40b1ea126a16b422de2422b8a22843ed9723bda839b1047c7e1b508ab9870",
+        "apps/client_flutter/tool/network_trial.dart": "81cf294448ed3171046b62cde46b75073fc920d7eaad58d89e9757d619ecc61f"
+      },
+      "binary_sha256": {
+        "src/crypto_core/target/debug/libsecuremesh_crypto.so": "d46dfff1f10094e3185d0625190d430c716fb649a93bb51399576fd57cddb52f",
+        "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "43a52b59365b333c3a48b9fc6a5dd3c13514be7ea8431fd605725ccbfdd230cd"
+      }
+    },
+    {
+      "profile": "severe",
+      "seed": 41,
+      "messages_each_direction": 200,
+      "delivery_p95": 66.88599299999998,
+      "duplicates": 0,
+      "missing_ids": 0,
+      "child_exit_code": 0,
+      "source_head_at_start": "4b003dd3fe9971926983daa3a29d1edad02d8256",
+      "source_sha256": {
+        "apps/client_flutter/lib/delivery_client.dart": "92658ec3dce2f897e014362e1deb8d308eda164c4d87e52207365bdb23564f94",
+        "apps/client_flutter/lib/transport.dart": "3614f87efaa441b003c81bba0eec0445ba7b17e167716fddf05178563daa86f9",
+        "apps/client_flutter/lib/session.dart": "0be40b1ea126a16b422de2422b8a22843ed9723bda839b1047c7e1b508ab9870",
+        "apps/client_flutter/tool/network_trial.dart": "81cf294448ed3171046b62cde46b75073fc920d7eaad58d89e9757d619ecc61f"
+      },
+      "binary_sha256": {
+        "src/crypto_core/target/debug/libsecuremesh_crypto.so": "d46dfff1f10094e3185d0625190d430c716fb649a93bb51399576fd57cddb52f",
+        "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "43a52b59365b333c3a48b9fc6a5dd3c13514be7ea8431fd605725ccbfdd230cd"
+      }
+    }
+  ],
+  "limits": [
+    "No complete combined profile/crash/DB/media schedule",
+    "Four RustSec findings remain",
+    "Full multi-device MLS/history/recovery and groups/channels/media/calls are incomplete",
+    "Linux-only native evidence; no production deployment"
+  ],
+  "archive_note": "Original measured checkpoint summary retained before the next aggregate overwrites generic log paths. Log bytes restored from committed 6b2aefc, SHA256 verified, references relocated without changing outcomes."
+}

@@ -1,0 +1,13 @@
+{
+  "recorded_at_utc": "2026-11-19T06:29:57.568894+00:00",
+  "command": [
+    ".local/venv/bin/python",
+    "tests/gui/onboarding_resume.py"
+  ],
+  "mode": "interactive exploratory session",
+  "exit_code": 1,
+  "observed_error": "AssertionError: GUI did not complete the interrupted profile",
+  "diagnosis": "ResumeGui executed verify_resume before the base driver executed the click and wait fields from that same command. Fixed by applying base actions before journal/completion assertions. This was not a successful GUI result.",
+  "related_earlier_product_failure": ".impeccable/review/v2-resume-picker-context-fail.png",
+  "earlier_product_fix": "Pass the page context below MaterialApp to navigation/dialog methods; widget navigation regression retained."
+}

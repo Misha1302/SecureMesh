@@ -1,141 +1,187 @@
 {
-  "generated_at_utc": "2026-11-18T23:15:54.456633+00:00",
-  "runtime_source": "4b003dd3fe9971926983daa3a29d1edad02d8256",
+  "generated_at_utc": "2026-11-19T06:52:43.941700+00:00",
+  "runtime_source_checkpoint": "5cbdb01b8b0756f25a25c4cb21ee1bdec6b80221",
   "implementation": "PARTIAL / NOT_READY",
   "PRODUCTION_APPROVED": false,
   "make_verify_exit_code": 2,
+  "aggregate_scope": "Broad run completed before final challenge guard and locale rendering correction. Subsequent focused passes are separate; no second full aggregate claimed.",
+  "check_groups": 27,
+  "passed_groups": 24,
   "checks": {
     "bundle": {
       "exit_code": 0,
       "evidence": "reports/evidence/bundle.txt",
-      "sha256": "1cb6a81fec76e250389167485314742d2fb8dfc747794e79781d9e8a90f6302d"
+      "sha256": "3dd6bd2aec87aa0eca3c7d6845d2ec394bf00041ec77fabb3b73989eaf160727"
     },
     "build": {
       "exit_code": 0,
       "evidence": "reports/evidence/build.txt",
-      "sha256": "de8248f9d07987e93ca4817d3a93c8afbae5eafbe79680c420e82396188e0561"
+      "sha256": "3e3daca36c940056157bb8200cd56c5894d6b04629ecbc494968a08227640223"
     },
     "crypto-build": {
       "exit_code": 0,
       "evidence": "reports/evidence/crypto-build.txt",
-      "sha256": "c6f300ec526e1964a9e04c560a9fd69b2b64e6227bdaea392be5eff915562c93"
+      "sha256": "f78fa80f4b9cb66a6ecdc580788db7726d40a1d3cd6cabb27b31d4e62ede842c"
     },
     "crypto": {
       "exit_code": 0,
       "evidence": "reports/evidence/crypto.txt",
-      "sha256": "26d7d53cfd9800ff6d00189ecfaf8bfb08dec8c26989aeeb9b3f7ae1d313c409"
+      "sha256": "612f66d58dae0181615f9c7259478fd8881cbdbbdb57b08bc144bb12fe95652e"
     },
     "smoke": {
       "exit_code": 0,
       "evidence": "reports/evidence/smoke.txt",
-      "sha256": "078d94487ae89aa762348f67f819b033e57aae9f00a7e9045ac903ba2bb4beee"
+      "sha256": "f272a8c4b4441e97bc73a1479f9bfd0d5682b1eaf988c2f589aef000ab15db9b"
     },
     "delivery": {
       "exit_code": 0,
       "evidence": "reports/evidence/delivery.txt",
-      "sha256": "c8ca098209875e724f485d9f1e7b94bb2db6eb382097bc967449031ebb7653f5"
+      "sha256": "23ebd2662c209fad719de9000dda135c0c7f0a712fd317f7bb4b28ce09018b06"
     },
     "epochs": {
       "exit_code": 0,
       "evidence": "reports/evidence/epochs.txt",
-      "sha256": "84443d853f7d8e31fd8f85ed220b8b34f7c714df6a197d6f343ad01aa0397cb9"
+      "sha256": "46f715614cc89f0eef669d4dec678497a0caef06bf47bdfac07ebba4a00cb763"
     },
     "device-enrollment": {
       "exit_code": 0,
       "evidence": "reports/evidence/device-enrollment.txt",
-      "sha256": "04bc8df8eef3e66e7b04bba01c2be222dc840a4845411862b2c8f218e0829f23"
+      "sha256": "dee93c5eb1de94e03beb5fbe16865070d374c3141e7f3569429176f44659c6c7"
     },
     "enrollment-quota": {
       "exit_code": 0,
       "evidence": "reports/evidence/enrollment-quota.txt",
-      "sha256": "be0242fd9030377115ea8391c379cba1369a3b2a209f22ea8dbe0b675906d6cb"
+      "sha256": "b686e7f3cb82e1298712f27c9cc87504f8d2891c755fdedd3d22a075ccfac685"
     },
     "migrations": {
       "exit_code": 0,
       "evidence": "reports/evidence/migrations.txt",
-      "sha256": "538841ce8ab0ee8236ff13d922c015a87955b145ab3ef718c309a57e8ecce92d"
+      "sha256": "72f7651d5f36f309821ede0235cb8dc0d1af09818ca050fcbccb3b70d2de5bb6"
     },
     "mls-directory": {
       "exit_code": 0,
       "evidence": "reports/evidence/mls-directory.txt",
-      "sha256": "87fd6f4908a86fc0a212affedd4c240f123e33ecd5dd51f53fd1050d09a59195"
+      "sha256": "d5155fc7b7580cdc3195b0c8946082f1e8f91700e7f984f16956353e0d0d515b"
     },
     "restore-v2": {
       "exit_code": 0,
       "evidence": "reports/evidence/restore-v2.txt",
-      "sha256": "9c748620eb2bbc1358db1ffb85fa2858954584944c172713fd0f95d719996c4d"
+      "sha256": "f8c4035c7c25f9874c7d945f58aa97c587d3ba481889f73241f38c6f99d995de"
     },
     "secrets": {
       "exit_code": 0,
       "evidence": "reports/evidence/secrets.txt",
-      "sha256": "cd5106857ed9817dd1ced27eca1ba55f245548f98225f18ebea10f2981bbc225"
+      "sha256": "df7bcae9ed82b11252d4650c8509e5f74006292c1fce08c8525028706af51f39"
     },
     "pub-osv": {
       "exit_code": 0,
       "evidence": "reports/evidence/pub-osv.txt",
-      "sha256": "d6e0e6ae08e1d69386656300804a36493ddb0c8cd15e06ea02f2d3297c3568ac"
+      "sha256": "63506840ed55f079f3acbbec4edcc529700189115438af9a8d2927a42ee0d1ba"
     },
     "rust-format": {
       "exit_code": 0,
       "evidence": "reports/evidence/rust-format.txt",
-      "sha256": "0fd681a5e6029641f029df62b36f2ec8e0abbd80c13fa40152c82df7ba35c7fc"
+      "sha256": "961a87a548815edb3f91bfb1a4db74f48a1742b95a188874d7e5230ab451bebf"
     },
     "rustsec-current": {
       "exit_code": 1,
       "evidence": "reports/evidence/rustsec-current.txt",
-      "sha256": "998b947f6c77f32f57f099e84073b36cf63aa46e6ed44fdb1b3743af53ec6afb"
+      "sha256": "37cd4d2950f0cf8d1b68920d275a0b55bd965afbcc2bfe0e3477ad82469dc524"
     },
     "pub-dependency-graph": {
       "exit_code": 0,
       "evidence": "reports/evidence/pub-dependency-graph.txt",
-      "sha256": "bd5fc9d5ea83fd27fff204102845fd2c433f6b1d34ffe4b6f515196af4902651"
+      "sha256": "db2199dc88c0e20ce634696d941af8d8cffaeab51c3ee83501e75f99659ffd17"
     },
     "pub-license-inventory": {
       "exit_code": 0,
       "evidence": "reports/evidence/pub-license-inventory.txt",
-      "sha256": "cf64d5e510e33714fb529996d97b8ab87e63682fe828913ac43b149e20b9abfa"
+      "sha256": "bb663abf5793a9033dd5df78ea89042364ec2dad385479e596755c5a57393d3d"
     },
     "flutter-check": {
       "exit_code": 0,
       "evidence": "reports/evidence/flutter-check.txt",
-      "sha256": "90d953183c4d6044154ff1fd056e594bd8bfdc85be56e27cc04b11eb2844720e"
+      "sha256": "43822f82e352909d3308d63886b52d4cf93ab79dcc89ea830ab63629d5a5466c"
     },
     "flutter-layout": {
       "exit_code": 0,
       "evidence": "reports/evidence/flutter-layout.txt",
-      "sha256": "ea79270e3b754c7ae3bcf7719e4580fd095cd90e19791b35def82e4863b26b89"
+      "sha256": "735df3dc57eae8d1a4b655ca1fdc81f94a365a286de2a2984ec88d79e119d655"
     },
     "native-transport": {
       "exit_code": 0,
       "evidence": "reports/evidence/native-transport.txt",
-      "sha256": "8a1d94a9217af5e8647feaec372b5d013b9a56f6b42825aaf9e8687a20639071"
+      "sha256": "956e1136926b630693eee2e6158f46777a812025c2451c06aef8450126549405"
     },
     "native-session": {
       "exit_code": 0,
       "evidence": "reports/evidence/native-session.txt",
-      "sha256": "35d9f43b4574dee65b5e1b77b0e826d568cf46290f3df307769e3b6c2d023a9e"
+      "sha256": "6e3299d80e496534b35fbce76f0136a74c8ccca6f0c31ea3068fd69715fb3a57"
     },
     "network-report": {
       "exit_code": 0,
       "evidence": "reports/evidence/network-report.txt",
-      "sha256": "271813fc0c5b1519693c9f55ee77a0ca4ce2fb244425289fa21c21ce506d1f67"
+      "sha256": "92ec279a81661d2e8ed961ff60d6083ca6c9f6b89d22826f2243ec8e291ba716"
     },
     "native-network-report": {
       "exit_code": 0,
       "evidence": "reports/evidence/native-network-report.txt",
-      "sha256": "22c93f4f47a26c017ca904cbb73aedcc3528dd1a0da50f5a9806d8ec11d6f2d7"
+      "sha256": "7fc913d574da4838a385e286a44f917e4f984aafe03961c57afecb875052799e"
     },
     "acceptance-gate": {
       "exit_code": 1,
       "evidence": "reports/evidence/acceptance-gate.txt",
-      "sha256": "8373139a72a366a739a2d9860a247602f3bc084909cf07b690e2c8307b665232"
+      "sha256": "4c696953e60cd0ce66fd9ba315f644ff00a3a5240d80478376efcb0289e699a8"
     },
     "v2-acceptance-gate": {
       "exit_code": 1,
       "evidence": "reports/evidence/v2-acceptance-gate.txt",
-      "sha256": "674248ed55993ba6f607f1b35eadc98abae6e54f5766e0c001db0035f1879159"
+      "sha256": "0becdc1d659d9ff7b7129cc647c0d24773455e1dcf7418697e377e6f7a2a0bb6"
+    },
+    "onboarding-recovery": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/onboarding-recovery.txt",
+      "sha256": "be2360fe4356f45f070e3b3a23ecb94d3af6ac611756b94a2331f381ef6a54e7"
     }
   },
+  "subsequent_focused_checks": {
+    "strict-challenge-and-crash-recovery": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/v2-onboarding-challenge-recovery.txt",
+      "sha256": "ed39322d67242e49cf28aa08d435e74830a448bebb7cd484ea1996e2a553b533"
+    },
+    "final-locale-analyzer": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/v2-resume-locale-analyze.txt",
+      "sha256": "3e16b0510f724d608767776e938a60842ad5ef7338d41691664e0cd2a0fdfdfd"
+    },
+    "final-linux-build": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/v2-resume-locale-linux-build.txt",
+      "sha256": "10a389ea136a18c2955fdd4f7846437d6797475494e942e5da7bf9d0d6dd662e"
+    },
+    "final-native-gui": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/v2-onboarding-gui-locale-fix.txt",
+      "sha256": "bbe6d0d54c07026aee4f5520192cba4ebf72ad59446929239b4930826de6889c"
+    },
+    "owned-stack-down": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/v2-resume-down.txt",
+      "sha256": "78dd0313b972a28cc4a534ddc2b3f69e3bf583f5a9f1eb00bd115c11228125a2"
+    },
+    "final-secret-pattern-scan": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/v2-resume-final-secrets.txt",
+      "sha256": "a57c5f9e1f8390e55c0d0d8a556d5d3b8948c277b54bfb1f19c629f3572d0df7"
+    },
+    "final-immutable-bundle": {
+      "exit_code": 0,
+      "evidence": "reports/evidence/v2-resume-final-bundle.txt",
+      "sha256": "2bcb19938661c3582861c0557f074b1bad2bbda509bd59d02f64ef3ef3f13ffe"
+    }
+  },
+  "measured_transport_runtime_source": "4b003dd3fe9971926983daa3a29d1edad02d8256",
   "native_unique_ids": 2400,
   "native_trials": [
     {
@@ -259,10 +305,12 @@
       }
     }
   ],
+  "native_scope": "Retained 4b003dd measured binaries and matching transport/controller source hashes; later rebuilt crypto binary not newly measured.",
+  "previous_aggregate_summary": "reports/evidence/v2-final-summary-0343.json",
   "limits": [
-    "No complete combined profile/crash/DB/media schedule",
     "Four RustSec findings remain",
-    "Full multi-device MLS/history/recovery and groups/channels/media/calls are incomplete",
-    "Linux-only native evidence; no production deployment"
+    "No complete mixed network/crash/DB/media schedule",
+    "Full device/history recovery, groups/channels/media/calls and remaining platform checks incomplete",
+    "Linux-only evidence; no production deployment"
   ]
 }

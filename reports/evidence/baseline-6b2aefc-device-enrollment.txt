@@ -1,0 +1,5 @@
+UTC: 2026-11-18T23:06:29.762403+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/enrollment.py']
+PASS: pending login isolation; independent device keys; owner/key-bound two-device signatures; pinned approver and explicit confirmation; durable immutable approval retry; activation proof only after local grant verification; invalid activation/proof/substitution/account/replay/expiry/IDOR/self-approval/race/revoked-approver denied; no automatic MLS/history access. Camera QR and MLS multi-device enrollment/rekey still unimplemented.
+
+Exit code: 0

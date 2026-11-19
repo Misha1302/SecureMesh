@@ -1,0 +1,9 @@
+UTC: 2026-11-19T05:46:42.146984+00:00
+Command: ['make', 'onboarding-recovery']
+.local/venv/bin/python tests/integration/onboarding_recovery.py
+PASS: lost accepted login reply + SIGKILL + wrong-password retry preserves same trusted key and one server device
+PASS: durable session + SIGKILL resumes without password/new login; foreign binding and pre-COMMIT abort rejected; pending device remains private-data denied
+PASS: expired saved session requests password with same key; SIGKILL after profile COMMIT reopens without another login
+PASS: wrong local passphrase denied; invalid initializer rolls back identity+journal; legacy initialized store remains compatible
+
+Exit code: 0

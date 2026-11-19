@@ -41,7 +41,7 @@ P0: 14 PASS / 1 FAIL / 11 NOT_RUN. P1: 2 PASS / 11 NOT_RUN / 1 BLOCKED. V2: 1 PA
 | AT-033 | P1 | NOT_RUN |  | NOT_RUN: moderation/admin MFA/audit workflow absent. |
 | AT-034 | P1 | PASS | evidence/wasm-probe.txt | Native WASM probe fails; browser builds and explicitly disables private chat. Public features still missing. |
 | AT-035 | P1 | NOT_RUN |  | NOT_VERIFIED: Android SDK36 exists with unaccepted licenses; Android crypto packaging/build not completed. |
-| AT-036 | P1 | PASS | evidence/v2-linux-final-build.txt | Latest Linux debug built in owned GTK container and launched through actual GUI crash/recovery scenario. Compact Linux is not Android evidence. |
+| AT-036 | P1 | PASS | evidence/v2-resume-locale-linux-build.txt | Actual Linux debug build and three GUI resume paths; same keys/session counts/pending403, wrong-passphrase correction and RU/EN input preservation. Compact Linux is not Android evidence. |
 | AT-037 | P1 | BLOCKED |  | No macOS/Xcode runner; no Apple artifact claimed. |
 | AT-038 | P0 | NOT_RUN |  | PARTIAL: local handoff/checkpoint only; deployment candidate blocked. |
 | AT-039 | P1 | NOT_RUN |  | PARTIAL: variable Unicode app frames measured; exact 100-character TLS/network accounting absent. |
@@ -56,11 +56,14 @@ P0: 14 PASS / 1 FAIL / 11 NOT_RUN. P1: 2 PASS / 11 NOT_RUN / 1 BLOCKED. V2: 1 PA
 | Directory | evidence/mls-directory.txt | Consented real KeyPackage validation, one-use lease, signed routed Welcome; crash-safe and replay-safe exact two-member join |
 | Native transport / session | evidence/v2-native-owned-socket.txt; evidence/v2-native-session.txt | Real Dart/FRB/TLS/PG; wrong Upgrade/malformed response denied; WSS/HTTPS faults; explicit detached TLS socket destruction; one persisted refresh for eight concurrent requests |
 | Native GUI | evidence/v2-native-gui-final.txt; evidence/v2-native-pending-gui.txt | Signup/verification/corrected login/DM; offline SIGKILL/reopen; pending device denied private conversations |
+| Interrupted sign-in | evidence/v2-onboarding-challenge-recovery.txt; evidence/v2-onboarding-gui-locale-fix.txt | Actual same-key process-kill/lost-reply/saved/expired recovery, strict challenge bindings, wrong-passphrase correction, actual PG sessions2/1/2 and pending private403; RU/EN retains entered password |
 | Cursor recovery | evidence/v2-native-cursor-recovery.txt; evidence/native-cursor-recovery.json | Actual 60s blackout, 1000 ordered IDs, durable reopen and actual PostgreSQL receipt |
-| Native 2G | NATIVE_2G_REPORT.md; evidence/v2-native-network-report.txt | Six current-source trials; 2400 unique IDs; child exit=0; exact source hashes and one binary set. GPRS p95 <=15s; severe eventual. Combined crash/DB/media schedule incomplete |
+| Native 2G | NATIVE_2G_REPORT.md; evidence/v2-native-network-report.txt | Six retained 4b003dd runtime trials; 2400 unique IDs; child exit=0; matching measured transport sources and one measured binary set. New journal build not remeasured. Combined crash/DB/media schedule incomplete |
 | Pub supply chain | evidence/v2-pub-osv.txt; PUB_LICENSE_INVENTORY.json | 55 hosted lock versions queried with real positive control; 55 actual license texts retained, SPDX/legal review pending |
 | Narrow UI review | ../.impeccable/review/v2-finish-report.md | Five original findings resolved; Linux visual review, not product/security approval |
 
-Historical Python metrics are separate in 2G_REPORT.md. The retained failed native GPRS and both hanging severe attempts are not counted as current PASS. Source runtime checkpoint: 4b003dd. Full multidevice MLS/history/recovery, QR camera, groups/channels/media/calls, remaining platforms and acceptance work are incomplete.
+Latest broad make verify: exit2, 24/27 groups pass; RustSec and both acceptance gates fail. Final challenge/locale changes have subsequent focused controller/GUI/analyzer/build passes; no second complete aggregate is claimed. See ONBOARDING_RESUME_REPORT.md for failed attempts and exact scope.
+
+Historical Python metrics are separate in 2G_REPORT.md. The retained failed native GPRS and both hanging severe attempts are not counted as PASS. Measured transport runtime: 4b003dd; account-setup code: 1c08659 and 5cbdb01. Full multidevice MLS/history/recovery, QR camera, groups/channels/media/calls, remaining platforms and acceptance work are incomplete.
 
 RustSec remains a release blocker. See ../docs/SECURITY_LIMITATIONS.md and FINAL_HANDOFF_RU.md for current aggregate verification and continuation.

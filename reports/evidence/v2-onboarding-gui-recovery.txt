@@ -1,0 +1,39 @@
+UTC: 2026-11-19T06:23:32.720213+00:00
+Command: ['make', 'gui-onboarding-recovery']
+.local/venv/bin/python tests/gui/onboarding_resume.py --script tests/gui/v2_resume_scenario.json
+Resume GUI ready.
+{"completed": ["resize", "click", "wait", "capture"]}
+Prepared real accepted login in encrypted journal: prepared
+Owned GUI restarted with no profile environment pointer.
+{"completed": ["prepare_draft", "restart_gui", "click", "wait", "capture"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+{"completed": ["click", "key", "fill"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+{"completed": ["click", "fill"]}
+PASS: actual native GUI completed the same device/profile; pending access stayed gated; no credential/token logs.
+{"completed": ["click", "wait", "verify_resume", "capture"]}
+Prepared real accepted login in encrypted journal: authenticated
+Owned GUI restarted with no profile environment pointer.
+{"completed": ["prepare_draft", "restart_gui", "click", "wait"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+PASS: actual native GUI completed the same device/profile; pending access stayed gated; no credential/token logs.
+{"completed": ["click", "wait", "verify_resume", "capture"]}
+Prepared real accepted login in encrypted journal: expired
+Owned GUI restarted with no profile environment pointer.
+{"completed": ["prepare_draft", "restart_gui", "click", "wait"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "verify_journal"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+{"completed": ["resize", "wait", "capture"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["resize", "click", "wait"]}
+{"completed": ["click", "fill"]}
+PASS: actual native GUI completed the same device/profile; pending access stayed gated; no credential/token logs.
+{"completed": ["click", "wait", "verify_resume", "capture"]}
+
+Exit code: 0
