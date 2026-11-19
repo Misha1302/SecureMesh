@@ -10,8 +10,9 @@ namespace SecureMesh;
 public sealed record Registration(string Username, string Email, string Password);
 public sealed record Verification(string Token);
 public sealed record Challenge(string Username, Guid DeviceId);
-public sealed record Login(string Username, string Password, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature);
+public sealed record Login(string Username, string Password, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, bool DeviceBoundRefresh = false);
 public sealed record Refresh(string Token);
+public sealed record SessionTokens(string AccessToken, string RefreshToken, int ExpiresIn, Guid DeviceId, string TrustState, string RefreshBinding);
 public static class Identity
 {
     private static readonly string DummyPhc = Passwords.Hash(Sql.Token()).GetAwaiter().GetResult();
@@ -93,20 +94,21 @@ public static class Identity
                 await using var insert=Sql.Cmd(c,"INSERT INTO devices(id,user_id,public_key,trusted) VALUES($1,$2,$3,$4)",input.DeviceId,user,publicKey,first);
                 await insert.ExecuteNonQueryAsync();
             }
-            var result=await NewSession(c,input.DeviceId,Guid.NewGuid());
+            var result=await NewSession(c,input.DeviceId,Guid.NewGuid(),input.DeviceBoundRefresh);
             await tx.CommitAsync();
             return Results.Ok(result);
         });
         app.MapPost("/v1/auth/refresh", async (Refresh input,NpgsqlDataSource db) =>
         {
             await using var c=await db.OpenConnectionAsync(); await using var tx=await c.BeginTransactionAsync();
-            Guid id,device,family; bool used,revoked;
-            await using(var cmd=Sql.Cmd(c,"SELECT id,device_id,family,used,revoked FROM sessions WHERE refresh_hash=$1 AND refresh_expires_at>now() FOR UPDATE",Sql.Hash(input.Token)))
+            Guid id,device,family; bool used,revoked,bound;
+            await using(var cmd=Sql.Cmd(c,"SELECT id,device_id,family,used,revoked,device_bound_refresh FROM sessions WHERE refresh_hash=$1 AND refresh_expires_at>now() FOR UPDATE",Sql.Hash(input.Token)))
             await using(var r=await cmd.ExecuteReaderAsync())
             {
                 if(!await r.ReadAsync()) throw new ApiError(401,"INVALID_REFRESH");
-                id=r.GetGuid(0); device=r.GetGuid(1); family=r.GetGuid(2); used=r.GetBoolean(3); revoked=r.GetBoolean(4);
+                id=r.GetGuid(0); device=r.GetGuid(1); family=r.GetGuid(2); used=r.GetBoolean(3); revoked=r.GetBoolean(4); bound=r.GetBoolean(5);
             }
+            if(bound) throw new ApiError(401,"DEVICE_PROOF_REQUIRED");
             if(used || revoked)
             {
                 await using var revoke=Sql.Cmd(c,"UPDATE sessions SET revoked=true WHERE family=$1",family); await revoke.ExecuteNonQueryAsync();
@@ -142,13 +144,13 @@ public static class Identity
             await tx.CommitAsync(); return Results.NoContent();
         });
     }
-    private static async Task<object> NewSession(NpgsqlConnection c,Guid device,Guid family)
+    internal static async Task<SessionTokens> NewSession(NpgsqlConnection c,Guid device,Guid family,bool bound=false)
     {
         var access=Sql.Token(); var refresh=Sql.Token();
-        await using var cmd=Sql.Cmd(c,"INSERT INTO sessions(id,family,device_id,access_hash,refresh_hash,expires_at,refresh_expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '15 minutes',now()+interval '30 days')",Guid.NewGuid(),family,device,Sql.Hash(access),Sql.Hash(refresh));
+        await using var cmd=Sql.Cmd(c,"INSERT INTO sessions(id,family,device_id,access_hash,refresh_hash,expires_at,refresh_expires_at,device_bound_refresh) VALUES($1,$2,$3,$4,$5,now()+interval '15 minutes',now()+interval '30 days',$6)",Guid.NewGuid(),family,device,Sql.Hash(access),Sql.Hash(refresh),bound);
         await cmd.ExecuteNonQueryAsync();
         await using var state=Sql.Cmd(c,"SELECT trusted FROM devices WHERE id=$1",device);
         var trusted=(bool)(await state.ExecuteScalarAsync())!;
-        return new {accessToken=access,refreshToken=refresh,expiresIn=900,deviceId=device,trustState=trusted?"DEVICE_TRUSTED":"DEVICE_PENDING_TRUST"};
+        return new SessionTokens(access,refresh,900,device,trusted?"DEVICE_TRUSTED":"DEVICE_PENDING_TRUST",bound?"device-signature-v1":"bearer-rotation-v1");
     }
 }

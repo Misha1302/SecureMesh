@@ -1,0 +1,5 @@
+UTC: 2026-11-19T07:47:32.315428+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/refresh_recovery.py']
+PASS: actual refresh COMMIT, lost reply, owned SIGKILL, API restart and same-key native recovery without another rotation or family revocation.
+
+Exit code: 0

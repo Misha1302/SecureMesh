@@ -83,32 +83,7 @@ pub(super) fn execute(db: &Connection, req: &Value, identity: &str) -> Result<Va
             draft["loginUncertain"] = json!(false);
         }
         "onboarding_session" => {
-            let session = &req["session"];
-            ensure!(
-                s(session, "deviceId")? == identity,
-                "session device mismatch"
-            );
-            let trust = s(session, "trustState")?;
-            ensure!(
-                matches!(trust, "DEVICE_TRUSTED" | "DEVICE_PENDING_TRUST"),
-                "invalid trust state"
-            );
-            for key in ["accessToken", "refreshToken"] {
-                ensure!(
-                    (1..=4096).contains(&s(session, key)?.len()),
-                    "invalid session token"
-                );
-            }
-            let expires = session["expiresIn"].as_u64().context("session expiry")?;
-            ensure!((1..=86400).contains(&expires), "invalid session expiry");
-            // Explicit allowlist: no credentials or unknown response fields.
-            draft["session"] = json!({
-                "deviceId": identity,
-                "accessToken": session["accessToken"],
-                "refreshToken": session["refreshToken"],
-                "expiresIn": expires,
-                "trustState": trust,
-            });
+            draft["session"] = session::tokens(&req["session"], identity, false)?;
         }
         "onboarding_reauthenticate" => {
             draft

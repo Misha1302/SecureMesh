@@ -4,6 +4,7 @@ pub mod api;
 mod directory;
 mod enrollment;
 mod onboarding;
+mod session;
 use ::tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -126,6 +127,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     }
     if op.starts_with("onboarding_") {
         return onboarding::execute(db, req, &identity);
+    }
+    if op.starts_with("refresh_") || op == "session_reauthenticate" {
+        return session::execute(db, req, &identity, &signer);
     }
     match op {
         "identity" => Ok(json!({"identity":identity,"public_key":B64.encode(public)})),

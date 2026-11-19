@@ -28,16 +28,25 @@ Future<void> main(List<String> args) async {
     ..setTrustedCertificates(fixture['cert'] as String);
   final http = HttpClient(context: context)
     ..connectionTimeout = const Duration(seconds: 5);
-  var profile = Map<String, dynamic>.from(fixture['session'] as Map);
+  var profile = {
+    ...Map<String, dynamic>.from(fixture['session'] as Map),
+    'endpoint': fixture['endpoint'],
+  };
+  await crypto('profile_put', {'profile': profile});
   final endpoint = Uri.parse(fixture['endpoint'] as String);
   final session = AccountSession(
     http: http,
     endpoint: endpoint,
     profile: () => profile,
-    persist: (update) async {
-      final next = {...profile, ...update};
-      await crypto('profile_put', {'profile': next});
-      profile = next;
+    prepareRefresh: () async =>
+        (await crypto('refresh_prepare', {
+              'endpoint': endpoint.origin,
+            }))['request']
+            as Map<String, dynamic>,
+    commitRefresh: (update) async {
+      profile =
+          (await crypto('refresh_complete', {'response': update}))['profile']
+              as Map<String, dynamic>;
     },
   );
   final transport = MeshTransport(

@@ -56,16 +56,27 @@ Future<void> main(List<String> args) async {
         ..connectionTimeout = const Duration(seconds: 12)
         ..maxConnectionsPerHost = 4;
       clients.add(http);
-      var profile = Map<String, dynamic>.from(device['session'] as Map);
+      var profile = {
+        ...Map<String, dynamic>.from(device['session'] as Map),
+        'endpoint': device['endpoint'],
+      };
+      await command(store, 'profile_put', {'profile': profile});
       final endpoint = Uri.parse(device['endpoint'] as String);
       final session = AccountSession(
         http: http,
         endpoint: endpoint,
         profile: () => profile,
-        persist: (updated) async {
-          final next = {...profile, ...updated};
-          await command(store, 'profile_put', {'profile': next});
-          profile = next;
+        prepareRefresh: () async =>
+            (await command(store, 'refresh_prepare', {
+                  'endpoint': endpoint.origin,
+                }))['request']
+                as Map<String, dynamic>,
+        commitRefresh: (updated) async {
+          profile =
+              (await command(store, 'refresh_complete', {
+                    'response': updated,
+                  }))['profile']
+                  as Map<String, dynamic>;
         },
       );
       sessions.add(session);

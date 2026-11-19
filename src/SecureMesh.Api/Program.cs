@@ -19,6 +19,7 @@ builder.Services.AddDbContext<MeshDb>(o => o.UseNpgsql(connection));
 builder.Services.AddSingleton(NpgsqlDataSource.Create(connection));
 var stateDirectory=builder.Configuration["StateDirectory"] ?? Path.Combine(Directory.GetCurrentDirectory(),".local");
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(stateDirectory,"cursor-keys")));
+builder.Services.AddSingleton(new RefreshResponseProtection(stateDirectory));
 builder.Services.AddSingleton<Delivery>();
 builder.Services.AddSingleton<PublicKeyPackageValidator>();
 builder.Services.AddRateLimiter(o =>
@@ -43,6 +44,7 @@ app.Use(async(ctx,next)=>
 });
 app.UseRateLimiter();
 app.MapIdentity();
+app.MapDeviceRefresh();
 app.MapDeviceTrust();
 app.MapMlsDirectory();
 Delivery.MapDelivery(app);

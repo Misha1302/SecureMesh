@@ -1,0 +1,10 @@
+UTC: 2026-11-19T07:53:51.495568+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/refresh_recovery.py']
+PASS: actual refresh COMMIT, lost reply, owned SIGKILL, API restart and same-key native recovery without another rotation or family revocation.
+PASS: stable replay tokens; device-bound sessions reject bearer downgrade, forged/foreign proof; no family revocation from unauthenticated input; response encrypted in PG.
+PASS: expired recovered access deadline is not extended; real local pre-COMMIT abort preserves journal; native client commits recovery then rotates once.
+PASS: replay window expires; different authenticated reuse revokes family; exact replay cannot resurrect it; encrypted queue retained.
+PASS: password + original key reauthentication coalesces eight waiting calls; preserves profile/MLS/trust; actual native transport drains the identical queued ciphertext once to independent MLS recipient.
+PASS: revoked device cannot reauthenticate even with password/key; no replacement device or trust reset; local store/WAL and API logs contain no tested secrets/plaintext.
+
+Exit code: 0

@@ -19,19 +19,40 @@ Future<void> main(List<String> args) async {
   final context = SecurityContext(withTrustedRoots: true)
     ..setTrustedCertificates(input['cert'] as String);
   final http = HttpClient(context: context);
-  var profile = Map<String, dynamic>.from(input['session'] as Map);
+  var profile = {
+    ...Map<String, dynamic>.from(input['session'] as Map),
+    'endpoint': input['endpoint'],
+  };
+  await store.execute(
+    request: jsonEncode({'op': 'profile_put', 'profile': profile}),
+  );
   var rotations = 0;
   final session = AccountSession(
     http: http,
     endpoint: Uri.parse(input['endpoint'] as String),
     profile: () => profile,
-    persist: (updated) async {
+    prepareRefresh: () async =>
+        (jsonDecode(
+              await store.execute(
+                request: jsonEncode({
+                  'op': 'refresh_prepare',
+                  'endpoint': input['endpoint'],
+                }),
+              ),
+            ) as Map)['request']
+            as Map<String, dynamic>,
+    commitRefresh: (updated) async {
       rotations++;
-      final next = {...profile, ...updated};
-      await store.execute(
-        request: jsonEncode({'op': 'profile_put', 'profile': next}),
-      );
-      profile = next;
+      profile =
+          (jsonDecode(
+                await store.execute(
+                  request: jsonEncode({
+                    'op': 'refresh_complete',
+                    'response': updated,
+                  }),
+                ),
+              ) as Map)['profile']
+              as Map<String, dynamic>;
     },
   );
   try {
