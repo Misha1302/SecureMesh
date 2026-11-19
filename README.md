@@ -2,6 +2,8 @@
 
 **PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.** A real encrypted-text vertical slice, not the complete product in the immutable Russian brief. Known RustSec findings block release: see [security limitations](docs/SECURITY_LIMITATIONS.md). Do not use this alpha with real sensitive data.
 
+Early qualitative user feedback, product positioning and the proposed 10–20-person pilot are documented in [USER_FEEDBACK_AND_PILOT_2026-11-19_RU.md](docs/USER_FEEDBACK_AND_PILOT_2026-11-19_RU.md). This is a research hypothesis, not evidence of market fit, security certification, or permission for a public launch.
+
 Implemented/exercised: .NET 10 API/PostgreSQL migrations; Mailpit verification; Argon2id/device proof/rotating sessions; OpenMLS 0.9.2 and SQLCipher; durable message/outbox and scoped cursors. Native Flutter now has registration/verification/login, consented DM requests by username, independently compared device keys and server-routed signed Welcome. WSS-first protobuf delivery has bounded pipelining, HTTPS fallback and recovery. Additional-device login stays pending until a trusted-device grant is verified locally and activated. Full multi-device MLS/history recovery remains incomplete.
 
 ```sh
