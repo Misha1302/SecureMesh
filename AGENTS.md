@@ -32,3 +32,9 @@ Build the **real** SecureMesh app end-to-end from this brief. Read `00_START_HER
 6. M7-M8 validation/deployment documentation, not deployment.
 
 If blocked, continue independent tasks with truthful status; don't stop merely to ask for UI preferences or permission to perform safe local edits.
+
+## V3 additive product and test requirements (2026-11-19)
+
+The original brief, checks and docs/v2 are immutable. Read **docs/v3/PRODUCT_REQUIREMENTS_RU.md**, **docs/v3/ARCHITECTURE_RESEARCH_RU.md**, **docs/v3/TEST_STRATEGY_RU.md**, **docs/v3/CONFLICTS_AND_DECISIONS_RU.md**, **docs/v3/ACCEPTANCE_MATRIX.csv** before planning work; **docs/v3/CODEX_AUTONOMOUS_PROMPT_RU.md** is the complete owner-approved autonomous execution brief. V3 supersedes *product platform/UX/scope priorities* only; never relax original cryptographic/security/2G/acceptance/audit gates. All four native platforms Android/iOS/Linux/Windows and the listed media/social/call features are required for FULL_PRODUCT_DONE; iOS may be BLOCKED on unavailable macOS/Xcode but must never be silently dropped. Web private chat remains optional and disabled unless separately security-qualified.
+
+Use red-green-refactor where appropriate, real end-to-end tests, platform-specific evidence, network chaos and regression benchmarks. Copy V3 template into reports/V3_ACCEPTANCE_MATRIX.csv and update with actual results (default NOT_RUN). A new spec, UI sketch or component pass is not release approval. Continue safe independent work when a platform runner or audit is unavailable. Keep PRODUCTION_APPROVED=false until independent audits and explicit owner launch authorization.

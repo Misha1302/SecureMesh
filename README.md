@@ -1,5 +1,12 @@
 # SecureMesh — local development checkpoint
 
+## SecureMesh V3: обязательные требования (19.11.2026)
+
+Нормативное дополнение к неизменяемым исходным ТЗ/V2: [платформы, UX и полный функционал](docs/v3/PRODUCT_REQUIREMENTS_RU.md), [архитектурное исследование](docs/v3/ARCHITECTURE_RESEARCH_RU.md), [TDD/E2E стратегия](docs/v3/TEST_STRATEGY_RU.md), [матрица из 44 сценариев](docs/v3/ACCEPTANCE_MATRIX.csv), [аудит противоречий](docs/v3/CONFLICTS_AND_DECISIONS_RU.md), [полный автономный промпт Codex](docs/v3/CODEX_AUTONOMOUS_PROMPT_RU.md).
+
+Целевые native приложения **Android, iOS, Linux и Windows** (оба desktop варианта Linux+Windows обязательны); простой Telegram-подобный UX с безопасным локальным unlock и скрытыми серверными настройками; настоящий trusted multi-device MLS/history/recovery; группы, каналы, посты, приватные файлы, голосовые, кружочки и звонки; реальные E2E/chaos/performance проверки. Web private chat только после отдельного E2EE security gate, иначе disabled. Появление требований не значит их реализацию: см. STATUS.md и reports/TEST_RESULTS.md. **PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.**
+
+
 **PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.** A real encrypted-text vertical slice, not the complete product in the immutable Russian brief. Known RustSec findings block release: see [security limitations](docs/SECURITY_LIMITATIONS.md). Do not use this alpha with real sensitive data.
 
 Early qualitative user feedback, product positioning and the proposed 10–20-person pilot are documented in [USER_FEEDBACK_AND_PILOT_2026-11-19_RU.md](docs/USER_FEEDBACK_AND_PILOT_2026-11-19_RU.md). This is a research hypothesis, not evidence of market fit, security certification, or permission for a public launch.
