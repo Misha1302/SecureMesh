@@ -40,6 +40,7 @@ if [[ -x .local/flutter/bin/flutter ]]; then
   check flutter-layout bash -c 'cd apps/client_flutter && FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$(pwd)/../../.local/pub-cache" ../../.local/flutter/bin/flutter test --no-pub test'
   check native-transport .local/venv/bin/python tests/integration/native_transport.py
   check native-session .local/venv/bin/python tests/integration/native_session.py
+  check onboarding-recovery .local/venv/bin/python tests/integration/onboarding_recovery.py
 else
   check flutter-sdk test -x .local/flutter/bin/flutter
 fi

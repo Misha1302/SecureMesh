@@ -1,4 +1,4 @@
-.PHONY: bootstrap demo smoke verify down crypto seed-demo build-linux client network-gprs network-severe native-network-gprs native-network-severe native-cursor-recovery restore-v2 enrollment-quota gui-smoke gui-pending-smoke
+.PHONY: bootstrap demo smoke verify down crypto seed-demo build-linux client network-gprs network-severe native-network-gprs native-network-severe native-cursor-recovery restore-v2 enrollment-quota onboarding-recovery gui-smoke gui-pending-smoke gui-onboarding-recovery
 bootstrap:
 	bash scripts/bootstrap.sh
 demo:
@@ -25,10 +25,14 @@ restore-v2:
 	.local/venv/bin/python tests/integration/restore_v2.py
 enrollment-quota:
 	.local/venv/bin/python tests/integration/enrollment_quota.py
+onboarding-recovery:
+	.local/venv/bin/python tests/integration/onboarding_recovery.py
 gui-smoke:
 	.local/venv/bin/python tests/gui/native_v2.py --script tests/gui/v2_scenario.json
 gui-pending-smoke:
 	.local/venv/bin/python tests/gui/native_v2.py --script tests/gui/v2_pending_scenario.json
+gui-onboarding-recovery:
+	.local/venv/bin/python tests/gui/onboarding_resume.py --script tests/gui/v2_resume_scenario.json
 smoke:
 	python3 tests/integration/smoke.py
 	.local/venv/bin/python tests/integration/delivery.py

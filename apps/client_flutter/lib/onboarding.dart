@@ -1,11 +1,12 @@
-import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
-import 'package:path_provider/path_provider.dart';
 
+import 'account_setup.dart';
 import 'http_api.dart';
 import 'local_client.dart';
+import 'profile_files.dart';
 import 'src/rust/api.dart';
 import 'transport.dart';
 
@@ -14,9 +15,12 @@ class AccountOnboarding extends StatefulWidget {
     super.key,
     required this.onReady,
     this.russian = true,
-  });
+    this.resumePath,
+    this.resumePassphrase,
+  }) : assert((resumePath == null) == (resumePassphrase == null));
   final Future<void> Function(String path, String passphrase) onReady;
   final bool russian;
+  final String? resumePath, resumePassphrase;
   @override
   State<AccountOnboarding> createState() => _AccountOnboardingState();
 }
@@ -31,9 +35,13 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   final form = GlobalKey<FormState>();
   HttpClient? http;
   NativeClient? store;
+  AccountSetup? setup;
+  Map<String, dynamic>? draft;
   String? storePath, identity, error;
   bool busy = false, ru = true, verifiedRegistrationHere = false;
-  bool accountAuthenticated = false;
+  bool resuming = false, profileComplete = false;
+  bool get needsAccountPassword =>
+      !profileComplete && draft?['session'] == null;
   int step = 0; // register, email verification, login
   String tr(String a, String b) => ru ? a : b;
 
@@ -41,6 +49,12 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   void initState() {
     super.initState();
     ru = widget.russian;
+    if (widget.resumePath != null) {
+      busy = true;
+      resuming = true;
+      step = 2;
+      unawaited(loadResume());
+    }
   }
 
   @override
@@ -60,12 +74,42 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
     super.dispose();
   }
 
-  Future<Map<String, dynamic>> crypto(
-    String op, [
-    Map<String, dynamic> args = const {},
-  ]) async =>
-      jsonDecode(await store!.execute(request: jsonEncode({'op': op, ...args})))
-          as Map<String, dynamic>;
+  Future<void> loadResume() async {
+    try {
+      await initializeNativeBridge();
+      storePath = widget.resumePath!;
+      localPassword.text = widget.resumePassphrase!;
+      if (!File(storePath!).existsSync()) throw StateError('DRAFT_MISSING');
+      final opened = await NativeClient.open(
+        path: storePath!,
+        passphrase: localPassword.text,
+      );
+      if (!mounted) {
+        opened.dispose();
+        return;
+      }
+      store = opened;
+      http ??= nativeHttpClient();
+      setup = AccountSetup(store: opened, http: http!);
+      final state = await setup!.state();
+      draft = state['draft'] as Map<String, dynamic>?;
+      if (draft == null) throw StateError('DRAFT_MISSING');
+      endpoint.text = draft!['endpoint'] as String;
+      username.text = draft!['username'] as String;
+      identity = draft!['deviceId'] as String;
+      verifiedRegistrationHere = draft!['registeredHere'] == true;
+    } catch (_) {
+      store?.dispose();
+      store = null;
+      setup = null;
+      error = tr(
+        'Не удалось открыть незавершённый вход. Вернитесь назад и откройте исходный файл с его паролем хранилища.',
+        'Could not open the interrupted sign-in. Go back and unlock the original file with its store passphrase.',
+      );
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
 
   Future<void> submit() async {
     if (busy || !form.currentState!.validate()) return;
@@ -105,14 +149,9 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         if (mounted) setState(() => step = 2);
       } else {
         await initializeNativeBridge();
-        if (store == null) {
-          final create = identity == null;
-          if (create) {
-            final location =
-                Platform.environment['SECUREMESH_PROFILE_DIRECTORY'];
-            final directory = location == null
-                ? await getApplicationSupportDirectory()
-                : Directory(location);
+        if (!profileComplete && setup == null) {
+          if (identity == null) {
+            final directory = await localProfileDirectory();
             await directory.create(recursive: true);
             identity = newUuid();
             storePath = '${directory.path}/$identity.db';
@@ -121,52 +160,33 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
             path: storePath!,
             passphrase: localPassword.text,
           );
-          if (create) await crypto('init', {'identity': identity});
+          http ??= nativeHttpClient();
+          final prepared = AccountSetup(store: store!, http: http!);
+          try {
+            await prepared.prepare(
+              device: identity!,
+              endpoint: base,
+              username: username.text.trim(),
+              registeredHere: verifiedRegistrationHere,
+            );
+          } catch (_) {
+            // No login was sent. A rejected initializer must not trap the
+            // corrected form on an uninitialized database connection.
+            store?.dispose();
+            store = null;
+            setup = null;
+            identity = null;
+            storePath = null;
+            rethrow;
+          }
+          setup = prepared;
+          draft = (await setup!.state())['draft'] as Map<String, dynamic>;
         }
-        final me = await crypto('identity');
-        final challenge = await meshHttp(
-          http!,
-          base,
-          '/v1/auth/challenge',
-          data: {'username': username.text.trim(), 'deviceId': identity},
-        ) as Map;
-        final proof = await crypto('sign', {'payload': challenge['payload']});
-        final session = await meshHttp(
-          http!,
-          base,
-          '/v1/auth/login',
-          data: {
-            'username': username.text.trim(),
-            'password': password.text,
-            'deviceId': identity,
-            'publicKey': me['public_key'],
-            'challengeId': challenge['challengeId'],
-            'signature': proof['signature'],
-          },
-        ) as Map<String, dynamic>;
-        accountAuthenticated = true;
-        final account = await meshHttp(
-          http!,
-          base,
-          '/v1/users/me',
-          token: session['accessToken'] as String,
-        ) as Map;
-        await crypto('profile_put', {
-          'profile': {
-            'endpoint': base.origin,
-            'username': username.text.trim(),
-            'userId': account['userId'],
-            ...session,
-            'requiresEnrollment':
-                !verifiedRegistrationHere ||
-                session['trustState'] == 'DEVICE_PENDING_TRUST',
-            'enrollmentVerified':
-                verifiedRegistrationHere &&
-                session['trustState'] == 'DEVICE_TRUSTED',
-          },
-        });
-        store!.dispose();
+        if (!profileComplete) await setup!.finish(password: password.text);
+        profileComplete = true;
+        store?.dispose();
         store = null;
+        setup = null;
         final passphrase = localPassword.text;
         await widget.onReady(storePath!, passphrase);
         password.clear();
@@ -174,19 +194,45 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         if (mounted) Navigator.of(context).pop();
       }
     } catch (failure) {
-      if (failure is ApiFailure &&
-          const {400, 401, 403}.contains(failure.status) &&
-          !accountAuthenticated) {
-        // A conclusive rejection did not enroll this device. Keep the unused
-        // encrypted file, but allow corrected credentials to create a new draft.
-        store?.dispose();
-        store = null;
-        identity = null;
-        storePath = null;
+      if (setup != null) {
+        try {
+          final state = await setup!.state();
+          draft = state['draft'] as Map<String, dynamic>?;
+          if (failure is ApiFailure &&
+              const {400, 401, 403}.contains(failure.status) &&
+              draft?['loginUncertain'] == false &&
+              draft?['session'] == null) {
+            // Only a conclusive rejection with no earlier ambiguous login may
+            // release the unused draft. Never discard a potentially live key.
+            store?.dispose();
+            store = null;
+            setup = null;
+            identity = null;
+            storePath = null;
+            draft = null;
+            resuming = false;
+          }
+        } catch (_) {
+          // An unreadable journal keeps its identity/path; it cannot authorize
+          // a fresh device as an implicit recovery action.
+        }
       }
       if (mounted) {
         setState(() {
-          error = failure is ApiFailure && failure.status == 401
+          error =
+              failure is ApiFailure &&
+                  failure.code == 'DEVICE_CHALLENGE_MISMATCH'
+              ? tr(
+                  'Сервер вернул неподходящий запрос подписи. Проверьте адрес сервера; вход не выполнен.',
+                  'The server returned an invalid signing challenge. Check the server address; sign-in was stopped.',
+                )
+              : failure is ApiFailure &&
+                    failure.code == 'ONBOARDING_SESSION_EXPIRED'
+              ? tr(
+                  'Сеанс истёк. Введите пароль аккаунта, чтобы продолжить с теми же ключами устройства.',
+                  'The session expired. Enter your account password to continue with the same device keys.',
+                )
+              : failure is ApiFailure && failure.status == 401
               ? tr(
                   'Не удалось войти. Проверьте имя, пароль и подтверждение почты.',
                   'Could not sign in. Check your username, password and email verification.',
@@ -218,10 +264,10 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
     padding: const EdgeInsets.only(bottom: 16),
     child: TextFormField(
       controller: controller,
-      enabled:
-          !busy &&
-          !(store != null &&
-              [endpoint, username, localPassword].contains(controller)),
+      enabled: !busy,
+      readOnly:
+          draft != null &&
+          [endpoint, username, localPassword].contains(controller),
       obscureText: secret,
       autocorrect: false,
       enableSuggestions: !secret,
@@ -230,12 +276,22 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         labelText: label,
         border: const OutlineInputBorder(),
       ),
-      validator: (v) => v == null || v.length < min || v.length > max
-          ? tr(
-              'Введите от $min до $max символов.',
-              'Enter $min–$max characters.',
-            )
-          : null,
+      validator: (v) {
+        if (v == null || v.length < min || v.length > max) {
+          return tr(
+            'Введите от $min до $max символов.',
+            'Enter $min–$max characters.',
+          );
+        }
+        if (controller == username &&
+            !RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(v)) {
+          return tr(
+            'Используйте строчные a–z, цифры и знак подчёркивания.',
+            'Use lowercase a–z, digits and underscores.',
+          );
+        }
+        return null;
+      },
     ),
   );
 
@@ -269,6 +325,8 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                             ? tr('Создать аккаунт', 'Create an account')
                             : step == 1
                             ? tr('Подтвердите почту', 'Verify your email')
+                            : resuming || draft != null
+                            ? tr('Продолжить вход', 'Continue sign-in')
                             : tr(
                                 'Войти на этом устройстве',
                                 'Sign in on this device',
@@ -283,10 +341,15 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                                 'Enter the code from your email. Local development mail is available in Mailpit.',
                               )
                             : step == 2
-                            ? tr(
-                                'Устройство создаст свои ключи. Для подключения нужно подтверждение. Перенос старой истории и восстановление в этой альфе ещё недоступны.',
-                                'This device creates its own keys and needs approval. History transfer and recovery are not available in this alpha yet.',
-                              )
+                            ? resuming || draft != null
+                                  ? tr(
+                                      'Ключи этого устройства сохранены. Для завершения входа нужно соединение с сервером. Старая история с других устройств не переносится.',
+                                      'This device’s keys are saved. Connect to the server to finish signing in. History from other devices is not transferred.',
+                                    )
+                                  : tr(
+                                      'Устройство создаст свои ключи. Для подключения нужно подтверждение. Перенос старой истории и восстановление в этой альфе ещё недоступны.',
+                                      'This device creates its own keys and needs approval. History transfer and recovery are not available in this alpha yet.',
+                                    )
                             : tr(
                                 'Телефон не нужен. Приватные ключи остаются на ваших устройствах.',
                                 'No phone number is required. Private keys stay on your devices.',
@@ -312,7 +375,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           max: 254,
                           keyboard: TextInputType.emailAddress,
                         ),
-                      if (step != 1)
+                      if (step == 0 || (step == 2 && needsAccountPassword))
                         field(
                           password,
                           tr('Пароль аккаунта', 'Account password'),
@@ -326,7 +389,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           secret: true,
                           max: 128,
                         ),
-                      if (step == 2) ...[
+                      if (step == 2 && !resuming) ...[
                         field(
                           localPassword,
                           tr(
@@ -358,7 +421,11 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           ),
                         ),
                       FilledButton(
-                        onPressed: busy ? null : submit,
+                        onPressed:
+                            busy ||
+                                (resuming && setup == null && !profileComplete)
+                            ? null
+                            : submit,
                         child: Padding(
                           padding: const EdgeInsets.all(12),
                           child: Text(
@@ -368,11 +435,18 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                                 ? tr('Создать аккаунт', 'Create account')
                                 : step == 1
                                 ? tr('Подтвердить почту', 'Verify email')
+                                : profileComplete || draft?['session'] != null
+                                ? tr('Завершить вход', 'Finish signing in')
+                                : resuming
+                                ? tr('Продолжить вход', 'Continue sign-in')
                                 : tr('Войти', 'Sign in'),
                           ),
                         ),
                       ),
-                      if (step != 1)
+                      if (step != 1 &&
+                          draft == null &&
+                          !resuming &&
+                          !profileComplete)
                         TextButton(
                           onPressed: busy
                               ? null

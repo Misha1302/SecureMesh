@@ -38,8 +38,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Local store passphrase'), findsOneWidget);
       expect(tester.takeException(), isNull);
-    final fields = tester.widgetList<EditableText>(find.byType(EditableText));
+      final fields = tester.widgetList<EditableText>(find.byType(EditableText));
       expect(fields.where((field) => field.obscureText).length, 2);
+      await tester.enterText(find.byType(TextFormField).at(1), 'Upper.Name');
+      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Use lowercase a–z, digits and underscores.'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     },
   );
@@ -57,6 +66,11 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Открыть профиль'), findsOneWidget);
     expect(find.text('Пароль хранилища'), findsOneWidget);
+    await tester.ensureVisible(find.text('Создать аккаунт или войти'));
+    await tester.tap(find.text('Создать аккаунт или войти'));
+    await tester.pumpAndSettle();
+    expect(find.text('Электронная почта'), findsOneWidget);
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('browser explicitly gates private chat at compact width', (

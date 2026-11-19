@@ -3,6 +3,7 @@ mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be
 pub mod api;
 mod directory;
 mod enrollment;
+mod onboarding;
 use ::tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -108,6 +109,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
         set_meta(db, "identity", id)?;
         set_meta(db, "public", &B64.encode(signer.public()))?;
         db.execute("INSERT INTO pins VALUES(?,?)", params![id, signer.public()])?;
+        if let Some(draft) = req.get("onboarding") {
+            onboarding::prepare(db, draft, id)?;
+        }
         return Ok(json!({"identity":id,"public_key":B64.encode(signer.public())}));
     }
     let identity = meta(db, "identity")?;
@@ -119,6 +123,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     }
     if op.starts_with("directory_") {
         return directory::execute(db, p, req, &identity, &signer);
+    }
+    if op.starts_with("onboarding_") {
+        return onboarding::execute(db, req, &identity);
     }
     match op {
         "identity" => Ok(json!({"identity":identity,"public_key":B64.encode(public)})),

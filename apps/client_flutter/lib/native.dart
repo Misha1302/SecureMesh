@@ -10,6 +10,7 @@ import 'local_client.dart';
 import 'session.dart';
 import 'delivery_client.dart';
 import 'onboarding.dart';
+import 'profile_files.dart';
 import 'account_hub.dart';
 import 'transport.dart';
 
@@ -41,7 +42,12 @@ class _ClientAppState extends State<ClientApp> {
   List<dynamic> messages = [];
   List<dynamic> devices = [];
   Timer? timer;
-  bool busy = false, loading = false, online = false, lite = false, ru = true;
+  bool busy = false,
+      loading = false,
+      choosing = false,
+      online = false,
+      lite = false,
+      ru = true;
   String? error;
   int tab = 0, failures = 0;
   Future<void> profileWrites = Future.value();
@@ -81,7 +87,9 @@ class _ClientAppState extends State<ClientApp> {
     super.dispose();
   }
 
-  Future<void> unlock() async {
+  Future<void> unlock(BuildContext pageContext) async {
+    if (loading || store != null) return;
+    NativeClient? opening;
     setState(() {
       loading = true;
       error = null;
@@ -91,12 +99,44 @@ class _ClientAppState extends State<ClientApp> {
         throw StateError('PROFILE_FILE_MISSING');
       }
       await initializeNativeBridge();
-      final opened = await NativeClient.open(
+      opening = await NativeClient.open(
         path: path.text.trim(),
         passphrase: pass.text,
       );
-      store = opened;
-      profile = await crypto('profile');
+      if (!mounted) {
+        opening.dispose();
+        opening = null;
+        return;
+      }
+      final setup = jsonDecode(
+        await opening.execute(request: jsonEncode({'op': 'onboarding_state'})),
+      ) as Map;
+      if (setup['stage'] == 'prepared' || setup['stage'] == 'authenticated') {
+        final originalPath = path.text.trim();
+        final secret = pass.text;
+        opening.dispose();
+        opening = null;
+        pass.clear();
+        if (!mounted || !pageContext.mounted) return;
+        setState(() => loading = false);
+        await showAccount(
+          pageContext,
+          resumePath: originalPath,
+          resumePassphrase: secret,
+        );
+        return;
+      }
+      final saved = jsonDecode(
+        await opening.execute(request: jsonEncode({'op': 'profile'})),
+      ) as Map<String, dynamic>;
+      if (!mounted) {
+        opening.dispose();
+        opening = null;
+        return;
+      }
+      profile = saved;
+      store = opening;
+      opening = null;
       http = nativeHttpClient();
       session = AccountSession(
         http: http!,
@@ -117,6 +157,7 @@ class _ClientAppState extends State<ClientApp> {
       timer?.cancel();
       if (profile?['group'] != null) unawaited(pump());
     } catch (_) {
+      opening?.dispose();
       transport?.close();
       session?.close();
       delivery?.close();
@@ -131,6 +172,88 @@ class _ClientAppState extends State<ClientApp> {
       );
     } finally {
       if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> showAccount(
+    BuildContext pageContext, {
+    String? resumePath,
+    String? resumePassphrase,
+  }) => Navigator.of(pageContext).push<void>(
+    MaterialPageRoute<void>(
+      builder: (_) => AccountOnboarding(
+        russian: ru,
+        resumePath: resumePath,
+        resumePassphrase: resumePassphrase,
+        onReady: (created, secret) async {
+          path.text = created;
+          pass.text = secret;
+          await unlock(pageContext);
+          if (store == null) throw CryptoFailure();
+        },
+      ),
+    ),
+  );
+
+  Future<void> chooseProfile(BuildContext pageContext) async {
+    if (loading || choosing) return;
+    setState(() => choosing = true);
+    try {
+      final files = await localProfiles();
+      if (!mounted || !pageContext.mounted) return;
+      if (files.isEmpty) {
+        setState(
+          () => error = tr(
+            'Сохранённых профилей пока нет. Создайте аккаунт или войдите.',
+            'There are no saved profiles yet. Create an account or sign in.',
+          ),
+        );
+        return;
+      }
+      final selected = await showDialog<String>(
+        context: pageContext,
+        builder: (context) => SimpleDialog(
+          title: Text(tr('Сохранённые профили', 'Saved profiles')),
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              child: Text(
+                tr(
+                  'Выберите файл и введите его пароль хранилища. Незавершённый вход продолжится с сохранёнными ключами.',
+                  'Choose a file and enter its store passphrase. An interrupted sign-in will continue with its saved keys.',
+                ),
+              ),
+            ),
+            for (final file in files)
+              SimpleDialogOption(
+                onPressed: () => Navigator.of(context).pop(file.path),
+                child: Text(file.uri.pathSegments.last),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(tr('Отмена', 'Cancel')),
+            ),
+          ],
+        ),
+      );
+      if (mounted && selected != null) {
+        setState(() {
+          path.text = selected;
+          pass.clear();
+          error = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => error = tr(
+            'Не удалось прочитать список профилей. Проверьте доступ к папке или укажите файл вручную.',
+            'Could not list profiles. Check folder access or enter the file path manually.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => choosing = false);
     }
   }
 
@@ -570,6 +693,16 @@ class _ClientAppState extends State<ClientApp> {
                 decoration: InputDecoration(
                   labelText: tr('Файл профиля', 'Profile file'),
                   border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    tooltip: tr(
+                      'Выбрать сохранённый профиль',
+                      'Choose a saved profile',
+                    ),
+                    onPressed: loading || choosing
+                        ? null
+                        : () => chooseProfile(context),
+                    icon: const Icon(Icons.folder_open),
+                  ),
                 ),
                 autocorrect: false,
               ),
@@ -579,7 +712,7 @@ class _ClientAppState extends State<ClientApp> {
                 obscureText: true,
                 enableSuggestions: false,
                 autocorrect: false,
-                onSubmitted: (_) => unlock(),
+                onSubmitted: (_) => unlock(context),
                 decoration: InputDecoration(
                   labelText: tr('Пароль хранилища', 'Store passphrase'),
                   border: const OutlineInputBorder(),
@@ -587,7 +720,7 @@ class _ClientAppState extends State<ClientApp> {
               ),
               const SizedBox(height: 20),
               FilledButton(
-                onPressed: loading ? null : unlock,
+                onPressed: loading ? null : () => unlock(context),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Text(
@@ -609,21 +742,7 @@ class _ClientAppState extends State<ClientApp> {
                 ),
               const SizedBox(height: 24),
               TextButton(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => AccountOnboarding(
-                            russian: ru,
-                            onReady: (created, secret) async {
-                              path.text = created;
-                              pass.text = secret;
-                              await unlock();
-                              if (store == null) throw CryptoFailure();
-                            },
-                          ),
-                        ),
-                      ),
+                onPressed: loading ? null : () => showAccount(context),
                 child: Text(
                   tr('Создать аккаунт или войти', 'Create account or sign in'),
                 ),
