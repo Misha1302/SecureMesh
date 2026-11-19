@@ -37,7 +37,8 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   NativeClient? store;
   AccountSetup? setup;
   Map<String, dynamic>? draft;
-  String? storePath, identity, error;
+  String? storePath, identity;
+  ({String ru, String en})? error;
   bool busy = false, ru = true, verifiedRegistrationHere = false;
   bool resuming = false, profileComplete = false;
   bool get needsAccountPassword =>
@@ -102,9 +103,9 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       store?.dispose();
       store = null;
       setup = null;
-      error = tr(
-        'Не удалось открыть незавершённый вход. Вернитесь назад и откройте исходный файл с его паролем хранилища.',
-        'Could not open the interrupted sign-in. Go back and unlock the original file with its store passphrase.',
+      error = (
+        ru: 'Не удалось открыть незавершённый вход. Вернитесь назад и откройте исходный файл с его паролем хранилища.',
+        en: 'Could not open the interrupted sign-in. Go back and unlock the original file with its store passphrase.',
       );
     } finally {
       if (mounted) setState(() => busy = false);
@@ -222,29 +223,29 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
           error =
               failure is ApiFailure &&
                   failure.code == 'DEVICE_CHALLENGE_MISMATCH'
-              ? tr(
-                  'Сервер вернул неподходящий запрос подписи. Проверьте адрес сервера; вход не выполнен.',
-                  'The server returned an invalid signing challenge. Check the server address; sign-in was stopped.',
+              ? (
+                  ru: 'Сервер вернул неподходящий запрос подписи. Проверьте адрес сервера; вход не выполнен.',
+                  en: 'The server returned an invalid signing challenge. Check the server address; sign-in was stopped.',
                 )
               : failure is ApiFailure &&
                     failure.code == 'ONBOARDING_SESSION_EXPIRED'
-              ? tr(
-                  'Сеанс истёк. Введите пароль аккаунта, чтобы продолжить с теми же ключами устройства.',
-                  'The session expired. Enter your account password to continue with the same device keys.',
+              ? (
+                  ru: 'Сеанс истёк. Введите пароль аккаунта, чтобы продолжить с теми же ключами устройства.',
+                  en: 'The session expired. Enter your account password to continue with the same device keys.',
                 )
               : failure is ApiFailure && failure.status == 401
-              ? tr(
-                  'Не удалось войти. Проверьте имя, пароль и подтверждение почты.',
-                  'Could not sign in. Check your username, password and email verification.',
+              ? (
+                  ru: 'Не удалось войти. Проверьте имя, пароль и подтверждение почты.',
+                  en: 'Could not sign in. Check your username, password and email verification.',
                 )
               : failure is ApiFailure && failure.code == 'INVALID_TOKEN'
-              ? tr(
-                  'Код недействителен или уже использован. Проверьте письмо.',
-                  'The code is invalid or already used. Check your email.',
+              ? (
+                  ru: 'Код недействителен или уже использован. Проверьте письмо.',
+                  en: 'The code is invalid or already used. Check your email.',
                 )
-              : tr(
-                  'Действие не завершено. Проверьте соединение и данные, затем повторите.',
-                  'The action did not complete. Check the connection and your details, then retry.',
+              : (
+                  ru: 'Действие не завершено. Проверьте соединение и данные, затем повторите.',
+                  en: 'The action did not complete. Check the connection and your details, then retry.',
                 );
         });
       }
@@ -413,7 +414,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           child: Padding(
                             padding: const EdgeInsets.only(bottom: 16),
                             child: Text(
-                              error!,
+                              ru ? error!.ru : error!.en,
                               style: TextStyle(
                                 color: Theme.of(context).colorScheme.error,
                               ),

@@ -18,9 +18,9 @@
   {"click":[610,442],"fill":"localpass"},
   {"click":[640,514],"wait":5,"verify_journal":"authenticated"},
   {"click":[640,526],"wait":3,"verify_journal":"prepared","capture":".impeccable/review/v2-resume-expired.png"},
-  {"resize":[320,844],"wait":1,"capture":".impeccable/review/v2-resume-expired-compact.png"},
-  {"click":[280,28],"wait":1,"capture":".impeccable/review/v2-resume-expired-compact-en.png"},
-  {"resize":[1280,720],"click":[1240,28],"wait":1},
   {"click":[610,466],"fill":"password"},
+  {"resize":[320,844],"wait":1,"capture":".impeccable/review/v2-resume-expired-compact.png"},
+  {"click":[280,28],"wait":1,"verify_journal":"prepared","capture":".impeccable/review/v2-resume-expired-compact-en.png"},
+  {"resize":[1280,720],"click":[1240,28],"wait":1},
   {"click":[640,590],"wait":8,"verify_resume":true,"capture":".impeccable/review/v2-resume-expired-complete.png"}
 ]
