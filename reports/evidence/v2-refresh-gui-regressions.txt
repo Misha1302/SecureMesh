@@ -1,0 +1,37 @@
+UTC: 2026-11-19T08:23:11.706956+00:00
+Command: ['make', '-j1', 'gui-smoke', 'gui-pending-smoke', 'gui-onboarding-recovery']
+.local/venv/bin/python tests/gui/native_v2.py --script tests/gui/v2_scenario.json
+Owned native GUI ready.
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["resize", "wait", "capture"]}
+{"completed": ["resize", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["key", "fill"]}
+{"completed": ["key", "fill"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "key", "fill"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["click", "key", "fill"]}
+{"completed": ["click", "wait"]}
+Real GUI account and independent peer ready.
+{"completed": ["verify_account"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "capture"]}
+{"completed": ["click", "fill", "key"]}
+{"completed": ["click", "wait"]}
+Traceback (most recent call last):
+  File "/home/micodiy/SecureMesh/tests/gui/native_v2.py", line 209, in <module>
+    if __name__=='__main__':main()
+                            ~~~~^^
+  File "/home/micodiy/SecureMesh/tests/gui/native_v2.py", line 200, in main
+    for command in json.loads(Path(args.script).read_text()):print(json.dumps(gui.execute(command)),flush=True)
+                                                                              ~~~~~~~~~~~^^^^^^^^^
+  File "/home/micodiy/SecureMesh/tests/gui/native_v2.py", line 123, in execute
+    request=next(r for r in requests if r['senderDevice']==self.device.identity)
+StopIteration
+make: *** [Makefile:37: gui-smoke] Error 1
+
+Exit code: 2

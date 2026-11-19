@@ -1,0 +1,5 @@
+UTC: 2026-11-19T06:00:45.507242+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/delivery.py']
+PASS: verified email + one-use token; Argon2 login; independent Ed25519 device proof; untrusted device denied; refresh rotation/reuse; real MLS HTTPS/WSS exchange; persistent offline queue; lost ACK/idempotent concurrent retries; digest/epoch conflict; encrypted receiver crash recovery; paginated scoped cursors; API restart; device revocation on active WSS; membership/IDOR denial; log secret checks; atomic message/outbox counts.
+
+Exit code: 0

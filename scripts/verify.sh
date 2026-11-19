@@ -41,6 +41,8 @@ if [[ -x .local/flutter/bin/flutter ]]; then
   check native-transport .local/venv/bin/python tests/integration/native_transport.py
   check native-session .local/venv/bin/python tests/integration/native_session.py
   check onboarding-recovery .local/venv/bin/python tests/integration/onboarding_recovery.py
+  check refresh-recovery .local/venv/bin/python tests/integration/refresh_recovery.py
+  check refresh-upgrade make refresh-upgrade
 else
   check flutter-sdk test -x .local/flutter/bin/flutter
 fi

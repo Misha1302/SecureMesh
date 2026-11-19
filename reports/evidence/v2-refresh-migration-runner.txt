@@ -1,0 +1,13 @@
+UTC: 2026-11-19T08:16:55.644300+00:00
+Command: ['dotnet', 'build', 'tests/migration_runner']
+  Determining projects to restore...
+  Restored /home/micodiy/SecureMesh/tests/migration_runner/MigrationRunner.csproj (in 159 ms).
+  MigrationRunner -> /home/micodiy/SecureMesh/tests/migration_runner/bin/Debug/net10.0/MigrationRunner.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:10.58
+
+Exit code: 0

@@ -1,0 +1,4 @@
+UTC: 2026-11-19T06:06:47.165671+00:00
+Command: ['bash', '-c', 'cd apps/client_flutter && PUB_CACHE="$PWD/../../.local/pub-cache" ../../.local/flutter/bin/dart pub deps --json > ../../reports/evidence/v2-pub-deps.json']
+
+Exit code: 0

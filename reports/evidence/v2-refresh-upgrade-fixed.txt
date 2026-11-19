@@ -1,0 +1,5 @@
+UTC: 2026-11-19T08:20:04.545313+00:00
+Command: ['.local/venv/bin/python', 'tests/integration/refresh_upgrade.py']
+PASS: real EF previous six-migration schema populated with owned legacy users/device keys/sessions, consented DM/bootstrap, ciphertext and outbox; additive migration seven preserves auth and MLS; actual pg_dump/isolated pg_restore plus separate refresh-key directory restore recovers exact signed refresh response and original recipient decrypts once. Media/full-system restore not covered.
+
+Exit code: 0

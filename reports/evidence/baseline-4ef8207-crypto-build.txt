@@ -1,0 +1,5 @@
+UTC: 2026-11-19T05:59:56.876329+00:00
+Command: ['cargo', 'build', '--locked', '--manifest-path', 'src/crypto_core/Cargo.toml']
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.41s
+
+Exit code: 0

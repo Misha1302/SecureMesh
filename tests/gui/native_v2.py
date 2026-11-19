@@ -120,7 +120,10 @@ class NativeGui:
             print('PASS: GUI created a real signed pending enrollment request; no approval or history access implied.',flush=True)
         if command.get('accept_peer'):
             requests=d.request('/v1/chat-requests',token=self.peer['session']['accessToken'])
-            request=next(r for r in requests if r['senderDevice']==self.device.identity)
+            request=next((r for r in requests if r['senderDevice']==self.device.identity),None)
+            if request is None:
+                self.capture('.impeccable/review/v2-request-missing-fail.png')
+                raise AssertionError('GUI contact request did not reach independent recipient; see v2-request-missing-fail.png')
             self.peer['device'].pin(self.device)
             kp=self.peer['device'].call('keypackage')['keypackage']
             d.request('/v1/crypto/keypackages',dict(payload=kp),token=self.peer['session']['accessToken'],expected=201)

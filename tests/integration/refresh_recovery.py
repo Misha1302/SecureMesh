@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Native session recovery after actual refresh COMMIT and owned SIGKILL."""
 import argparse
+import concurrent.futures
 import base64
 import hashlib
 import urllib.error
@@ -243,6 +244,27 @@ def main():
             assert ld.call('identity')==lid
             assert sql(f"SELECT count(*) FROM devices WHERE user_id='{adopted['userId']}'")=='1'
             print('PASS: legacy completed profile adopts missing account labels only after same-key ownership/login; another valid account rejected; no replacement identity.',flush=True)
+
+            candidate=d.Device(root)
+            challenge=post('/v1/auth/challenge',dict(username=legacy['username'],deviceId=candidate.identity))
+            pending=post('/v1/auth/login',dict(username=legacy['username'],password=legacy['password'],deviceId=candidate.identity,publicKey=candidate.public,challengeId=challenge['challengeId'],signature=candidate.call('sign',payload=challenge['payload'])['signature'],deviceBoundRefresh=True))
+            assert pending['refreshBinding']=='device-signature-v1' and pending['trustState']=='DEVICE_PENDING_TRUST'
+            post('/v1/auth/refresh',dict(token=pending['refreshToken']),expected=401)
+            candidate.call('profile_put',profile={**pending,'endpoint':proxy.endpoint})
+            proof=candidate.call('refresh_prepare',endpoint=proxy.endpoint)['request']
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+                results=list(pool.map(lambda _:post('/v1/auth/refresh/device',proof),range(6)))
+            assert len({r['accessToken'] for r in results})==1
+            assert len({r['refreshToken'] for r in results})==1
+            assert all(r['trustState']=='DEVICE_PENDING_TRUST' for r in results)
+            assert sql(f"SELECT count(*) FROM sessions WHERE device_id='{candidate.identity}'")=='2'
+            assert sql(f"SELECT count(*) FROM refresh_rotations WHERE device_id='{candidate.identity}'")=='1'
+            post('/v1/users/me',token=results[0]['accessToken'])
+            post('/v1/conversations',token=results[0]['accessToken'],expected=403)
+            post('/v1/auth/logout',token=results[0]['accessToken'],expected=204)
+            post('/v1/auth/refresh/device',proof,expected=401)
+            post('/v1/users/me',token=results[0]['accessToken'],expected=401)
+            print('PASS: device-bound login denies bearer downgrade immediately; six concurrent exact signed retries create one successor/ledger row; pending candidate remains account-only, private conversations denied.',flush=True)
         finally:
             proxy.release.set()
             for child in children:
