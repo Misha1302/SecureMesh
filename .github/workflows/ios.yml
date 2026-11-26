@@ -34,7 +34,7 @@ jobs:
           ditto build/ios/iphoneos/Runner.app "$RUNNER_TEMP/package/Payload/Runner.app"
           cd "$RUNNER_TEMP/package"
           xcrun vtool -show-build Payload/Runner.app/Runner | grep -w IOS
-          lipo -verify_arch arm64 Payload/Runner.app/Runner
+          lipo Payload/Runner.app/Runner -verify_arch arm64
           nm -gU Payload/Runner.app/Runner > "$RUNNER_TEMP/symbols.txt"
           grep -q ' _frbgen_securemesh_client_' "$RUNNER_TEMP/symbols.txt"
           grep -q ' _frb_get_rust_content_hash$' "$RUNNER_TEMP/symbols.txt"
