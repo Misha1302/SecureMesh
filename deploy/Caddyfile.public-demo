@@ -1,0 +1,66 @@
+securemesh.90-156-230-119.sslip.io {
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Cache-Control no-store
+	}
+	@guide {
+		method GET HEAD
+		path /
+		header Accept *text/html*
+	}
+	handle @guide {
+		header Content-Type "text/html; charset=utf-8"
+		header Vary Accept
+		respond `<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как подключиться к SecureMesh</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f9f8;color:#172824;font:1rem/1.55 system-ui,sans-serif}
+main{max-width:42rem;margin:auto;padding:clamp(1rem,5vw,3rem)}header{color:#16685b;font-weight:700}
+h1,h2{line-height:1.2;text-wrap:balance}h1{font-size:clamp(2rem,6vw,3rem);margin:.8em 0 .3em}
+h2{font-size:1.25rem;margin:1.75em 0 .5em}p,dd{margin:.25em 0 1em}
+code{display:block;background:#e4f1ed;padding:.85rem 1rem;border-radius:.5rem;overflow-wrap:anywhere;user-select:all;font-size:1rem}
+dt{font-weight:650}dd{color:#374c46}a{color:#105c50;text-underline-offset:.2em}a:focus-visible{outline:3px solid #167969;outline-offset:3px}
+</style></head><body><main><header>SecureMesh · Демосервер</header>
+<h1>Как подключиться</h1>
+<p>Откройте приложение SecureMesh и нажмите «Создать аккаунт или войти». Если вы уже зарегистрированы, выберите «Уже есть аккаунт».</p>
+<h2>Адрес сервера</h2><p>Скопируйте этот адрес в поле «Сервер HTTPS» приложения.</p>
+<code>https://securemesh.90-156-230-119.sslip.io</code>
+<h2>Что вводить в поля</h2>
+<dl><dt>Имя пользователя</dt><dd>Например, marina_24. При регистрации придумайте имя длиной от 3 до 32 символов. Подойдут строчные латинские буквы, цифры и знак подчёркивания. При входе укажите своё зарегистрированное имя.</dd>
+<dt>Электронная почта</dt><dd>На этом демосервере оставьте поле пустым. Для регистрации достаточно имени и пароля.</dd>
+<dt>Пароль аккаунта</dt><dd>При регистрации придумайте пароль длиной от 12 до 256 символов и сохраните его. При входе введите тот же пароль.</dd>
+<dt>Пароль локального хранилища</dt><dd>При первой настройке на устройстве придумайте отдельную фразу длиной от 16 до 256 символов. Она открывает зашифрованную переписку на этом устройстве. Сохраните её в надёжном месте.</dd></dl>
+<a href="/health/ready">Проверить доступность сервера</a></main></body></html>`
+	}
+	@landing path /
+	handle @landing {
+		header Vary Accept
+		header Content-Type application/json
+		respond `{"service":"SecureMesh","environment":"demo","productionApproved":false}`
+	}
+	@api path /v1/* /health/live /health/ready
+	handle @api {
+		reverse_proxy https://127.0.0.1:5088 {
+			header_up Host localhost
+			header_up X-SecureMesh-Public-Demo 1
+			transport http {
+				tls_trusted_ca_certs /etc/caddy/securemesh-upstream.pem
+				tls_server_name localhost
+			}
+			@internal_error status 5xx
+			handle_response @internal_error {
+				header Content-Type application/json
+				respond `{"code":"SERVICE_UNAVAILABLE"}` {rp.status_code}
+			}
+		}
+	}
+	handle {
+		respond 404
+	}
+	handle_errors {
+		header Content-Type application/json
+		respond `{"code":"SERVICE_UNAVAILABLE"}` {err.status_code}
+	}
+}

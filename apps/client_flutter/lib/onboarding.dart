@@ -257,6 +257,8 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   Widget field(
     TextEditingController controller,
     String label, {
+    String? help,
+    String? example,
     bool secret = false,
     int min = 1,
     int max = 256,
@@ -275,6 +277,10 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       keyboardType: keyboard,
       decoration: InputDecoration(
         labelText: label,
+        helperText: help,
+        helperMaxLines: 8,
+        errorMaxLines: 5,
+        hintText: example,
         border: const OutlineInputBorder(),
       ),
       validator: (v) {
@@ -283,6 +289,21 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
             'Введите от $min до $max символов.',
             'Enter $min–$max characters.',
           );
+        }
+        if (controller == endpoint) {
+          final uri = Uri.tryParse(v.trim());
+          if (uri == null ||
+              uri.scheme != 'https' ||
+              uri.host.isEmpty ||
+              uri.userInfo.isNotEmpty ||
+              uri.hasQuery ||
+              uri.hasFragment ||
+              (uri.path.isNotEmpty && uri.path != '/')) {
+            return tr(
+              'Укажите HTTPS-адрес сервера без пути, например https://chat.example.org.',
+              'Enter the HTTPS server address without a path, for example https://chat.example.org.',
+            );
+          }
         }
         if (controller == username &&
             !RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(v)) {
@@ -360,12 +381,21 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                       field(
                         endpoint,
                         tr('Сервер HTTPS', 'HTTPS server'),
+                        help: tr(
+                          'Введите https:// и имя сервера, без пути /health/ready или /v1.',
+                          'Enter https:// and the server name. Leave off paths such as /health/ready or /v1.',
+                        ),
                         keyboard: TextInputType.url,
                       ),
                       if (step != 1)
                         field(
                           username,
                           tr('Имя пользователя', 'Username'),
+                          help: tr(
+                            'От 3 до 32 символов: строчные латинские буквы, цифры и знак _.',
+                            'Use 3–32 lowercase letters (a–z), digits or underscores.',
+                          ),
+                          example: 'marina_24',
                           min: 3,
                           max: 32,
                         ),
@@ -373,6 +403,10 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                         field(
                           email,
                           tr('Электронная почта', 'Email'),
+                          help: tr(
+                            'Укажите почту, на которую придёт код подтверждения.',
+                            'Enter the email address where you will receive your verification code.',
+                          ),
                           max: 254,
                           keyboard: TextInputType.emailAddress,
                         ),
@@ -380,6 +414,15 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                         field(
                           password,
                           tr('Пароль аккаунта', 'Account password'),
+                          help: step == 0
+                              ? tr(
+                                  'Придумайте пароль длиной от 12 до 256 символов.',
+                                  'Choose a password of 12–256 characters.',
+                                )
+                              : tr(
+                                  'Введите пароль, который указали при регистрации.',
+                                  'Enter the password you chose at registration.',
+                                ),
                           secret: true,
                           min: 12,
                         ),
@@ -387,6 +430,10 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                         field(
                           verification,
                           tr('Код из письма', 'Email verification code'),
+                          help: tr(
+                            'Скопируйте код целиком из письма SecureMesh.',
+                            'Paste the entire code from the SecureMesh email.',
+                          ),
                           secret: true,
                           max: 128,
                         ),
@@ -397,16 +444,13 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                             'Пароль локального хранилища',
                             'Local store passphrase',
                           ),
+                          help: tr(
+                            'Придумайте отдельную фразу длиной от 16 до 256 символов. Сохраните её, чтобы открывать переписку на этом устройстве.',
+                            'Choose a separate passphrase of 16–256 characters. Keep it to unlock your chats on this device.',
+                          ),
                           secret: true,
                           min: 16,
                         ),
-                        Text(
-                          tr(
-                            'Этот пароль не отправляется серверу. Сохраните его: он нужен для открытия ключей на этом устройстве.',
-                            'This passphrase is never sent to the server. Keep it: you need it to unlock keys on this device.',
-                          ),
-                        ),
-                        const SizedBox(height: 20),
                       ],
                       if (error != null)
                         Semantics(
