@@ -1,5 +1,0 @@
-UTC: 2026-11-18T02:34:52.675070+00:00
-Command: ['.local/venv/bin/python', 'tests/chaos-2g/run.py', '--profile', 'gprs', '--seeds', '7', '--count', '10']
-{"profile": "gprs", "seed": 7, "messages_each_direction": 10, "rate_kbps_each_direction": 20, "rtt_ms": 1500, "packet_loss_percent": 3, "elapsed_seconds": 13.799527926021256, "delivery_p50": 2.5101745170541108, "delivery_p95": 3.2974140910664573, "delivery_p99": 3.300140836974606, "application_frame_bytes_p50": 741, "application_frame_bytes_p95": 1069, "duplicates": 0, "losses": 0, "code_head": "bce73c9a8f6e6bb170f1f89f3e3eff2ea6d96636"}
-
-Exit code: 0

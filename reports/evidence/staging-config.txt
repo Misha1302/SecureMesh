@@ -1,4 +1,0 @@
-UTC: 2026-11-18T03:24:37.730943+00:00
-Command: ['bash', '-c', 'SECUREMESH_API_IMAGE=securemesh-api:unbuilt SECUREMESH_RUNTIME_ENV_FILE="$PWD/.env" SECUREMESH_DATABASE_PASSWORD_FILE="$PWD/.env" docker compose -f deploy/compose.staging.yaml config --quiet']
-
-Exit code: 0

@@ -1,5 +1,0 @@
-UTC: 2026-11-18T03:28:34.362000+00:00
-Command: ['.local/venv/bin/python', '-c', 'import ssl,urllib.request,json,time; context=ssl.create_default_context(cafile=".local/tls.pem"); result=None\nfor attempt in range(100):\n try:\n  with urllib.request.urlopen("https://127.0.0.1:5088/health/ready",context=context,timeout=1) as response: result=json.load(response)\n  break\n except OSError: time.sleep(.1)\nassert result is not None and result["status"]=="ready"; print("PASS: demo loopback TLS API reaches readiness with real PostgreSQL")']
-PASS: demo loopback TLS API reaches readiness with real PostgreSQL
-
-Exit code: 0

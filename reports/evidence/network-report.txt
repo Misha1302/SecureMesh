@@ -1,5 +1,0 @@
-UTC: 2026-11-19T06:09:50.407886+00:00
-Command: ['python3', 'scripts/render_network_report.py']
-Rendered 6 completed full-size network trials; missing trials are not synthesized.
-
-Exit code: 0

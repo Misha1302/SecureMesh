@@ -1,6 +1,0 @@
-UTC: 2026-11-18T23:08:05.515920+00:00
-Command: ['python3', 'scripts/check_v2_completion.py']
-V2 functional scenarios not PASS: 18; V2-02:NOT_RUN, V2-03:NOT_RUN, V2-04:NOT_RUN, V2-05:NOT_RUN, V2-06:NOT_RUN, V2-07:NOT_RUN, V2-08:NOT_RUN, V2-09:NOT_RUN, V2-10:NOT_RUN, V2-11:NOT_RUN, V2-12:NOT_RUN, V2-13:NOT_RUN, V2-14:NOT_RUN, V2-15:NOT_RUN, V2-16:NOT_RUN, V2-17:NOT_RUN, V2-18:NOT_RUN, V2-19:NOT_RUN
-Independent audit/owner public launch gate: BLOCKED. PRODUCTION_APPROVED=false.
-
-Exit code: 1

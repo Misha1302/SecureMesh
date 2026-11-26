@@ -1,5 +1,0 @@
-UTC: 2026-11-18T20:19:28.960984+00:00
-Command: ['.local/venv/bin/python', 'tests/integration/enrollment.py']
-PASS: pending login isolation; independent device keys; signed owner/key-bound enrollment; client pinned approver; explicit confirmation; invalid proof/substitution/account mismatch/replay/expiry/cross-account/self-approval/race/revoked-approver denied; no automatic MLS/history access. QR camera/UI and MLS enrollment/rekey still unimplemented.
-
-Exit code: 0

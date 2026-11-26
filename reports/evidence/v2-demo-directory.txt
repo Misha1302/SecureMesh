@@ -1,5 +1,0 @@
-UTC: 2026-11-18T23:11:28.874523+00:00
-Command: ['.local/venv/bin/python', 'tests/integration/demo_directory.py']
-PASS: actual make demo process validates real KeyPackage, routes signed Welcome, commits encrypted message and original recipient decrypts via TLS/PG; no test Server cwd assumption.
-
-Exit code: 0

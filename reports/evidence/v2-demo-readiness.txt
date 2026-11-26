@@ -1,5 +1,0 @@
-UTC: 2026-11-18T23:08:55.527088+00:00
-Command: ['python3', '-c', 'import ssl,time,urllib.request; c=ssl.create_default_context(cafile=".local/tls.pem"); ready=False\nfor attempt in range(60):\n try:\n  with urllib.request.urlopen("https://127.0.0.1:5088/health/ready",context=c,timeout=2) as response:\n   assert response.status==200; print(response.read().decode()); ready=True; break\n except OSError: time.sleep(.5)\nassert ready,"Local make demo did not become TLS-ready"']
-{"status":"ready"}
-
-Exit code: 0

@@ -1,6 +1,0 @@
-UTC: 2026-11-19T05:34:11.849155+00:00
-Command: ['env', 'FLUTTER_SUPPRESS_ANALYTICS=true', 'PUB_CACHE=/home/micodiy/SecureMesh/.local/pub-cache', '.local/flutter/bin/flutter', 'analyze', '--no-pub', 'apps/client_flutter']
-Analyzing client_flutter...                                     
-No issues found! (ran in 6.4s)
-
-Exit code: 0

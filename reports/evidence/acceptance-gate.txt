@@ -1,5 +1,0 @@
-UTC: 2026-11-19T06:09:50.825824+00:00
-Command: ['python3', 'tools/check_completion.py']
-Completion NOT REACHED: 24 P0/P1 tests not PASS; examples: AT-001:NOT_RUN, AT-006:NOT_RUN, AT-009:NOT_RUN, AT-013:NOT_RUN, AT-017:NOT_RUN, AT-018:NOT_RUN, AT-019:NOT_RUN, AT-020:NOT_RUN
-
-Exit code: 1

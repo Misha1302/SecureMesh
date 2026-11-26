@@ -1,6 +1,0 @@
-UTC: 2026-11-18T23:15:14.805680+00:00
-Command: ['python3', 'tools/verify_bundle.py']
-SecureMesh brief verification OK — 24 files SHA-256 verified; 40 acceptance tests initialized NOT_RUN.
-NOTE: This verifies DOCUMENT INTEGRITY ONLY; app and security tests not performed.
-
-Exit code: 0

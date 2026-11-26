@@ -1,6 +1,0 @@
-UTC: 2026-11-19T06:08:07.552582+00:00
-Command: ['.local/venv/bin/python', 'tests/integration/native_session.py']
-PASS: eight actual concurrent Dart API calls share one rotating refresh; new tokens persisted in SQLCipher before use; closed session denied.
-PostgreSQL confirms one rotation and no refresh-family reuse revocation.
-
-Exit code: 0

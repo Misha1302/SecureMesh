@@ -1,7 +1,0 @@
-platform,target,priority,crypto,status,evidence
-Android,Flutter-native,P0,OpenMLS-Rust-FFI,NOT_RUN,
-Linux,Flutter-desktop,P0,OpenMLS-Rust-FFI,NOT_RUN,
-Web,Flutter-web,P1,OpenMLS-Rust-WASM-or-public-only,NOT_RUN,
-iOS,Flutter-native,P1,OpenMLS-Rust-FFI,NOT_RUN,
-Windows,Flutter-desktop,P1,OpenMLS-Rust-FFI,NOT_RUN,
-macOS,Flutter-desktop,P1,OpenMLS-Rust-FFI,NOT_RUN,

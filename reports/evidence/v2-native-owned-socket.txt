@@ -1,8 +1,0 @@
-UTC: 2026-11-18T22:26:03.598998+00:00
-Command: ['.local/venv/bin/python', 'tests/integration/native_transport.py']
-PASS: actual native Dart WSS/protobuf + Rust/OpenMLS/SQLCipher + TLS API/PG; production delivery cycle pipelines three immutable sends with sync and bounded receipts; half-open/blocked HTTPS fallback; lost ACK idempotence; WSS recovery; malformed ACK denied with outbox retained; paginated decrypt/cursors; both clients contain all 11 IDs once. Not a GUI or GPRS timing run.
-Fault proxy dropped real TLS-decoded transport bytes: 562
-PASS: native child terminated within 45 seconds including lost close frames; no hanging process accepted as success.
-Fault proxy observed modes: ['blocked', 'halfopen', 'lostack', 'malformed', 'pass']
-
-Exit code: 0

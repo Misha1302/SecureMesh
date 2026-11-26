@@ -1,5 +1,0 @@
-UTC: 2026-11-18T22:30:04.110831+00:00
-Command: ['python3', 'tools/inventory_pub_licenses.py']
-Retained actual license text for 55/55 hosted Pub packages. SPDX/legal compatibility review remains incomplete.
-
-Exit code: 0

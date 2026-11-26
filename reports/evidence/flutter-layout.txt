@@ -1,9 +1,0 @@
-UTC: 2026-11-19T06:07:04.926169+00:00
-Command: ['bash', '-c', 'cd apps/client_flutter && FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$(pwd)/../../.local/pub-cache" ../../.local/flutter/bin/flutter test --no-pub test']
-00:00 +0: loading /home/micodiy/SecureMesh/apps/client_flutter/test/layout_test.dart
-00:00 +0: registration and login fit 320 dp, support EN and reject empty inputs before network
-00:03 +1: native unlock remains usable at 320 dp with enlarged text
-00:03 +2: browser explicitly gates private chat at compact width
-00:03 +3: All tests passed!
-
-Exit code: 0
