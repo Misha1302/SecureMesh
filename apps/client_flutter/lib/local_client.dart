@@ -9,10 +9,12 @@ import 'transport.dart';
 Future<void>? _bridge;
 Future<void> initializeNativeBridge() async {
   final pending = _bridge ??= RustLib.init(
-    externalLibrary: ExternalLibrary.open(
-      Platform.environment['SECUREMESH_CRYPTO_LIB'] ??
-          '../../src/crypto_core/target/debug/libsecuremesh_crypto.so',
-    ),
+    externalLibrary: Platform.isIOS
+        ? ExternalLibrary.process(iKnowHowToUseIt: true)
+        : ExternalLibrary.open(
+            Platform.environment['SECUREMESH_CRYPTO_LIB'] ??
+                '../../src/crypto_core/target/debug/libsecuremesh_crypto.so',
+          ),
   );
   try {
     await pending;

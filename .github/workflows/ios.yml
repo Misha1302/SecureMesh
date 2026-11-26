@@ -1,0 +1,50 @@
+name: iPhone alpha
+on:
+  push:
+    branches: [release/ios-alpha-261127]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  iphone:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.50.0
+          channel: stable
+          cache: true
+      - name: Compile native encryption library for iPhone
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.93.1 --profile minimal --target aarch64-apple-ios
+          cd src/crypto_core
+          IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo +1.93.1 rustc --locked --release --lib --target aarch64-apple-ios --crate-type staticlib
+      - name: Build and inspect device IPA
+        working-directory: apps/client_flutter
+        run: |
+          set -euo pipefail
+          flutter pub get --enforce-lockfile
+          flutter build ios --release --no-codesign --no-pub
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          ditto build/ios/iphoneos/Runner.app "$RUNNER_TEMP/package/Payload/Runner.app"
+          cd "$RUNNER_TEMP/package"
+          xcrun vtool -show-build Payload/Runner.app/Runner | grep -w IOS
+          lipo -verify_arch arm64 Payload/Runner.app/Runner
+          nm -gU Payload/Runner.app/Runner > "$RUNNER_TEMP/symbols.txt"
+          grep -q ' _frbgen_securemesh_client_' "$RUNNER_TEMP/symbols.txt"
+          grep -q ' _frb_get_rust_content_hash$' "$RUNNER_TEMP/symbols.txt"
+          ditto -c -k --keepParent Payload SecureMesh-iPhone-arm64-unsigned.ipa
+          unzip -tq SecureMesh-iPhone-arm64-unsigned.ipa
+          shasum -a 256 *.ipa > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone-alpha
+          path: |
+            ${{ runner.temp }}/package/*.ipa
+            ${{ runner.temp }}/package/SHA256SUMS
+          if-no-files-found: error

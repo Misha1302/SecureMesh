@@ -1,0 +1,6 @@
+SECUREMESH_RUST_TARGET[sdk=iphoneos*] = aarch64-apple-ios
+SECUREMESH_RUST_TARGET[sdk=iphonesimulator*] = aarch64-apple-ios-sim
+SECUREMESH_ARCHIVE = $(SRCROOT)/../../../src/crypto_core/target/$(SECUREMESH_RUST_TARGET)/release/libsecuremesh_crypto.a
+OTHER_LDFLAGS = $(inherited) -force_load "$(SECUREMESH_ARCHIVE)" -Wl,-export_dynamic -framework Security -framework SystemConfiguration -lc++ -lz
+DEAD_CODE_STRIPPING = NO
+STRIP_STYLE = debugging
