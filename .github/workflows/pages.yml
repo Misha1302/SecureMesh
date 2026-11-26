@@ -1,0 +1,48 @@
+name: Publish SecureMesh guide
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          sparse-checkout: site
+          persist-credentials: false
+      - name: Verify public file list
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$(printf '100644 blob .nojekyll\n100644 blob index.html')
+          actual=$(git ls-tree --format='%(objectmode) %(objecttype) %(path)' HEAD:site)
+          [[ "$actual" == "$expected" ]]
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+          include-hidden-files: true
+  deploy:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
