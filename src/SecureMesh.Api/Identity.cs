@@ -17,7 +17,7 @@ public static class Identity
     private static readonly string DummyPhc = Passwords.Hash(Sql.Token()).GetAwaiter().GetResult();
     public static void MapIdentity(this WebApplication app)
     {
-        app.MapPost("/v1/auth/register", async (Registration input, NpgsqlDataSource db) =>
+        app.MapPost("/v1/auth/register", async (Registration input, NpgsqlDataSource db, VerificationEmail email, CancellationToken cancellationToken) =>
         {
             var username = input.Username.ToLowerInvariant();
             if (!Regex.IsMatch(username, "^[a-z0-9_]{3,32}$") || input.Email.Length > 254 || input.Password.Length is < 12 or > 256 || !MailAddress.TryCreate(input.Email, out var mail) || mail.Address != input.Email)
@@ -34,10 +34,7 @@ public static class Identity
                 await verify.ExecuteNonQueryAsync();
             }
             catch (PostgresException e) when (e.SqlState == "23505") { return Results.Accepted(); }
-            // Hard-coded loopback development sink; never sends to an external mail relay.
-            using var smtp = new SmtpClient("127.0.0.1", 51028);
-            using var message = new MailMessage("no-reply@securemesh.test", input.Email, "SecureMesh verification", token);
-            await smtp.SendMailAsync(message);
+            await email.SendAsync(input.Email, token, cancellationToken);
             await tx.CommitAsync();
             return Results.Accepted();
         });
