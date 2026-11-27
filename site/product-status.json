@@ -1,47 +1,11 @@
 {
-  "updated": "27.11.2026",
+  "updated": "28.11.2026",
   "version": "0.1.0 · iPhone alpha 1",
   "releaseUrl": "https://github.com/Misha1302/SecureMesh/releases/tag/v0.1.0-ios-alpha.1",
   "releaseCommit": "15695667be182e0e7c7b1856b4d7966304b67489",
   "releaseCI": "https://github.com/Misha1302/SecureMesh/actions/runs/45909648698",
   "productionApproved": false,
   "platforms": [
-    {
-      "name": "Android",
-      "status": "experimental",
-      "label": "APK для испытаний",
-      "detail": "На Xiaomi с Android 15 проверены регистрация и вход на тестовом сервере. На эмуляторе Android и компьютере Linux проверен двусторонний обмен текстом и файлами. APK имеет тестовую подпись.",
-      "links": [
-        {
-          "label": "Проверка обмена",
-          "url": "https://github.com/Misha1302/SecureMesh/actions/runs/45965981253/job/140402816829"
-        }
-      ]
-    },
-    {
-      "name": "Linux",
-      "status": "experimental",
-      "label": "Тестовый клиент",
-      "detail": "Есть лабораторные GUI и сетевые испытания. Публичного установщика в Releases пока нет.",
-      "links": [
-        {
-          "label": "Сборка из исходников",
-          "url": "#linux-build"
-        }
-      ]
-    },
-    {
-      "name": "Windows",
-      "status": "experimental",
-      "label": "Тестовая сборка x64",
-      "detail": "Архив содержит клиент Windows и нативную библиотеку. Для запуска распакуйте весь архив. Полная приёмка переписки на Windows продолжается.",
-      "links": [
-        {
-          "label": "Сборка платформ",
-          "url": "https://github.com/Misha1302/SecureMesh/blob/modernization-integration/docs/PLATFORM_RELEASE_RU.md"
-        }
-      ]
-    },
     {
       "name": "iPhone / iOS 15+",
       "status": "experimental",
@@ -59,11 +23,56 @@
       ]
     },
     {
+      "name": "Linux",
+      "status": "experimental",
+      "label": "Тестовый клиент",
+      "detail": "Есть лабораторные GUI и сетевые испытания. Публичного установщика в Releases пока нет.",
+      "links": [
+        {
+          "label": "Сборка из исходников",
+          "url": "#linux-build"
+        }
+      ]
+    },
+    {
+      "name": "Android",
+      "status": "experimental",
+      "label": "Лабораторный APK · кандидат",
+      "detail": "На Xiaomi с Android 15 проверены регистрация и вход. Текст и файлы передавались между эмулятором и Linux. Для испытаний собран APK с тестовой подписью.",
+      "links": [
+        {
+          "label": "Проверка и ограничения",
+          "url": "https://github.com/Misha1302/SecureMesh/blob/6f57d7f05eb1c2a96deb3a9a7b4e1e4d3887a913/docs/PLATFORM_RELEASE_RU.md"
+        },
+        {
+          "label": "Проверка обмена",
+          "url": "https://github.com/Misha1302/SecureMesh/actions/runs/45965981253/job/140402816829"
+        }
+      ]
+    },
+    {
+      "name": "Windows",
+      "status": "experimental",
+      "label": "CI-сборка x64 · кандидат",
+      "detail": "Нативный пакет собирается; полная приёмка переписки и установщик не подтверждены.",
+      "links": [
+        {
+          "label": "Инструкция сборки",
+          "url": "https://github.com/Misha1302/SecureMesh/blob/6f57d7f05eb1c2a96deb3a9a7b4e1e4d3887a913/docs/PLATFORM_RELEASE_RU.md"
+        }
+      ]
+    },
+    {
       "name": "Браузер",
-      "status": "development",
-      "label": "Приватные чаты недоступны",
-      "detail": "Необходима отдельная проверка браузерного криптографического ядра.",
-      "links": []
+      "status": "experimental",
+      "label": "Лабораторный PWA для iPhone",
+      "detail": "Кандидат для личных текстовых диалогов один на один. В Chromium проверены локальный профиль и запуск без сети. Обмен между WASM и нативным ядром проверен отдельно. Публичного веб-адреса для переписки пока нет. Приёмка на физическом iPhone и независимый аудит остаются открытыми.",
+      "links": [
+        {
+          "label": "Статус кандидата и исходники",
+          "url": "https://github.com/Misha1302/SecureMesh/pull/3"
+        }
+      ]
     }
   ],
   "features": [
@@ -81,6 +90,16 @@
       "name": "Медленные сети",
       "status": "experimental",
       "detail": "Исторические лабораторные испытания GPRS; результаты не распространяются автоматически на iOS."
+    },
+    {
+      "name": "Синхронизация истории между устройствами",
+      "status": "development",
+      "detail": "Есть механизм доверия устройств, но перенос истории и полноценный multi-device MLS не завершены."
+    },
+    {
+      "name": "Модернизированный клиент",
+      "status": "development",
+      "detail": "Отдельный PR #3: файлы и фото до 4 МиБ, голосовые, видеосообщения, текстовые каналы, обновлённый интерфейс, QR и экспериментальные звонки. Это не функции опубликованной iPhone IPA."
     },
     {
       "name": "Файлы и фото в личных сообщениях",
@@ -101,14 +120,19 @@
       "name": "Приватные группы и медиа в каналах",
       "status": "planned",
       "detail": "Полный пользовательский сценарий создания приватной группы и публикации медиа в канале остаётся в разработке."
-    },
-    {
-      "name": "Синхронизация истории между устройствами",
-      "status": "development",
-      "detail": "Есть механизм доверия устройств, но перенос истории и полноценный multi-device MLS не завершены."
     }
   ],
   "changes": [
+    {
+      "date": "28.11.2026",
+      "title": "Браузерный клиент для испытаний",
+      "detail": "Подготовлен отдельный пакет PWA с локальным профилем, запуском без сети и экспериментальной личной перепиской. Пакет предназначен для лабораторного стенда."
+    },
+    {
+      "date": "27.11.2026",
+      "title": "Интеграционный кандидат",
+      "detail": "Переработка UX, медиа, каналы, обновление OpenMLS/SQLCipher и платформенные сборки. PR #3 не включён в публичный релиз."
+    },
     {
       "date": "27.11.2026",
       "title": "iPhone alpha 1",
