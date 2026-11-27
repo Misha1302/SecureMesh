@@ -10,6 +10,8 @@ add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "clipboard_photo.cpp"
   "file_drop.cpp"
+  "profile_credential.cpp"
+  "profile_credential_channel.cpp"
   "main.cpp"
   "utils.cpp"
   "win32_window.cpp"
@@ -35,8 +37,16 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
-target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "shell32.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "shell32.lib" "advapi32.lib" "crypt32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+add_executable(profile_credential_smoke EXCLUDE_FROM_ALL
+  "../test/profile_credential_smoke.cpp"
+  "profile_credential.cpp")
+apply_standard_settings(profile_credential_smoke)
+target_include_directories(profile_credential_smoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(profile_credential_smoke PRIVATE advapi32 crypt32 ole32)
+set_target_properties(profile_credential_smoke PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/credential-tests")

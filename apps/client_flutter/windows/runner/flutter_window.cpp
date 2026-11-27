@@ -1,6 +1,7 @@
 #include "flutter_window.h"
 #include "clipboard_photo.h"
 #include "file_drop.h"
+#include "profile_credential_channel.h"
 
 #include <optional>
 
@@ -28,6 +29,7 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   RegisterClipboardPhoto(flutter_controller_->engine()->messenger(), GetHandle());
+  RegisterProfileCredential(flutter_controller_->engine()->messenger());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
   DragAcceptFiles(GetHandle(), TRUE);
 

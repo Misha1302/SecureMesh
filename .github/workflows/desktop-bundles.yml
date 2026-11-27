@@ -41,6 +41,15 @@ jobs:
         run: flutter test --no-pub
       - working-directory: apps/client_flutter
         run: flutter build ${{ matrix.target }} --release --no-pub
+      - name: Save, read and forget independent Windows profile credentials
+        if: runner.os == 'Windows'
+        working-directory: apps/client_flutter
+        shell: pwsh
+        run: |
+          cmake --build build/windows/x64 --config Release --target profile_credential_smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./build/windows/x64/credential-tests/Release/profile_credential_smoke.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Exercise packaged library through the Dart FFI bridge
         working-directory: apps/client_flutter
         shell: pwsh

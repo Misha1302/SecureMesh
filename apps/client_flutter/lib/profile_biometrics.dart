@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
-import 'linux_profile_keyring.dart';
+import 'desktop_profile_keyring.dart';
 
 const profileBiometrics = MethodChannel('securemesh/profile_biometrics');
 
@@ -14,13 +14,13 @@ class ProfileBiometricActions extends StatefulWidget {
     super.key,
     required this.path,
     required this.disabled,
-    this.linuxKeyring = false,
+    this.desktopKeyring = false,
     required this.russian,
     required this.perform,
   });
 
   final TextEditingController path;
-  final bool disabled, russian, linuxKeyring;
+  final bool disabled, russian, desktopKeyring;
   final Future<void> Function(BiometricAction) perform;
 
   @override
@@ -56,8 +56,8 @@ class _ProfileBiometricActionsState extends State<ProfileBiometricActions> {
     debounce = Timer(const Duration(milliseconds: 200), () async {
       String? value;
       try {
-        value = widget.linuxKeyring
-            ? await LinuxProfileKeyring.status(path)
+        value = widget.desktopKeyring
+            ? await DesktopProfileKeyring.status(path)
             : await profileBiometrics.invokeMethod<String>('status', {
                 'path': path,
               });
@@ -86,7 +86,7 @@ class _ProfileBiometricActionsState extends State<ProfileBiometricActions> {
     final enrolled = status == 'enrolled';
     return Column(
       children: [
-        if (widget.linuxKeyring && !enrolled)
+        if (widget.desktopKeyring && !enrolled)
           Text(
             widget.russian
                 ? 'Пароль профиля будет сохранён в системной связке ключей. В открытом сеансе рабочего стола он может быть доступен другим приложениям.'
@@ -105,9 +105,9 @@ class _ProfileBiometricActionsState extends State<ProfileBiometricActions> {
                 : () => run(
                     enrolled ? BiometricAction.unlock : BiometricAction.enable,
                   ),
-            icon: Icon(widget.linuxKeyring ? Icons.key : Icons.fingerprint),
+            icon: Icon(widget.desktopKeyring ? Icons.key : Icons.fingerprint),
             label: Text(
-              widget.linuxKeyring
+              widget.desktopKeyring
                   ? (enrolled
                         ? (widget.russian
                               ? 'Открыть связкой ключей'
@@ -130,7 +130,7 @@ class _ProfileBiometricActionsState extends State<ProfileBiometricActions> {
                 ? null
                 : () => run(BiometricAction.forget),
             child: Text(
-              widget.linuxKeyring
+              widget.desktopKeyring
                   ? (widget.russian
                         ? 'Удалить пароль из связки ключей'
                         : 'Remove passphrase from keyring')
