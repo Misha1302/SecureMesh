@@ -81,7 +81,7 @@ Future<void> main() async {
   a.dispose();
   b.dispose();
   stdout.writeln(
-    'PASS: Dart flutter_rust_bridge 2.13.0 calls native OpenMLS/SQLCipher; two stores, Welcome, Unicode decrypt, replay deny. This is a Linux Dart FFI check, not an Android or Flutter UI run.',
+    'PASS: Dart flutter_rust_bridge 2.13.0 calls native OpenMLS/SQLCipher; two stores, Welcome, Unicode decrypt, replay deny. Platform: ${Platform.operatingSystem}.',
   );
   RustLib.dispose();
 }

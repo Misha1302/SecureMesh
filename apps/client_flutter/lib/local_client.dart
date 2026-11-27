@@ -14,8 +14,9 @@ ExternalLibrary _nativeLibrary() {
   if (override != null && override.isNotEmpty) {
     return ExternalLibrary.open(override);
   }
-  if (Platform.isAndroid)
+  if (Platform.isAndroid) {
     return ExternalLibrary.open('libsecuremesh_crypto.so');
+  }
   final executable = File(Platform.resolvedExecutable).parent;
   if (Platform.isLinux) {
     return ExternalLibrary.open(

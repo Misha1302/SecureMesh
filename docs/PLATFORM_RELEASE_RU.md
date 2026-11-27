@@ -15,6 +15,10 @@
 3. Запустите `scripts/build-android-release.sh`. Gradle собирает библиотеку для arm64-v8a, armeabi-v7a и x86_64. Скрипт сверяет подпись APK и наличие трёх нативных библиотек для каждой архитектуры, затем выводит хеш. Результат находится в `apps/client_flutter/build/app/outputs/flutter-apk/app-release.apk`.
 4. Установите проверенный APK на телефон и выполните сценарии входа, записи в локальную базу, перезапуска и отправки через TLS. Лабораторный сертификат не даёт права заменить уже установленный клиент издателя.
 
+## Windows x64
+
+На Windows x64 со средствами сборки Visual Studio C++, CMake, Perl, Rust/MSVC и Flutter выполните `flutter build windows --release` из `apps/client_flutter`. Копируйте весь каталог `build/windows/x64/runner/Release`. Cargo собирает DLL для x86_64-pc-windows-msvc, CMake включает её рядом с exe. Запуск и установка требуют проверки на Windows. Подпись Authenticode в эту сборочную конфигурацию не входит.
+
 ## iOS
 
 Существующий отдельный тег `v0.1.0-ios-alpha.1` содержит проект Xcode и unsigned IPA. Проверка на телефоне требует подписи и подходящего provisioning profile. Эти результаты следует привязывать к точному тегу, отдельно от основной ветки.
