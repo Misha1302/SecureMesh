@@ -362,6 +362,14 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         border: const OutlineInputBorder(),
       ),
       validator: (v) {
+        if (controller == displayName) {
+          return peerDisplayName(v) == null
+              ? tr(
+                  'Введите имя длиной от 1 до 64 символов в одну строку.',
+                  'Enter a name of 1–64 characters on one line.',
+                )
+              : null;
+        }
         final length = legacy && controller == password
             ? v?.length
             : v?.characters.length;
@@ -372,15 +380,15 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
             (controller == password &&
                 !legacy &&
                 (utf8.encode(v).length > 4096 || v.contains('\u0000')))) {
+          if (controller == password) {
+            return tr(
+              'Пароль должен содержать от $min до $max символов.',
+              'Password must contain $min–$max characters.',
+            );
+          }
           return tr(
             'Введите от $min до $max символов.',
             'Enter $min–$max characters.',
-          );
-        }
-        if (controller == displayName && peerDisplayName(v) == null) {
-          return tr(
-            'Введите имя в одну строку.',
-            'Enter your name on one line.',
           );
         }
         if (controller == localPassword && v == password.text) {
@@ -532,7 +540,10 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                         field(
                           displayName,
                           tr('Имя в профиле', 'Name on profile'),
-                          max: 64,
+                          help: tr(
+                            'От 1 до 64 символов. Имя может совпадать с чужим.',
+                            'Use 1–64 characters. Other people can have the same name.',
+                          ),
                         ),
                       if (step == 0)
                         field(

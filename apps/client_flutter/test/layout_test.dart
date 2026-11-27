@@ -140,11 +140,17 @@ void main() {
           ),
         ),
       );
+      final name = find.widgetWithText(TextFormField, 'Name on profile');
+      for (final value in ['Я', '李', '👩‍🔬']) {
+        await tester.enterText(name, value);
+        expect(tester.state<FormFieldState<String>>(name).validate(), isTrue);
+      }
       final password = find.widgetWithText(TextFormField, 'Account password');
       await tester.ensureVisible(password);
       await tester.enterText(password, List.filled(15, '👩‍🔬').join());
       final reveal = find.byTooltip('Show');
       await tester.ensureVisible(reveal);
+      await tester.pumpAndSettle();
       await tester.tap(reveal);
       await tester.pumpAndSettle();
       expect(
@@ -166,7 +172,10 @@ void main() {
       await tester.ensureVisible(submit);
       await tester.tap(submit);
       await tester.pumpAndSettle();
-      expect(find.text('Enter 16–256 characters.'), findsOneWidget);
+      expect(
+        find.text('Password must contain 16–256 characters.'),
+        findsOneWidget,
+      );
     },
   );
   testWidgets(
