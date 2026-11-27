@@ -224,6 +224,37 @@ Future<void> main(List<String> args) async {
         'LOGICAL_DUP_OR_LOSS',
       );
     }
+    // Each device now has a persisted peer ACK. The production delivery cycle
+    // must relay it to the sender's store even when the sync page is empty.
+    for (var index = 0; index < stores.length; index++) {
+      final pump = NativeDelivery(
+        transport: transports[index],
+        crypto: (op, [args = const {}]) => crypto(stores[index], op, args),
+      );
+      try {
+        final elapsed = Stopwatch()..start();
+        while (true) {
+          await pump.tick(group);
+          final timeline =
+              (await crypto(stores[index], 'timeline', {
+                    'group': group,
+                  }))['messages']
+                  as List;
+          final authored = timeline.where((event) => event['own'] == true);
+          if (authored.isNotEmpty &&
+              authored.every((event) => event['status'] == 'delivered')) {
+            break;
+          }
+          require(
+            elapsed.elapsed < const Duration(seconds: 4),
+            'PEER_DELIVERY_RECEIPT_MISSING',
+          );
+        }
+        require(transports[index].mode == 'wss', 'RECEIPT_NOT_OVER_WSS');
+      } finally {
+        pump.close();
+      }
+    }
     // Close an active real WSS while the proxy drops close frames. The child
     // must still terminate; a cancelled raw reader used to leak CLOSE_WAIT.
     mode.writeAsStringSync('halfopen');
