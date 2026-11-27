@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'site/app/**'
+      - 'tests/pwa/**'
+      - 'src/SecureMesh.Api/**'
       - 'scripts/package-pwa.py'
       - 'src/browser_crypto/**'
       - 'src/crypto_core/src/server_credential.rs'
@@ -12,6 +14,8 @@ on:
     branches: [main]
     paths:
       - 'site/app/**'
+      - 'tests/pwa/**'
+      - 'src/SecureMesh.Api/**'
       - 'scripts/package-pwa.py'
       - 'src/browser_crypto/**'
       - 'src/crypto_core/src/server_credential.rs'
@@ -50,3 +54,31 @@ jobs:
           name: securemesh-pwa
           path: ${{ runner.temp }}/securemesh-pwa/
           if-no-files-found: error
+
+  browser-messaging:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build API and native MLS peer
+        run: |
+          dotnet build src/SecureMesh.Api -p:RestoreLockedMode=true
+          rustup toolchain install 1.100.0 --profile minimal
+          cargo +1.100.0 build --locked --manifest-path src/crypto_core/Cargo.toml
+      - name: Start local PostgreSQL, SMTP and browser fixtures
+        run: |
+          bash scripts/bootstrap.sh --services-only
+          .local/venv/bin/pip install playwright==1.57.0
+          .local/venv/bin/playwright install --with-deps chromium
+      - name: Verify browser accounts, encrypted storage, cross-platform MLS and offline delivery
+        run: |
+          node tests/pwa/account.mjs
+          node tests/pwa/messenger_transport.mjs
+          node src/browser_crypto/tests/interop.mjs
+          .local/venv/bin/python tests/pwa/vault_browser.py
+          .local/venv/bin/python tests/pwa/live_browser.py

@@ -111,6 +111,14 @@ def origins(directory, connection):
                             time.sleep(0.1)
                     else:
                         raise RuntimeError("The disposable API did not become ready")
+                    for origin, allowed in ((app_origin, True), ("https://unrelated.invalid", False)):
+                        preflight = urllib.request.Request(
+                            api_address + "/v1/users/me", method="OPTIONS",
+                            headers={"Origin": origin, "Access-Control-Request-Method": "GET",
+                                     "Access-Control-Request-Headers": "authorization"})
+                        with urllib.request.urlopen(preflight, context=api_tls, timeout=3) as response:
+                            assert response.headers.get("Access-Control-Allow-Origin") == (origin if allowed else None)
+                            assert response.headers.get("Access-Control-Allow-Credentials") is None
                     yield app_origin, api_port, pin
                 finally:
                     if process.poll() is None:
