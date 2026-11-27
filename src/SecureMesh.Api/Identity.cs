@@ -10,13 +10,14 @@ namespace SecureMesh;
 public sealed record Registration(string Username, string Email, string Password);
 public sealed record Verification(string Token);
 public sealed record Challenge(string Username, Guid DeviceId);
-public sealed record Login(string Username, string Password, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature);
+public sealed record Login(string Username, string Password, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, string? ClientOs = null);
 public sealed record Refresh(string Token);
 public static class Identity
 {
     private static readonly string DummyPhc = Passwords.Hash(Sql.Token()).GetAwaiter().GetResult();
     public static void MapIdentity(this WebApplication app)
     {
+        app.MapDeviceNames();
         app.MapPost("/v1/auth/register", async (Registration input, NpgsqlDataSource db, VerificationEmail email, CancellationToken cancellationToken) =>
         {
             var username = input.Username.ToLowerInvariant();
@@ -96,6 +97,10 @@ public static class Identity
                 await using var insert=Sql.Cmd(c,"INSERT INTO devices(id,user_id,public_key,trusted) VALUES($1,$2,$3,$4)",input.DeviceId,user,publicKey,first);
                 await insert.ExecuteNonQueryAsync();
             }
+            // OS is a bounded client assertion. Preserve the previous observation on legacy login.
+            var os = input.ClientOs is "android" or "ios" or "linux" or "windows" or "macos" ? input.ClientOs : "";
+            await using(var details=Sql.Cmd(c,"UPDATE devices SET last_login_at=now(),client_os=coalesce(NULLIF($1,''),client_os) WHERE id=$2",os,input.DeviceId))
+                await details.ExecuteNonQueryAsync();
             var result=await NewSession(c,input.DeviceId,Guid.NewGuid());
             await tx.CommitAsync();
             return Results.Ok(result);
@@ -155,16 +160,28 @@ public static class Identity
         app.MapGet("/v1/devices",async(HttpContext ctx,NpgsqlDataSource db)=>
         {
             var a=await Sql.Authenticate(ctx,db); await using var c=await db.OpenConnectionAsync();
-            await using var cmd=Sql.Cmd(c,"SELECT id,public_key,revoked,trusted FROM devices WHERE user_id=$1 ORDER BY created_at",a.UserId);
+            await using var cmd=Sql.Cmd(c,"""
+                SELECT d.id,d.public_key,d.revoked,d.trusted,d.created_at,d.last_login_at,d.client_os,d.device_name,
+                    NOT d.revoked AND EXISTS(SELECT 1 FROM sessions s WHERE s.device_id=d.id
+                      AND NOT s.used AND NOT s.revoked AND s.refresh_expires_at>now())
+                FROM devices d WHERE d.user_id=$1 ORDER BY (d.id=$2) DESC,d.created_at,d.id
+                """,a.UserId,a.DeviceId);
             await using var r=await cmd.ExecuteReaderAsync(); var devices=new List<object>();
-            while(await r.ReadAsync()) devices.Add(new {id=r.GetGuid(0),publicKey=Convert.ToBase64String((byte[])r[1]),revoked=r.GetBoolean(2),trustState=r.GetBoolean(3)?"DEVICE_TRUSTED":"DEVICE_PENDING_TRUST"});
+            while(await r.ReadAsync()) devices.Add(new {
+                id=r.GetGuid(0),publicKey=Convert.ToBase64String((byte[])r[1]),revoked=r.GetBoolean(2),
+                trustState=r.GetBoolean(3)?"DEVICE_TRUSTED":"DEVICE_PENDING_TRUST",
+                isCurrent=r.GetGuid(0)==a.DeviceId,createdAt=r.GetDateTime(4),
+                lastLoginAt=r.IsDBNull(5)?(DateTime?)null:r.GetDateTime(5),
+                clientOs=r.IsDBNull(6)?null:r.GetString(6),name=r.IsDBNull(7)?null:r.GetString(7),
+                hasRefreshableSession=r.GetBoolean(8)
+            });
             return Results.Ok(devices);
         });
         app.MapDelete("/v1/devices/{id:guid}",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
         {
             var a=await Sql.Authenticate(ctx,db); await using var c=await db.OpenConnectionAsync();
             await using var tx=await c.BeginTransactionAsync();
-            await using(var accountLock=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 FOR UPDATE",a.UserId)) await accountLock.ExecuteScalarAsync();
+            await Sql.LockTrustedProfileOwner(c,a,ctx.RequestAborted);
             await using var cmd=Sql.Cmd(c,"UPDATE devices SET revoked=true WHERE id=$1 AND user_id=$2",id,a.UserId);
             if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(404,"DEVICE_NOT_FOUND");
             await tx.CommitAsync(); return Results.NoContent();

@@ -146,6 +146,16 @@ String? peerPhotoRoute(Object? group, Object? version) {
   return '/v1/conversations/$group/photo/$version';
 }
 
+String? peerProfileTextRoute(Object? group, Object? device) {
+  if (group is! String ||
+      device is! String ||
+      !_uuid.hasMatch(group) ||
+      !_uuid.hasMatch(device)) {
+    return null;
+  }
+  return '/v1/conversations/$group/profile-text/$device';
+}
+
 class PeerAvatar extends StatefulWidget {
   const PeerAvatar({
     super.key,

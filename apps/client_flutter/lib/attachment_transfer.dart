@@ -68,6 +68,7 @@ class PrivateAttachments extends ChangeNotifier {
   bool busy = false;
   double? progress;
   String? status;
+  int selectionRemaining = 0;
   List<dynamic> pending = [];
   DateTime nextAttempt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _loaded = false;
@@ -127,6 +128,24 @@ class PrivateAttachments extends ChangeNotifier {
     final file = await pick();
     _active();
     if (file == null) return;
+    await _stageFile(file, '');
+  });
+
+  Future<void> stageSelection(
+    Future<({List<XFile> files, String caption})?> Function() pick,
+  ) => _run(() async {
+    final selection = await pick();
+    _active();
+    if (selection == null) return;
+    selectionRemaining = selection.files.length;
+    for (var i = 0; i < selection.files.length; i++) {
+      _active();
+      await _stageFile(selection.files[i], i == 0 ? selection.caption : '');
+      selectionRemaining--;
+    }
+  });
+
+  Future<void> _stageFile(XFile file, String caption) async {
     final data = await readAttachment(file);
     _active();
     final name = attachmentName(file.name);
@@ -134,8 +153,8 @@ class PrivateAttachments extends ChangeNotifier {
       r'\.(png|jpg|jpeg|webp)$',
       caseSensitive: false,
     ).hasMatch(name);
-    await _stageBytes(data, name, isPhoto ? 'photo' : 'file');
-  });
+    await _stageBytes(data, name, isPhoto ? 'photo' : 'file', caption: caption);
+  }
 
   Future<void> stageMedia(
     String media,
@@ -147,7 +166,12 @@ class PrivateAttachments extends ChangeNotifier {
     if (data != null) await _stageBytes(data, attachmentName(name), media);
   });
 
-  Future<void> _stageBytes(Uint8List data, String name, String media) async {
+  Future<void> _stageBytes(
+    Uint8List data,
+    String name,
+    String media, {
+    String caption = '',
+  }) async {
     if (data.isEmpty || data.length > attachmentLimit) {
       throw const FormatException('SIZE');
     }
@@ -156,6 +180,7 @@ class PrivateAttachments extends ChangeNotifier {
       'id': newUuid(),
       'name': name,
       'media': media,
+      if (caption.isNotEmpty) 'caption': caption,
       'data': base64Encode(data),
     });
     await _load();

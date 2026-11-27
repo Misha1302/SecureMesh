@@ -29,6 +29,12 @@ fn validate_info(info: &Value) -> Result<usize> {
     canonical_uuid(s(info, "blobId")?)?;
     let size = info["size"].as_u64().context("size")?;
     ensure!((1..=LIMIT as u64).contains(&size), "invalid file size");
+    if let Some(caption) = info.get("caption") {
+        ensure!(
+            caption.as_str().is_some_and(|v| v.len() <= 2048),
+            "invalid caption"
+        );
+    }
     let name = s(info, "name")?;
     ensure!(!name.trim().is_empty() && name.len() <= 255 && name != "." && name != ".." &&
         !name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')),
@@ -57,7 +63,14 @@ fn aad(group: &str, id: &str, info: &Value) -> Result<Vec<u8>> {
 }
 
 fn public_info(info: &Value) -> Value {
-    json!({"blobId":info["blobId"],"name":info["name"],"media":info["media"],"size":info["size"]})
+    let mut result = json!({"blobId":info["blobId"],"name":info["name"],"media":info["media"],"size":info["size"]});
+    if let Some(caption) = info["caption"]
+        .as_str()
+        .filter(|v| !v.is_empty() && v.len() <= 2048)
+    {
+        result["caption"] = json!(caption);
+    }
+    result
 }
 
 fn upload_info(id: &str, info: &Value) -> Value {
@@ -136,6 +149,8 @@ pub(super) fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Valu
             );
             let data = bytes(req, "data")?;
             ensure!((1..=LIMIT).contains(&data.len()), "invalid file size");
+            let caption = req["caption"].as_str().unwrap_or("");
+            ensure!(caption.len() <= 2048, "caption too large");
             let digest = Sha256::digest(&data);
             let existing: Option<(String, Option<Vec<u8>>)> = db
                 .query_row(
@@ -149,7 +164,8 @@ pub(super) fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Valu
                 ensure!(
                     source.as_deref() == Some(digest.as_slice())
                         && info["name"] == req["name"]
-                        && info["media"] == req["media"],
+                        && info["media"] == req["media"]
+                        && info["caption"].as_str().unwrap_or("") == caption,
                     "attachment id conflict"
                 );
                 return Ok(upload_info(id, &info));
@@ -163,7 +179,10 @@ pub(super) fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Valu
             );
             let key = p.rand().random_array::<32>()?;
             let nonce = p.rand().random_array::<12>()?;
-            let info = json!({"v":1,"blobId":uuid::Uuid::new_v4().to_string(),"size":data.len(),"name":s(req,"name")?,"media":s(req,"media")?,"key":B64.encode(key),"nonce":B64.encode(nonce)});
+            let mut info = json!({"v":1,"blobId":uuid::Uuid::new_v4().to_string(),"size":data.len(),"name":s(req,"name")?,"media":s(req,"media")?,"key":B64.encode(key),"nonce":B64.encode(nonce)});
+            if !caption.is_empty() {
+                info["caption"] = json!(caption);
+            }
             validate_info(&info)?;
             let sealed = p.crypto().aead_encrypt(
                 AeadType::Aes256Gcm,

@@ -46,6 +46,7 @@ app.UseRateLimiter();
 app.MapIdentity();
 app.MapAccountRemoval();
 app.MapProfilePhotos();
+app.MapProfileText();
 app.MapPublicChannels();
 app.MapPrivateBlobs();
 app.MapDeviceTrust();

@@ -38,16 +38,7 @@ public static class ProfilePhotos
 
             await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
             await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
-            // Serialize with device revocation, then recheck this session while it holds the account lock.
-            await using (var owner = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", actor.UserId))
-                await owner.ExecuteScalarAsync(ctx.RequestAborted);
-            await using (var session = Sql.Cmd(c, """
-                SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
-                WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND d.trusted AND NOT d.revoked
-                    AND NOT s.used AND NOT s.revoked AND s.expires_at>now()
-                """, actor.SessionId, actor.DeviceId, actor.UserId))
-                if (await session.ExecuteScalarAsync(ctx.RequestAborted) is null)
-                    throw new ApiError(401, "AUTH_REQUIRED");
+            await Sql.LockTrustedProfileOwner(c, actor, ctx.RequestAborted);
 
             Guid? version = null;
             if (input.Pixels is null)

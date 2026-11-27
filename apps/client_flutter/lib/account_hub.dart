@@ -5,6 +5,7 @@ import 'contact_profile.dart';
 import 'attachment_transfer.dart';
 import 'conversation_media.dart';
 import 'profile_photo.dart';
+import 'profile_text.dart';
 import 'public_channels.dart';
 
 import 'dart:async';
@@ -33,11 +34,13 @@ class AccountHub extends StatefulWidget {
     this.mediaAttachments,
     required this.openChat,
     this.channelApi,
+    this.onDirectory,
     this.russian = true,
   });
   final Map<String, dynamic> profile;
   final DisplayNameApi? channelApi;
   final LocalCrypto crypto;
+  final ValueChanged<List<dynamic>>? onDirectory;
   final PrivateAttachments Function(String group)? mediaAttachments;
   final HttpsRequest api;
   final Future<void> Function(Map<String, dynamic>) saveProfile;
@@ -295,6 +298,7 @@ class _AccountHubState extends State<AccountHub> {
             trusted = true;
             refreshError = null;
           });
+          widget.onDirectory?.call(existing);
         }
       } else {
         Map<String, dynamic>? grant;
@@ -1071,7 +1075,7 @@ class _AccountHubState extends State<AccountHub> {
     ];
     final footer = <Widget>[
       if (trusted) ...[
-        for (final r in requests)
+        for (final r in requests.where((r) => r['established'] != true))
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: Text(r['username'] as String),
@@ -1213,12 +1217,19 @@ class _AccountHubState extends State<AccountHub> {
     final name = chat['peerName'] as String;
     final keyState = await contactKeyState(peer, key, group: group, name: name);
     if (!mounted) return;
+    final profileRoute = peerProfileTextRoute(group, peer);
     final verify = await showContactProfile(
       context,
       avatar: contactAvatar(chat),
       displayName: contactName(chat),
       username: name,
       keyState: keyState,
+      profileText: keyState == ContactKeyState.verified && profileRoute != null
+          ? PeerProfileText(
+              load: () => widget.api(profileRoute),
+              russian: widget.russian,
+            )
+          : null,
       openMedia: (profileContext) async {
         ContactKeyState? currentState;
         try {

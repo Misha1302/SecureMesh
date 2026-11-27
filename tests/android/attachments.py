@@ -88,6 +88,12 @@ def exchange_files(repo, root, report, peer, linux_profile):
         ui.tap(ui.composer_button('file'))
         navigate_downloads()
         ui.tap(picker_node('Android input file', exact(upload.name)))
+        confirm = ui.wait_node('file selection or send dialog', lambda n:
+            (n.get('package') in docs and exact('Open', 'Открыть')(n)) or
+            (n.get('package') == ui.PACKAGE and exact('Отправить', 'Send')(n)),
+            packages=docs | {ui.PACKAGE})
+        if confirm.get('package') in docs:
+            ui.tap(confirm)
         ui.tap(ui.wait_node('Android file confirmation', exact('Отправить', 'Send')))
         linux.receive(root / 'desktop-output.bin', upload.read_bytes())
         linux.send(reply)

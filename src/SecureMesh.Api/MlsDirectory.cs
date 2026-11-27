@@ -41,14 +41,15 @@ public static class MlsDirectory
         {
             var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync();
             await using var cmd=Sql.Cmd(c,"""
-                SELECT q.id,CASE WHEN q.sender_device=$2 THEN target.username ELSE u.username END,q.sender_device,d.public_key,q.recipient_device,receiver.public_key,q.sender_device=$2
+                SELECT q.id,CASE WHEN q.sender_device=$2 THEN target.username ELSE u.username END,q.sender_device,d.public_key,q.recipient_device,receiver.public_key,q.sender_device=$2,
+                       EXISTS (SELECT 1 FROM conversation_bootstraps b WHERE b.invitation_id=q.id)
                 FROM chat_requests q JOIN devices d ON d.id=q.sender_device JOIN users u ON u.id=d.user_id
                 JOIN users target ON target.id=q.recipient_user LEFT JOIN devices receiver ON receiver.id=q.recipient_device
                 WHERE (q.recipient_user=$1 OR q.sender_device=$2) AND q.expires_at>now() AND NOT d.revoked AND d.trusted
                 ORDER BY q.created_at,q.id LIMIT 100
                 """,actor.UserId,actor.DeviceId);
             await using var r=await cmd.ExecuteReaderAsync();var rows=new List<object>();
-            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),username=r.GetString(1),senderDevice=r.GetGuid(2),senderKey=Convert.ToBase64String((byte[])r[3]),recipientDevice=r.IsDBNull(4)?(Guid?)null:r.GetGuid(4),recipientKey=r.IsDBNull(5)?null:Convert.ToBase64String((byte[])r[5]),accepted=!r.IsDBNull(4),outgoing=r.GetBoolean(6)});
+            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),username=r.GetString(1),senderDevice=r.GetGuid(2),senderKey=Convert.ToBase64String((byte[])r[3]),recipientDevice=r.IsDBNull(4)?(Guid?)null:r.GetGuid(4),recipientKey=r.IsDBNull(5)?null:Convert.ToBase64String((byte[])r[5]),accepted=!r.IsDBNull(4),outgoing=r.GetBoolean(6),established=r.GetBoolean(7)});
             return Results.Ok(rows);
         });
         app.MapPost("/v1/chat-requests/{id:guid}/dismiss",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>

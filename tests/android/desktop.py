@@ -33,7 +33,9 @@ class Desktop:
             self.click(self.word('passphrase'))
             self.type(self.store.password)
             self.key('Return')
-            self.word('Connected')
+            # The normal online chat dedicates its viewport to the timeline.
+            # The later byte-for-byte exchange verifies the actual connection.
+            self.word('Message')
         except BaseException:
             self.__exit__(*sys.exc_info())
             raise
@@ -135,29 +137,9 @@ class Desktop:
         else:
             raise RuntimeError('Could not locate the desktop Attach file action')
         self.chooser_path(path)
-        # OCR verifies the prompt. Its filled blue action has white lettering
-        # that Tesseract can omit, so locate the button in the dialog itself.
-        title_x, title_y = self.word('Send')
         self.word('this')
-        left, top = title_x, title_y + 30
-        width, height = 220, 130
-        rgb = run('import', '-window', self.window, '-crop',
-                  f'{width}x{height}+{left}+{top}', '-depth', '8',
-                  'rgb:-', capture_output=True).stdout
-        for y in range(height):
-            start = None
-            for x in range(width):
-                pos = 3 * (width * y + x)
-                red, green, blue = rgb[pos:pos + 3]
-                if blue - red > 25 and blue > green >= red:
-                    if start is None:
-                        start = x
-                else:
-                    if start is not None and x - start > 50:
-                        self.click((left + (x + start) // 2, top + y + 3))
-                        return
-                    start = None
-        raise RuntimeError('Linux file confirmation did not offer its filled Send action')
+        self.word('Caption')
+        self.key('ctrl+Return')
 
     def screenshot(self, output):
         run('import', '-window', self.window, str(output))

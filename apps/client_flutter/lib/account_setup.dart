@@ -105,6 +105,7 @@ class AccountSetup {
               'password': password,
               'deviceId': me['identity'],
               'publicKey': me['public_key'],
+              'clientOs': Platform.operatingSystem,
               'challengeId': challenge['challengeId'],
               'signature': proof['signature'],
             },

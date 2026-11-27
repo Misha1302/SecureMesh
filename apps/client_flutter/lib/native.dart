@@ -15,6 +15,7 @@ import 'conversation_drafts.dart';
 import 'conversation_composer.dart';
 import 'conversation_timeline.dart';
 import 'attachment_transfer.dart';
+import 'attachment_selection.dart';
 import 'voice_note.dart';
 import 'private_call.dart';
 import 'voice_wave.dart';
@@ -35,8 +36,10 @@ import 'messenger_theme.dart';
 import 'linked_roster.dart';
 import 'display_name.dart';
 import 'device_tile.dart';
+import 'other_sessions.dart';
 import 'settings_hierarchy.dart';
 import 'profile_photo.dart';
+import 'profile_text.dart';
 import 'transport.dart';
 
 class CryptoFailure implements Exception {}
@@ -102,6 +105,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         profile?['lockWhenHidden'] == true) {
       lock();
     }
+    if (state == AppLifecycleState.resumed) unawaited(refreshPeerLabel());
     if (state == AppLifecycleState.resumed ||
         state == AppLifecycleState.detached) {
       desktopNotifications.cancel();
@@ -131,6 +135,47 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       .isNotEmpty;
   bool sending = false;
   int generation = 0;
+  int directoryRevision = 0;
+  final directoryLabels = <(Object?, Object?, Object?), String>{};
+
+  String get currentPeerLabel =>
+      directoryLabels[(
+        profile?['group'],
+        profile?['peerDevice'],
+        profile?['peerKey'],
+      )] ??
+      profile!['peerName'] as String;
+
+  void updateDirectoryLabels(List<dynamic> rows) {
+    if (!mounted || profile == null) return;
+    final previous = profile?['group'] == null ? null : currentPeerLabel;
+    directoryRevision++;
+    directoryLabels.clear();
+    for (final row in rows.whereType<Map>()) {
+      final name = peerDisplayName(row['peerDisplayName']);
+      if (name != null) {
+        directoryLabels[(row['id'], row['peerDevice'], row['peerKey'])] = name;
+      }
+    }
+    if (previous != null && previous != currentPeerLabel) setState(() {});
+  }
+
+  Future<void> refreshPeerLabel() async {
+    final active = session;
+    if (active == null || profile?['group'] == null) return;
+    final revision = ++directoryRevision;
+    try {
+      final rows = await active.request('/v1/conversations') as List;
+      if (mounted &&
+          identical(active, session) &&
+          revision == directoryRevision) {
+        updateDirectoryLabels(rows);
+      }
+    } catch (_) {
+      // The verified conversation remains usable with its stored username offline.
+    }
+  }
+
   String connectionState = "offline";
   String? sendError, deviceError;
   bool revokingDevice = false,
@@ -434,6 +479,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       pass.clear();
       await restoreDraft(saved['group'] as String?);
       if (!mounted || !identical(unlocked, store)) return;
+      unawaited(refreshPeerLabel());
       await reload();
       timer?.cancel();
       unawaited(pump());
@@ -877,6 +923,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   void lock() {
     closeInlineMedia();
     generation++;
+    directoryLabels.clear();
     declinedRoster.clear();
     navigator.currentState?.popUntil((route) => route.isFirst);
     savingBackgroundLock = backgroundLockSaveFailed = false;
@@ -1013,6 +1060,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     crypto: crypto,
     api: (route, {data}) => api(route, data: data),
     channelApi: session!.request,
+    onDirectory: updateDirectoryLabels,
     mediaAttachments: (group) {
       final activeSession = session!;
       final activeGeneration = generation;
@@ -1059,6 +1107,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           group: {'device': peer, 'key': key, 'name': name},
         },
       });
+      unawaited(refreshPeerLabel());
       await reload();
       if (mounted) setState(() {});
       unawaited(pump());
@@ -1460,32 +1509,34 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     if (current == null || current.busy || profile?['trustConfirmed'] != true) {
       return;
     }
-    await current.stage(() async {
-      final chosen = await openFile();
-      if (chosen == null ||
-          !context.mounted ||
-          !identical(attachments, current)) {
+    await current.stageSelection(() async {
+      final files = await openFiles();
+      if (files.isEmpty || !context.mounted || !identical(attachments, current)) {
         return null;
       }
-      final confirm = await showDialog<bool>(
+      final selection = await showDialog<({List<XFile> files, String caption})>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(tr('Отправить файл?', 'Send this file?')),
-          content: Text(attachmentName(chosen.name)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(tr('Отмена', 'Cancel')),
+        builder: (_) => AttachmentSelection(files, tr),
+      );
+      return identical(attachments, current) ? selection : null;
+    });
+    if (context.mounted &&
+        identical(current, attachments) &&
+        current.selectionRemaining > 0 &&
+        current.status != null) {
+      final count = current.selectionRemaining;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            tr(
+              'Не добавлено файлов в очередь: $count. Выберите их повторно.',
+              'Files left out of the queue: $count. Select them again.',
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(tr('Отправить', 'Send')),
-            ),
-          ],
+          ),
         ),
       );
-      return confirm == true && identical(attachments, current) ? chosen : null;
-    });
+      current.selectionRemaining = 0;
+    }
     if (identical(current, attachments) && online && !lite) {
       unawaited(current.resume(explicit: false, weak: false));
     }
@@ -1550,6 +1601,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('$name · ${((meta['size'] as int) / 1024).ceil()} KiB'),
+        if (meta['caption'] case final String caption)
+          MessageMarkup(caption, tr: tr),
         Wrap(
           children: [
             TextButton.icon(
@@ -1747,7 +1800,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       ConversationHeader(
-        peerName: profile!['peerName'] as String,
+        peerName: currentPeerLabel,
         verified: profile!['trustConfirmed'] == true,
         canCall:
             online &&
@@ -1849,45 +1902,47 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         },
         onVerify: () => verifyKeys(context),
       ),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-        child: Row(
-          children: [
-            Icon(
-              online ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
-              size: 18,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                online
-                    ? (lite
-                          ? tr('Слабая сеть', 'Weak connection')
-                          : tr('В сети', 'Connected'))
-                    : connectionState == 'keys'
-                    ? tr('Проверьте ключи', 'Check keys')
-                    : connectionState == 'auth'
-                    ? tr('Нужен вход', 'Sign in required')
-                    : connectionState == 'server'
-                    ? tr('Ошибка сервера', 'Server error')
-                    : tr('Офлайн', 'Offline'),
+      if (!online || lite || queued > 0)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          child: Row(
+            children: [
+              Icon(
+                online ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
+                size: 18,
               ),
-            ),
-            Semantics(
-              liveRegion: true,
-              child: Text(tr('В очереди: $queued', 'Queued: $queued')),
-            ),
-            IconButton(
-              tooltip: tr('Повторить соединение', 'Reconnect'),
-              onPressed: () {
-                declinedRoster.clear();
-                unawaited(pump());
-              },
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  online
+                      ? (lite
+                            ? tr('Слабая сеть', 'Weak connection')
+                            : tr('Связь с сервером', 'Connected to server'))
+                      : connectionState == 'keys'
+                      ? tr('Проверьте ключи', 'Check keys')
+                      : connectionState == 'auth'
+                      ? tr('Нужен вход', 'Sign in required')
+                      : connectionState == 'server'
+                      ? tr('Ошибка сервера', 'Server error')
+                      : tr('Офлайн', 'Offline'),
+                ),
+              ),
+              if (queued > 0)
+                Semantics(
+                  liveRegion: true,
+                  child: Text(tr('В очереди: $queued', 'Queued: $queued')),
+                ),
+              IconButton(
+                tooltip: tr('Повторить соединение', 'Reconnect'),
+                onPressed: () {
+                  declinedRoster.clear();
+                  unawaited(pump());
+                },
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
+          ),
         ),
-      ),
       if (profile!['trustConfirmed'] != true)
         MaterialBanner(
           content: Text(
@@ -2079,6 +2134,17 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     try {
       final result = await api('/v1/devices') as List<dynamic>;
       final self = await api('/v1/users/me') as Map;
+      final current = self['deviceId'];
+      if (current is! String ||
+          current != profile?['deviceId'] ||
+          result.where((d) => d['id'] == current).length != 1 ||
+          result.any(
+            (d) =>
+                d.containsKey('isCurrent') &&
+                d['isCurrent'] != (d['id'] == current),
+          )) {
+        throw const FormatException('Inconsistent active device');
+      }
       final available = self['labAccountRemoval'] == true;
       if (available &&
           mounted &&
@@ -2102,6 +2168,41 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           ),
         );
       }
+    }
+  }
+
+  Future<int> revokeOthers(Set<String> ids) async {
+    final owner = session;
+    final epoch = generation;
+    final me = profile?['deviceId'];
+    if (owner == null ||
+        me is! String ||
+        revokingDevice ||
+        deviceError != null ||
+        ids.contains(me)) {
+      return -1;
+    }
+    bool active() =>
+        mounted && epoch == generation && identical(session, owner);
+    setState(() => revokingDevice = true);
+    try {
+      final count = await revokeListedDevices(
+        ids,
+        active: active,
+        revoke: (id) async {
+          await owner.request(
+            '/v1/devices/${Uri.encodeComponent(id)}',
+            method: 'DELETE',
+          );
+        },
+        refresh: () async {
+          await loadDevices();
+          return active() && deviceError == null ? devices : null;
+        },
+      );
+      return active() ? count : -1;
+    } finally {
+      if (active()) setState(() => revokingDevice = false);
     }
   }
 
@@ -2352,6 +2453,15 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       content: (section) => switch (section) {
         SettingsSection.profile => [
           ListTile(
+            leading: const Icon(Icons.notes_outlined),
+            title: Text(tr('О себе и статус', 'Bio and status')),
+            onTap: () => showDialog<void>(
+              context: context,
+              builder: (_) =>
+                  ProfileTextEditor(api: ownerSession.request, russian: ru),
+            ),
+          ),
+          ListTile(
             leading: const Icon(Icons.badge_outlined),
             title: Text(tr('Отображаемое имя', 'Display name')),
             onTap: () => showDialog<void>(
@@ -2453,13 +2563,36 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             ListTile(
               title: Text(tr('Загрузка устройств…', 'Loading devices…')),
             ),
+          OtherSessionsAction(
+            key: ValueKey(profile!['deviceId']),
+            devices: devices,
+            current: profile!['deviceId'] as String,
+            russian: ru,
+            run: revokingDevice || deviceError != null ? null : revokeOthers,
+          ),
           for (final d in devices)
             DeviceTile(
               key: ValueKey(d['id']),
               device: d as Map,
               current: d['id'] == profile!['deviceId'],
               russian: ru,
-              onRevoke: revokingDevice
+              localOs: d['id'] == profile!['deviceId']
+                  ? Platform.operatingSystem
+                  : null,
+              onRename:
+                  d['id'] == profile!['deviceId'] &&
+                      d.containsKey('name') &&
+                      deviceError == null
+                  ? (name) async {
+                      await api(
+                        '/v1/devices/me/name',
+                        method: 'PUT',
+                        data: {'name': name},
+                      );
+                      if (mounted) await loadDevices();
+                    }
+                  : null,
+              onRevoke: revokingDevice || deviceError != null
                   ? null
                   : () => revokeDevice(d['id'] as String),
             ),

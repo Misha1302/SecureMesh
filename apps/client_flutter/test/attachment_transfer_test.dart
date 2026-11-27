@@ -48,6 +48,43 @@ class _TestBlobs implements BlobTransport {
 }
 
 void main() {
+  test('batch queues files separately with a private first caption and reports unfinished files', () async {
+    final names = <String>[];
+    final captions = <Object?>[];
+    final uploads = PrivateAttachments(
+      'group',
+      (op, args) async {
+        if (op == 'attachment_pending')
+          return {
+            'uploads': [...names],
+          };
+        names.add(args['name'] as String);
+        captions.add(args['caption']);
+        return {};
+      },
+      _TestBlobs(),
+      () {},
+    );
+    XFile file(String path, List<int> data) =>
+        XFile.fromData(Uint8List.fromList(data), path: path);
+    await uploads.stageSelection(
+      () async => (
+        files: [
+          file('a', [1]),
+          file('b', [2]),
+          file('empty', []),
+          file('c', [3]),
+        ],
+        caption: 'Привет',
+      ),
+    );
+    expect(names, ['a', 'b']);
+    expect(captions, ['Привет', null]);
+    expect(uploads.selectionRemaining, 2);
+    expect(uploads.status, 'size');
+    uploads.dispose();
+  });
+
   test('staging is offline, weak automatic upload waits, manual retry commits only after PUT', () async {
     final blobs = _TestBlobs();
     final pending = <Map<String, dynamic>>[];

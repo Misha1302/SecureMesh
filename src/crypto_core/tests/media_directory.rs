@@ -43,7 +43,7 @@ fn reopened_profiles_list_and_open_an_authenticated_attachment() {
     );
     let staged = run(
         &a,
-        json!({"op":"attachment_prepare","group":group,"id":id,"name":"memo.mp3","media":"file","data":"QUJD"}),
+        json!({"op":"attachment_prepare","group":group,"id":id,"name":"memo.mp3","media":"file","data":"QUJD","caption":"Тест 🎵"}),
     );
     let sealed = run(
         &a,
@@ -64,7 +64,7 @@ fn reopened_profiles_list_and_open_an_authenticated_attachment() {
         );
         assert_eq!(
             listing["items"],
-            json!([{"id":id,"attachment":{"blobId":staged["blobId"],"name":"memo.mp3","media":"file","size":3}}])
+            json!([{"id":id,"attachment":{"blobId":staged["blobId"],"name":"memo.mp3","media":"file","size":3,"caption":"Тест 🎵"}}])
         );
         let opened = run(
             &client,

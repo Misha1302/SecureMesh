@@ -23,9 +23,31 @@ def main():
             server.restart()
             assert d.request('/v1/users/me',token=pending['accessToken'])['trustState']=='DEVICE_PENDING_TRUST'
             d.request('/v1/devices',token=pending['accessToken'],expected=403)
+            session=d.login(a['username'],a['password'],a['device'],client_os='linux')
+            token=session['accessToken']
+            d.request('/v1/devices/me/name',{'name':'Ноутбук'},method='PUT',token=token,expected=204)
+            d.request('/v1/devices/me/name',{'name':'forbidden'},method='PUT',token=pending['accessToken'],expected=403)
+            rows=d.request('/v1/devices',token=token)
+            own,other=rows
+            assert own['isCurrent'] and own['id']==a['device'].identity
+            assert own['clientOs']=='linux' and own['name']=='Ноутбук' and own['createdAt'] and own['lastLoginAt']
+            assert own['hasRefreshableSession'] and not other['isCurrent']
+            assert other['id']==candidate.identity and other['name'] is None and other['clientOs'] is None
+            assert other['trustState']=='DEVICE_PENDING_TRUST'
+            refreshed=d.request('/v1/auth/refresh',{'token':session['refreshToken']})
+            refreshed_rows=d.request('/v1/devices',token=refreshed['accessToken'])
+            assert refreshed_rows[0]['lastLoginAt']==own['lastLoginAt']
+            legacy=d.login(a['username'],a['password'],a['device'])
+            assert d.request('/v1/devices',token=legacy['accessToken'])[0]['clientOs']=='linux'
+            # Same device-level endpoint used for each confirmed bulk action.
+            d.request('/v1/devices/'+candidate.identity,method='DELETE',token=legacy['accessToken'],expected=204)
+            d.request('/v1/users/me',token=pending['accessToken'],expected=401)
+            final=d.request('/v1/devices',token=legacy['accessToken'])
+            assert final[0]['isCurrent'] and final[0]['hasRefreshableSession']
+            assert final[1]['revoked'] and not final[1]['hasRefreshableSession']
             result=command('psql','-U','securemesh','-d',database,'-Atc','SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId"')
-            assert result.strip().splitlines()==['202611180001_Foundation','202611180002_DeviceChallenges','202611180003_DeviceTrust','202611180004_MlsDirectory','202611180005_EnrollmentActivation','202611190006_EnrollmentIssuanceQuota','202611270007_DisplayName','202611270008_ProfilePhotos','202611270009_PublicChannels','202611270010_PrivateBlobs','202611270011_ChannelInvitations','202611270012_ResumableBlobs','202611270013_DeviceRoster','202611270014_AccountRemoval']
-            print('PASS: fresh owned PostgreSQL database; all fourteen EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused.')
+            assert result.strip().splitlines()==['202611180001_Foundation','202611180002_DeviceChallenges','202611180003_DeviceTrust','202611180004_MlsDirectory','202611180005_EnrollmentActivation','202611190006_EnrollmentIssuanceQuota','202611270007_DisplayName','202611270008_ProfilePhotos','202611270009_PublicChannels','202611270010_PrivateBlobs','202611270011_ChannelInvitations','202611270012_ResumableBlobs','202611270013_DeviceRoster','202611270014_AccountRemoval','202611270015_ProfileText','202611270016_DeviceClientMetadata']
+            print('PASS: fresh owned PostgreSQL database; all sixteen EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused.')
     finally:
         command('dropdb','-U','securemesh',database)
 

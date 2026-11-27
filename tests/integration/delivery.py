@@ -43,10 +43,10 @@ def request(path,data=None,token=None,method=None,expected=200):
     assert status==expected, f'{path}: expected {expected}, got {status}: {raw[:300]!r}'
     return json.loads(raw) if raw else None
 
-def login(username,password,device,expected=200):
+def login(username,password,device,expected=200,client_os=None):
     challenge=request('/v1/auth/challenge',dict(username=username,deviceId=device.identity))
     proof=device.call('sign',payload=challenge['payload'])['signature']
-    return request('/v1/auth/login',dict(username=username,password=password,deviceId=device.identity,publicKey=device.public,challengeId=challenge['challengeId'],signature=proof),expected=expected)
+    return request('/v1/auth/login',dict(username=username,password=password,deviceId=device.identity,publicKey=device.public,challengeId=challenge['challengeId'],signature=proof,**({'clientOs':client_os} if client_os is not None else {})),expected=expected)
 
 def account(root, domain="securemesh.test"):
     username='u_'+uuid.uuid4().hex[:20]; email=username+'@'+domain; password=secrets.token_urlsafe(24)

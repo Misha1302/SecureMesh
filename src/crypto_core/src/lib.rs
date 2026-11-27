@@ -550,7 +550,10 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             let mut g = load_group(p, gid)?;
             check_group(db, &g)?;
             let text = match &attachment {
-                Some(info) => format!("📎 {}", s(info, "name")?),
+                Some(info) => match info["caption"].as_str() {
+                    Some(caption) => format!("📎 {}\n{}", s(info, "name")?, caption),
+                    None => format!("📎 {}", s(info, "name")?),
+                },
                 None => s(req, "text")?.to_owned(),
             };
             ensure!(text.chars().count() <= 4000, "text too large");

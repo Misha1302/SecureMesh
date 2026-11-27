@@ -43,6 +43,20 @@ public static class Sql
     }
     public static byte[] Hash(string token) => SHA256.HashData(Encoding.UTF8.GetBytes(token));
     public static string Token() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+    internal static async Task LockTrustedProfileOwner(NpgsqlConnection c, Actor actor, CancellationToken cancellationToken)
+    {
+        // Serialize with device revocation, then recheck this session while it holds the account lock.
+        await using (var owner = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", actor.UserId))
+            await owner.ExecuteScalarAsync(cancellationToken);
+        await using (var session = Sql.Cmd(c, """
+            SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
+            WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND d.trusted AND NOT d.revoked
+                AND NOT s.used AND NOT s.revoked AND s.expires_at>now()
+            """, actor.SessionId, actor.DeviceId, actor.UserId))
+            if (await session.ExecuteScalarAsync(cancellationToken) is null)
+                throw new ApiError(401, "AUTH_REQUIRED");
+    }
+
     public static async Task<Actor> Authenticate(HttpContext ctx, NpgsqlDataSource db, bool requireTrusted = true)
     {
         var header = ctx.Request.Headers.Authorization.ToString();

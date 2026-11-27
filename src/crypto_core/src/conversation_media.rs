@@ -63,14 +63,16 @@ pub(super) fn list(db: &Connection, req: &Value) -> Result<Value> {
               json_extract(event,'$.attachment.name') AS name,
               json_extract(event,'$.attachment.media') AS media,
               json_extract(event,'$.attachment.blobId') AS blob,
-              json_extract(event,'$.attachment.size') AS size
+              json_extract(event,'$.attachment.size') AS size,
+              json_extract(event,'$.attachment.caption') AS caption
             FROM events
          ) SELECT pos,id,own,ms,
               CASE WHEN ?4='links' THEN substr(body,1,4000) END,
               CASE WHEN ?4!='links' THEN name END,
               CASE WHEN ?4!='links' THEN media END,
               CASE WHEN ?4!='links' THEN blob END,
-              CASE WHEN ?4!='links' THEN size END
+              CASE WHEN ?4!='links' THEN size END,
+              CASE WHEN ?4!='links' AND typeof(caption)='text' THEN caption END
             FROM items WHERE (ms,pos,own)<(?5,?6,?7) AND (
               (?4='links' AND instr(body,'||')=0 AND (body LIKE '%http://%' OR body LIKE '%https://%')) OR
               (?4!='links' AND typeof(name)='text' AND length(name) BETWEEN 1 AND 255 AND typeof(blob)='text'
@@ -106,12 +108,15 @@ pub(super) fn list(db: &Connection, req: &Value) -> Result<Value> {
             json!({"group":group,"category":category,"ownMax":own_max,"incomingMax":incoming_max,
             "time":time,"row":row.get::<_,i64>(0)?,"own":own}),
         );
-        let item = if category == "links" {
+        let mut item = if category == "links" {
             json!({"id":row.get::<_,String>(1)?, "body":row.get::<_,String>(4)?})
         } else {
             json!({"id":row.get::<_,String>(1)?, "attachment":{"name":row.get::<_,String>(5)?,"media":row.get::<_,String>(6)?,
                 "blobId":row.get::<_,String>(7)?, "size":row.get::<_,i64>(8)?}})
         };
+        if let Some(caption) = row.get::<_, Option<String>>(9)? {
+            item["attachment"]["caption"] = json!(caption);
+        }
         items.push(item);
     }
     Ok(json!({"items":items,"next":next}))

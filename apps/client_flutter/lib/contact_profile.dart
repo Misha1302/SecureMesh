@@ -11,6 +11,7 @@ Future<bool> showContactProfile(
   required String username,
   required ContactKeyState keyState,
   required String? verifiedFingerprint,
+  Widget? profileText,
   required IdentityTranslation tr,
   required Future<void> Function(BuildContext) openMedia,
 }) async {
@@ -46,6 +47,7 @@ Future<bool> showContactProfile(
                     ),
                   ],
                 ),
+                if (verified && profileText != null) profileText,
                 if (verified)
                   TextButton.icon(
                     onPressed: () => openMedia(ctx),
