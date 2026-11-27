@@ -32,8 +32,12 @@ def wait_node(description, matches, timeout=60, packages=(PACKAGE,)):
 
 
 def snapshot():
-    adb('shell', 'uiautomator', 'dump', '/sdcard/interop-ui.xml', check=False)
-    return list(ElementTree.fromstring(adb('shell', 'cat', '/sdcard/interop-ui.xml')).iter('node'))
+    # UIAutomator can fail during a window transition. Clear the old dump so
+    # a fresh screenshot or user action is never paired with stale bounds.
+    xml = adb('shell', 'rm -f /sdcard/interop-ui.xml && '
+              'uiautomator dump /sdcard/interop-ui.xml >/dev/null && '
+              'cat /sdcard/interop-ui.xml', check=False)
+    return list(ElementTree.fromstring(xml).iter('node'))
 
 
 def bounds(node):

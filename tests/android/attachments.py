@@ -9,6 +9,41 @@ from xml.etree import ElementTree
 import android_ui as ui
 from desktop import Desktop
 
+DOCUMENT_UI = {'com.android.documentsui', 'com.google.android.documentsui'}
+
+
+def confirm_system_export(filename, timeout=30):
+    """Accept the Save action on the picker for this exact fixture filename."""
+    end = time.monotonic() + timeout
+    previous = None
+    taps = 0
+    while time.monotonic() < end:
+        try:
+            nodes = ui.snapshot()
+        except ElementTree.ParseError:
+            previous = None
+            continue
+        picker = [node for node in nodes if node.get('package') in DOCUMENT_UI]
+        if not picker and taps and any(node.get('package') == ui.PACKAGE for node in nodes):
+            return
+        named = any(node.get('class') == 'android.widget.EditText' and
+                    node.get('text') == filename for node in picker)
+        buttons = [node for node in picker if
+                   node.get('class') == 'android.widget.Button' and
+                   node.get('enabled') == 'true' and node.get('clickable') == 'true' and
+                   node.get('text', '').strip().casefold() in {'save', 'сохранить'}]
+        # Wait for the navigation drawer to settle. If a tap was absorbed by
+        # the transition, retry only after two more matching picker snapshots.
+        current = ui.bounds(buttons[0]) if named and len(buttons) == 1 else None
+        if current is not None and current == previous and taps < 3:
+            ui.tap(buttons[0])
+            taps += 1
+            previous = None
+        else:
+            previous = current
+        time.sleep(.35)
+    raise RuntimeError(f'Android document picker did not confirm export after {taps} Save taps')
+
 
 def attachments(repo, root, report, peer, linux_profile):
     try:
@@ -21,7 +56,7 @@ def attachments(repo, root, report, peer, linux_profile):
 
 
 def exchange_files(repo, root, report, peer, linux_profile):
-    docs = {'com.android.documentsui', 'com.google.android.documentsui'}
+    docs = DOCUMENT_UI
 
     def picker_node(description, match, timeout=30):
         return ui.wait_node(description, match, timeout=timeout, packages=docs)
@@ -99,7 +134,7 @@ def exchange_files(repo, root, report, peer, linux_profile):
         linux.send(reply)
         ui.tap(save_received_file(reply.name))
         navigate_downloads()
-        ui.tap(picker_node('system export confirmation', exact('Save', 'Сохранить')))
+        confirm_system_export(reply.name)
         exported = root / 'android-output.bin'
         end = time.monotonic() + 30
         while time.monotonic() < end:
