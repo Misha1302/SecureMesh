@@ -16,6 +16,7 @@ import 'conversation_composer.dart';
 import 'conversation_timeline.dart';
 import 'attachment_transfer.dart';
 import 'attachment_selection.dart';
+import 'clipboard_photo.dart';
 import 'voice_note.dart';
 import 'private_call.dart';
 import 'voice_wave.dart';
@@ -1504,21 +1505,70 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       ),
     ),
   );
-  Future<void> chooseAttachment(BuildContext context) async {
+  Future<void> chooseAttachment(
+    BuildContext context, {
+    bool clipboardPhoto = false,
+  }) async {
     final current = attachments;
     if (current == null || current.busy || profile?['trustConfirmed'] != true) {
       return;
     }
     await current.stageSelection(() async {
-      final files = await openFiles();
-      if (files.isEmpty || !context.mounted || !identical(attachments, current)) {
-        return null;
+      bool active() =>
+          context.mounted &&
+          identical(attachments, current) &&
+          profile?['trustConfirmed'] == true;
+      Uint8List? preview;
+      final List<XFile> files;
+      if (clipboardPhoto) {
+        try {
+          preview = await readClipboardPhoto();
+        } catch (_) {
+          if (context.mounted && active()) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  tr(
+                    'Не удалось вставить изображение (PNG или JPEG до 4 МиБ).',
+                    'Could not paste the image (PNG or JPEG up to 4 MiB).',
+                  ),
+                ),
+              ),
+            );
+          }
+          return null;
+        }
+        if (!context.mounted || !active()) return null;
+        if (preview == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                tr(
+                  'В буфере нет поддерживаемого изображения.',
+                  'No supported image in the clipboard.',
+                ),
+              ),
+            ),
+          );
+          return null;
+        }
+        files = [
+          XFile.fromData(
+            preview,
+            path: 'clipboard-image.png',
+            mimeType: 'image/png',
+          ),
+        ];
+      } else {
+        files = await openFiles();
       }
+      if (files.isEmpty || !active()) return null;
+      if (!context.mounted) return null;
       final selection = await showDialog<({List<XFile> files, String caption})>(
         context: context,
-        builder: (_) => AttachmentSelection(files, tr),
+        builder: (_) => AttachmentSelection(files, tr, preview: preview),
       );
-      return identical(attachments, current) ? selection : null;
+      return active() ? selection : null;
     });
     if (context.mounted &&
         identical(current, attachments) &&
@@ -2109,6 +2159,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             : null,
         onFile: attachments?.busy == false && profile?['trustConfirmed'] == true
             ? () => chooseAttachment(context)
+            : null,
+        onPastePhoto:
+            clipboardPhotoSupported &&
+                attachments?.busy == false &&
+                profile?['trustConfirmed'] == true
+            ? () => chooseAttachment(context, clipboardPhoto: true)
             : null,
         microphoneKey: microphoneButtonKey,
         onVoiceHold:

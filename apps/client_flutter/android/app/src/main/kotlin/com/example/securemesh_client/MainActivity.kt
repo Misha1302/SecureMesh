@@ -7,6 +7,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private val clipboardPhoto by lazy { ClipboardPhoto(this) }
     private val biometrics by lazy { ProfileBiometrics(this) }
     private val notifications by lazy { MessageNotifications(this) }
     private val exportRequest = 47291
@@ -14,6 +15,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
+        MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/clipboard-photo").setMethodCallHandler(clipboardPhoto::read)
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/message_notifications").setMethodCallHandler(notifications::handle)
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/profile_biometrics")
             .setMethodCallHandler(biometrics::handle)
@@ -85,11 +87,14 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onStop() {
+        clipboardPhoto.cancel()
         biometrics.cancel()
         super.onStop()
     }
 
     override fun cleanUpFlutterEngine(engine: FlutterEngine) {
+        clipboardPhoto.cancel()
+        MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/clipboard-photo").setMethodCallHandler(null)
         biometrics.cancel()
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/profile_biometrics")
             .setMethodCallHandler(null)

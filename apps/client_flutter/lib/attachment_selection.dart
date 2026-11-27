@@ -7,8 +7,9 @@ import 'package:material_ui/material_ui.dart';
 import 'attachment_transfer.dart';
 
 class AttachmentSelection extends StatefulWidget {
-  const AttachmentSelection(this.files, this.tr, {super.key});
+  const AttachmentSelection(this.files, this.tr, {super.key, this.preview});
   final List<XFile> files;
+  final Uint8List? preview;
   final String Function(String, String) tr;
   @override
   State<AttachmentSelection> createState() => _AttachmentSelectionState();
@@ -49,6 +50,11 @@ class _AttachmentSelectionState extends State<AttachmentSelection> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (widget.preview != null && files.isNotEmpty)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 160),
+                    child: Image.memory(widget.preview!, fit: BoxFit.contain),
+                  ),
                 for (final file in files)
                   ListTile(
                     contentPadding: EdgeInsets.zero,

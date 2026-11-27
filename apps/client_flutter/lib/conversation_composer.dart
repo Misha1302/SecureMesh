@@ -10,6 +10,7 @@ class ConversationComposer extends StatelessWidget {
     required this.editor,
     required this.onSend,
     required this.onFile,
+    this.onPastePhoto,
     required this.onVoice,
     this.onVoiceHold,
     this.microphoneKey,
@@ -18,7 +19,7 @@ class ConversationComposer extends StatelessWidget {
     required this.tr,
   });
   final Widget editor;
-  final VoidCallback? onSend, onFile, onVoice, onVideo;
+  final VoidCallback? onSend, onFile, onVoice, onVideo, onPastePhoto;
   final Future<void> Function(ValueNotifier<VoiceHold>)? onVoiceHold;
   final Key? microphoneKey;
   final bool videoSupported;
@@ -33,6 +34,12 @@ class ConversationComposer extends StatelessWidget {
     final media = [
       if (videoSupported) (video, Icons.videocam_outlined, onVideo),
       (file, Icons.attach_file, onFile),
+      if (onPastePhoto != null)
+        (
+          tr('Вставить изображение', 'Paste image'),
+          Icons.content_paste_outlined,
+          onPastePhoto,
+        ),
       (voice, Icons.mic_none, onVoice),
     ];
     Widget action(
