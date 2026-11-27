@@ -18,3 +18,18 @@ make demo
 ```
 
 The API connects to smtp.resend.com on port 587 using mandatory STARTTLS and the SMTP username resend. Resend receives the recipient address and verification code. Restart the API after key rotation. To verify delivery, register a fresh test account with a mailbox you control and submit the code received there. Check delivery status in the Resend Emails dashboard. Production startup remains gated.
+
+### Public demo registration rollout
+
+`Caddyfile.public-demo` forwards `/v2/auth/register`, `/v2/auth/login` and the health endpoints to the demo API over loopback HTTPS. The API must also be built from a revision that serves the v2 routes. The historical VPS installer in commit `625548e` shipped a versioned API and OpenMLS validator bundle to the `securemesh-demo` systemd unit. It switched `/opt/securemesh-demo/releases/current` and kept persistent data under `/var/lib/securemesh-demo`. The Caddy configuration was installed separately as `/etc/caddy/Caddyfile`. The installer and SSH deployment script are absent from the current checkout.
+
+For an owner-authorized demo rollout, confirm access to the demo host and identify the active release, state paths and mail configuration. Build and test the candidate with local PostgreSQL and Mailpit using the v2 integration flow in `tests/integration/delivery.py`. Before switching, take and verify a database backup, save the active Caddy configuration and retain the previous release. Validate the candidate Caddy configuration on the target Caddy version. Install the reviewed bundle and proxy configuration, then check readiness and the v2 validation responses both upstream and through the public ingress.
+
+```sh
+python3 deploy/check-registration-contract.py https://127.0.0.1:5088 --ca-file .local/tls.pem
+python3 deploy/check-registration-contract.py https://demo.example.org
+```
+
+Use the actual ingress origin for the second command. The probe uses an invalid username and email in each request so the API rejects them before storage or SMTP. It checks that a one-character display name gets past display-name validation and that a control character is rejected with `INVALID_DISPLAY_NAME`. Successful registration, mail delivery and TLS reachability from client networks require their own checks.
+
+If readiness or the contract fails after switching, restore the prior proxy configuration and, after checking migration and persisted credential compatibility, revert to the previous API release. Older releases cannot authenticate accounts created with v2 credentials. Preserve the database and investigate before switching back if v2 accounts may already exist. Production startup remains disabled.
