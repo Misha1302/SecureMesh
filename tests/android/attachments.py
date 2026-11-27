@@ -40,18 +40,35 @@ def exchange_files(repo, root, report, peer, linux_profile):
         allowed = {s.casefold() for s in (label, *others)}
         return lambda n: any(n.get(k, '').strip().casefold() in allowed for k in ('text', 'content-desc'))
 
-    def bottom_save():
+    def save_received_file(filename):
         end = time.monotonic() + 45
         while time.monotonic() < end:
-            ui.adb('shell', 'uiautomator', 'dump', '/sdcard/interop-ui.xml', check=False)
             try:
-                tree = ElementTree.fromstring(ui.adb('shell', 'cat', '/sdcard/interop-ui.xml'))
+                nodes = [n for n in ui.snapshot() if n.get('package') == ui.PACKAGE]
             except ElementTree.ParseError:
                 continue
-            hits = [n for n in tree.iter('node') if n.get('package') == ui.PACKAGE and exact('Сохранить', 'Save')(n)]
-            if hits:
-                return hits[-1]  # Newest attachment is last in the timeline.
-        raise RuntimeError('Missing Android attachment export action')
+            def labels(node):
+                return [line.strip().casefold() for attr in ('text', 'content-desc', 'hint')
+                        for line in node.get(attr, '').splitlines()]
+            files = [n for n in nodes if any(filename.casefold() in x for x in labels(n))]
+            if files:
+                _, top, _, bottom = ui.bounds(files[-1])
+                choices = [n for n in nodes if n.get('enabled') == 'true'
+                           and {'save', 'сохранить'}.intersection(labels(n))
+                           and ui.bounds(n)[1] >= top]
+                if choices:
+                    return min(choices, key=lambda n: abs(ui.bounds(n)[1] - bottom))
+                # The filename may be visible just above the composer while the
+                # button underneath it is still clipped by the scroll viewport.
+                view = next((n for n in nodes if n.get('scrollable') == 'true'
+                             and ui.bounds(n)[1] <= top <= ui.bounds(n)[3]), None)
+                if view is not None:
+                    x1, y1, x2, y2 = ui.bounds(view)
+                    x, h = (x1 + x2) // 2, y2 - y1
+                    ui.adb('shell', 'input', 'swipe', str(x), str(y1 + 3*h//4),
+                           str(x), str(y1 + h//2), '300')
+            time.sleep(.4)
+        raise RuntimeError('Missing export action for received attachment')
 
     # Both filenames are synthetic. Distinct random payloads rule out successful
     # tests based on stale downloads or an echo of a previous upload.
@@ -73,7 +90,7 @@ def exchange_files(repo, root, report, peer, linux_profile):
         linux.receive(root / 'desktop-output.bin', upload.read_bytes())
         linux.send(reply)
         ui.text_node(reply.name, timeout=75)
-        ui.tap(bottom_save())
+        ui.tap(save_received_file(reply.name))
         navigate_downloads()
         ui.tap(picker_node('system export confirmation', exact('Save', 'Сохранить')))
         exported = root / 'android-output.bin'
