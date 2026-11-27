@@ -229,6 +229,14 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
     final selectedHere = selected.contains(key);
     final (statusIcon, statusLabel) = _deliveryStatus(m['status'], tr);
     final text = copyable(m);
+    // Give keyboard users an entry point at the first enabled menu action.
+    var needsMenuFocus = true;
+    bool firstMenuAction() {
+      if (!needsMenuFocus) return false;
+      needsMenuFocus = false;
+      return true;
+    }
+
     final upper = Radius.circular(prevSame ? 5 : 16);
     final lower = Radius.circular(nextSame ? 5 : 16);
     const round = Radius.circular(16);
@@ -269,6 +277,7 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
                       m['status'] == 'queued' &&
                       widget.onRetryQueue != null)
                     MenuItemButton(
+                      autofocus: firstMenuAction(),
                       leadingIcon: const Icon(Icons.refresh),
                       onPressed: widget.onRetryQueue,
                       child: Text(
@@ -279,6 +288,7 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
                       ),
                     ),
                   MenuItemButton(
+                    autofocus: widget.onReply != null && firstMenuAction(),
                     leadingIcon: const Icon(Icons.reply),
                     onPressed: widget.onReply == null
                         ? null
@@ -287,6 +297,7 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
                   ),
                   if (text != null)
                     MenuItemButton(
+                      autofocus: firstMenuAction(),
                       leadingIcon: const Icon(Icons.copy_outlined),
                       onPressed: () =>
                           Clipboard.setData(ClipboardData(text: text)),
@@ -294,6 +305,7 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
                     ),
                   if (widget.onPin != null)
                     MenuItemButton(
+                      autofocus: firstMenuAction(),
                       leadingIcon: const Icon(Icons.push_pin_outlined),
                       onPressed: () => setPin(m as Map, true),
                       child: Text(
@@ -302,11 +314,13 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
                     ),
                   if (widget.onSave != null)
                     MenuItemButton(
+                      autofocus: firstMenuAction(),
                       leadingIcon: const Icon(Icons.bookmark_add_outlined),
                       onPressed: () => save([m]),
                       child: Text(tr('В избранное', 'Save message')),
                     ),
                   MenuItemButton(
+                    autofocus: firstMenuAction(),
                     leadingIcon: const Icon(Icons.check_circle_outline),
                     onPressed: () => toggle(key),
                     child: Text(

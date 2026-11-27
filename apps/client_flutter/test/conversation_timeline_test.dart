@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -17,6 +18,55 @@ Map<String, dynamic> message(int i, {DateTime? time, bool own = false}) => {
 };
 
 void main() {
+  testWidgets(
+    'keyboard enters and dismisses the focused message menu',
+    (tester) async {
+      final scroll = ScrollController();
+      addTearDown(scroll.dispose);
+      String? replied;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ConversationTimeline(
+              tr: en,
+              scroll: scroll,
+              messages: [message(1), message(2)],
+              replyPreview: (_, _) => '',
+              attachment: (_, _, _) => const SizedBox(),
+              onReply: (id, _) => replied = id,
+            ),
+          ),
+        ),
+      );
+      Future<void> hit(LogicalKeyboardKey key) async {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+      }
+
+      await hit(LogicalKeyboardKey.tab);
+      await hit(LogicalKeyboardKey.tab);
+      await hit(LogicalKeyboardKey.enter);
+      expect(find.text('Reply'), findsOneWidget);
+      await hit(LogicalKeyboardKey.arrowDown);
+      await hit(LogicalKeyboardKey.escape);
+      expect(find.text('Reply'), findsNothing);
+      await hit(LogicalKeyboardKey.enter);
+      expect(find.text('Reply'), findsOneWidget);
+      await hit(LogicalKeyboardKey.enter);
+      expect(replied, 'id1');
+      expect(find.text('Reply'), findsNothing);
+      await hit(LogicalKeyboardKey.tab);
+      await hit(LogicalKeyboardKey.tab);
+      await hit(LogicalKeyboardKey.enter);
+      await hit(LogicalKeyboardKey.enter);
+      expect(replied, 'id2');
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.linux,
+      TargetPlatform.windows,
+    }),
+  );
+
   testWidgets('local day groups, delivery evidence, reply and selection', (
     tester,
   ) async {
