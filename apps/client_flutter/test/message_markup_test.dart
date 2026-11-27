@@ -67,7 +67,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: MessageMarkup(
-            '<img src="https://example.org/pixel">\n[Open](https://example.org/path)\n||hidden||\n[bad](javascript:noop)',
+            '<img src="https://example.org/pixel">\n[Open](https://example.org/path)\n**||hidden||**\n[bad](javascript:noop)',
             tr: english,
           ),
         ),

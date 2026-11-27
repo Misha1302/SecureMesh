@@ -141,21 +141,18 @@ class MessageMarkup extends StatelessWidget {
     r'\b(class|def|fn|function|if|else|for|while|let|var|final|const|int|bool|return|true|false|null|None|import|from|void|async|await|pub|use|struct)\b',
   );
 
-  Widget _line(BuildContext context, String line) {
-    final colors = Theme.of(context).colorScheme;
-    var content = line;
-    var quote = false;
-    if (content.startsWith('> ')) {
-      quote = true;
-      content = content.substring(2);
-    } else if (content.startsWith('- ') || content.startsWith('* ')) {
-      content = '• ${content.substring(2)}';
-    }
+  List<InlineSpan> _inlineSpans(
+    BuildContext context,
+    String content,
+    int depth,
+  ) {
+    if (depth > 8) return [TextSpan(text: content)];
     final spans = <InlineSpan>[];
     var end = 0;
     for (final m in _inline.allMatches(content)) {
-      if (end < m.start)
+      if (end < m.start) {
         spans.add(TextSpan(text: content.substring(end, m.start)));
+      }
       if (m[5] != null) {
         spans.add(
           WidgetSpan(
@@ -200,9 +197,13 @@ class MessageMarkup extends StatelessWidget {
           );
         }
       } else {
+        final nested = m[2] ?? m[3] ?? m[4] ?? m[7] ?? m[8];
         spans.add(
           TextSpan(
-            text: m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[6] ?? m[7] ?? m[8],
+            text: m[1] ?? m[6],
+            children: nested == null
+                ? null
+                : _inlineSpans(context, nested, depth + 1),
             style: TextStyle(
               fontWeight: m[2] == null ? null : FontWeight.bold,
               fontStyle: m[7] != null || m[8] != null ? FontStyle.italic : null,
@@ -219,7 +220,22 @@ class MessageMarkup extends StatelessWidget {
       end = m.end;
     }
     spans.add(TextSpan(text: content.substring(end)));
-    final body = Text.rich(TextSpan(children: spans));
+    return spans;
+  }
+
+  Widget _line(BuildContext context, String line) {
+    final colors = Theme.of(context).colorScheme;
+    var content = line;
+    var quote = false;
+    if (content.startsWith('> ')) {
+      quote = true;
+      content = content.substring(2);
+    } else if (content.startsWith('- ') || content.startsWith('* ')) {
+      content = '• ${content.substring(2)}';
+    }
+    final body = Text.rich(
+      TextSpan(children: _inlineSpans(context, content, 0)),
+    );
     if (!quote) return body;
     return Container(
       decoration: BoxDecoration(
