@@ -74,7 +74,8 @@ public static class DeviceTrust
             var actor = await Sql.Authenticate(ctx, db, false);
             await using var c = await db.OpenConnectionAsync();
             await using var cmd = Sql.Cmd(c, """
-                SELECT e.payload,e.candidate_signature,e.approver_id,e.grant_signature,d.public_key,e.approved_at IS NOT NULL
+                SELECT e.payload,e.candidate_signature,e.approver_id,e.grant_signature,d.public_key,e.approved_at IS NOT NULL,
+                       CASE WHEN e.device_id=$3 OR e.approver_id=$3 THEN e.activation_signature END
                 FROM device_enrollments e LEFT JOIN devices d ON d.id=e.approver_id
                 WHERE e.id=$1 AND e.user_id=$2 AND (e.device_id=$3 OR $4) AND (e.expires_at>now() OR e.approved_at IS NOT NULL)
                 """, id, actor.UserId, actor.DeviceId, actor.Trusted);
@@ -86,7 +87,8 @@ public static class DeviceTrust
                 approverId = r.IsDBNull(2) ? (Guid?)null : r.GetGuid(2),
                 grantSignature = r.IsDBNull(3) ? null : Convert.ToBase64String((byte[])r[3]),
                 approverKey = r.IsDBNull(4) ? null : Convert.ToBase64String((byte[])r[4]),
-                approved = r.GetBoolean(5)
+                approved = r.GetBoolean(5),
+                activationSignature = r.IsDBNull(6) ? null : Convert.ToBase64String((byte[])r[6])
             });
         });
 

@@ -28,6 +28,17 @@ builder.Services.AddRateLimiter(o =>
     o.GlobalLimiter=PartitionedRateLimiter.Create<HttpContext,string>(ctx=>RateLimitPartition.GetTokenBucketLimiter(
         ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",_=>new TokenBucketRateLimiterOptions {TokenLimit=120,TokensPerPeriod=60,ReplenishmentPeriod=TimeSpan.FromSeconds(10),QueueLimit=0,AutoReplenishment=true}));
 });
+var browserOrigin = builder.Configuration["BrowserClientOrigin"];
+if (browserOrigin is not null)
+{
+    if (!Uri.TryCreate(browserOrigin, UriKind.Absolute, out var origin) ||
+        origin.Scheme != Uri.UriSchemeHttps || origin.HostNameType == UriHostNameType.Unknown ||
+        origin.UserInfo.Length != 0 || browserOrigin != origin.GetLeftPart(UriPartial.Authority))
+        throw new InvalidOperationException("BrowserClientOrigin must be one exact HTTPS origin.");
+    builder.Services.AddCors(options => options.AddPolicy("BrowserClient", policy => policy
+        .WithOrigins(browserOrigin).WithMethods("GET", "POST", "PUT")
+        .WithHeaders("Content-Type", "Authorization")));
+}
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
     await scope.ServiceProvider.GetRequiredService<MeshDb>().Database.MigrateAsync();
@@ -42,9 +53,17 @@ app.Use(async(ctx,next)=>
     catch(NpgsqlException)
     {ctx.Response.StatusCode=503; await ctx.Response.WriteAsJsonAsync(new {code="STORAGE_UNAVAILABLE"});}
 });
+if (browserOrigin is not null) app.UseCors("BrowserClient");
 app.UseRateLimiter();
 app.MapIdentity();
+app.MapSessionInactivity();
+app.MapAccountRemoval();
+app.MapProfilePhotos();
+app.MapProfileText();
+app.MapPublicChannels();
+app.MapPrivateBlobs();
 app.MapDeviceTrust();
+app.MapRoster();
 app.MapMlsDirectory();
 Delivery.MapDelivery(app);
 app.MapStream();

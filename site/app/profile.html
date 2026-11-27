@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      name="theme-color"
+      content="#f5fbf7"
+      media="(prefers-color-scheme:light)"
+    />
+    <meta
+      name="theme-color"
+      content="#0e1513"
+      media="(prefers-color-scheme:dark)"
+    />
+    <title>Чаты · SecureMesh</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="stylesheet" href="./profile.css" />
+    <script type="module" src="./profile.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <a href="./index.html">SecureMesh</a
+        ><button id="lock" hidden>Заблокировать</button>
+      </header>
+      <h1 id="title">Локальный профиль</h1>
+      <p id="notice" role="status" aria-live="polite"></p>
+      <section id="loading">Открываем защищённое хранилище…</section>
+      <form id="entry" hidden>
+        <div id="new-fields">
+          <label
+            >Имя в профиле<input name="name" dir="auto" autocomplete="nickname"
+          /></label>
+          <label
+            >Уникальный @username<input
+              name="username"
+              autocapitalize="none"
+              spellcheck="false"
+              pattern="[a-z0-9_]{3,32}"
+              minlength="3"
+              maxlength="32"
+              autocomplete="username"
+          /></label>
+        </div>
+        <label
+          >Пароль<input
+            id="password"
+            type="password"
+            required
+            autocomplete="current-password"
+        /></label>
+        <label class="check"
+          ><input type="checkbox" id="show-password" />Показать пароль</label
+        >
+        <label class="check" id="confirm-label"
+          ><input type="checkbox" name="remembered" />Я сохранил пароль. Он
+          понадобится для входа и восстановления архива.</label
+        >
+        <button id="enter">Открыть профиль</button>
+      </form>
+      <details id="archives">
+        <summary>Открыть зашифрованную копию переписки</summary>
+        <form id="restore">
+          <label
+            >Файл архива SecureMesh<input
+              type="file"
+              required
+              name="file" /></label
+          ><label
+            >Пароль архива<input
+              type="password"
+              name="secret"
+              required
+              autocomplete="off" /></label
+          ><button>Открыть для чтения</button>
+        </form>
+        <div id="archive-view"></div>
+      </details>
+      <section id="account" hidden>
+        <h2>Аккаунт</h2>
+        <p id="account-name"></p>
+        <form id="register">
+          <label
+            >Почта для подтверждения<input
+              type="email"
+              name="email"
+              required
+              autocomplete="email" /></label
+          ><button>Зарегистрироваться</button>
+        </form>
+        <form id="verify" hidden>
+          <label
+            >Код из письма<input
+              name="code"
+              required
+              autocomplete="one-time-code" /></label
+          ><button>Подтвердить почту</button>
+        </form>
+        <form id="login" hidden><button>Войти на этом устройстве</button></form>
+      </section>
+      <section id="conversations" hidden>
+        <details>
+          <summary>Мой код проверки</summary>
+          <p>Передайте собеседнику по независимому каналу.</p>
+          <code id="my-code" dir="ltr"></code>
+        </details>
+        <form id="invite">
+          <label
+            >Новый диалог<input
+              name="peer"
+              required
+              placeholder="@username"
+              autocapitalize="none"
+              spellcheck="false" /></label
+          ><button>Отправить приглашение</button>
+        </form>
+        <div id="requests"></div>
+        <div class="bar">
+          <h2>Чаты</h2>
+          <button id="refresh">Обновить</button>
+        </div>
+        <div id="chat-list"></div>
+        <section id="thread" hidden>
+          <h2 id="peer"></h2>
+          <button id="earlier" hidden>Показать предыдущие сообщения</button>
+          <ol id="messages"></ol>
+          <form id="compose">
+            <label
+              >Сообщение<textarea
+                name="text"
+                required
+                maxlength="4000"
+                rows="2"
+              ></textarea></label
+            ><button>Отправить</button>
+          </form>
+        </section>
+      </section>
+      <section id="backup" hidden>
+        <details>
+          <summary>Сохранить копию переписки</summary>
+          <p>
+            Копия содержит текстовую историю для чтения. Для входа на другом
+            устройстве потребуется отдельное подтверждение.
+          </p>
+          <form id="export">
+            <label
+              >Пароль копии · от 16 символов<input
+                type="password"
+                name="secret"
+                required
+                autocomplete="new-password" /></label
+            ><button>Скачать зашифрованную копию</button>
+          </form>
+        </details>
+      </section>
+    </main>
+  </body>
+</html>

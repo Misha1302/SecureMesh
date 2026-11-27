@@ -352,6 +352,13 @@ const SyncResponse$json = {
     },
     {'1': 'next_cursor', '3': 3, '4': 1, '5': 12, '10': 'nextCursor'},
     {'1': 'has_more', '3': 4, '4': 1, '5': 8, '10': 'hasMore'},
+    {
+      '1': 'peer_processed_sequence',
+      '3': 5,
+      '4': 1,
+      '5': 4,
+      '10': 'peerProcessedSequence'
+    },
   ],
 };
 
@@ -360,7 +367,8 @@ final $typed_data.Uint8List syncResponseDescriptor = $convert.base64Decode(
     'CgxTeW5jUmVzcG9uc2USJwoPY29udmVyc2F0aW9uX2lkGAEgASgMUg5jb252ZXJzYXRpb25JZB'
     'JGCghtZXNzYWdlcxgCIAMoCzIqLnNlY3VyZW1lc2gudHJhbnNwb3J0LnYxLkVuY3J5cHRlZEVu'
     'dmVsb3BlUghtZXNzYWdlcxIfCgtuZXh0X2N1cnNvchgDIAEoDFIKbmV4dEN1cnNvchIZCghoYX'
-    'NfbW9yZRgEIAEoCFIHaGFzTW9yZQ==');
+    'NfbW9yZRgEIAEoCFIHaGFzTW9yZRI2ChdwZWVyX3Byb2Nlc3NlZF9zZXF1ZW5jZRgFIAEoBFIV'
+    'cGVlclByb2Nlc3NlZFNlcXVlbmNl');
 
 @$core.Deprecated('Use processedAckDescriptor instead')
 const ProcessedAck$json = {

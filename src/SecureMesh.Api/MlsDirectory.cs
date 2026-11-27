@@ -26,6 +26,11 @@ public static class MlsDirectory
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=ANY($1) ORDER BY id FOR UPDATE",new Guid[]{actor.UserId,recipient})) await cmd.ExecuteNonQueryAsync();
             await using(var old=Sql.Cmd(c,"SELECT 1 FROM chat_requests WHERE id=$1 AND sender_device=$2 AND recipient_user=$3",input.Id,actor.DeviceId,recipient))
                 if(await old.ExecuteScalarAsync() is not null) return Results.Ok(new{id=input.Id});
+            await using(var pair=Sql.Cmd(c,"""
+                SELECT count(*) FROM chat_requests q JOIN devices d ON d.id=q.sender_device
+                WHERE d.user_id=$1 AND q.recipient_user=$2 AND q.created_at>now()-interval '1 day'
+                """,actor.UserId,recipient))
+                if((long)(await pair.ExecuteScalarAsync())!>=5) throw new ApiError(429,"CONTACT_REQUEST_LIMIT");
             await using(var count=Sql.Cmd(c,"SELECT count(*) FROM chat_requests WHERE (sender_device=$1 OR recipient_user=$2) AND expires_at>now()",actor.DeviceId,recipient))
                 if((long)(await count.ExecuteScalarAsync())!>=100) throw new ApiError(429,"CHAT_REQUEST_LIMIT");
             await using(var cmd=Sql.Cmd(c,"INSERT INTO chat_requests(id,sender_device,recipient_user) VALUES($1,$2,$3)",input.Id,actor.DeviceId,recipient))
@@ -36,15 +41,29 @@ public static class MlsDirectory
         {
             var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync();
             await using var cmd=Sql.Cmd(c,"""
-                SELECT q.id,CASE WHEN q.sender_device=$2 THEN target.username ELSE u.username END,q.sender_device,d.public_key,q.recipient_device,receiver.public_key,q.sender_device=$2
+                SELECT q.id,CASE WHEN q.sender_device=$2 THEN target.username ELSE u.username END,q.sender_device,d.public_key,q.recipient_device,receiver.public_key,q.sender_device=$2,
+                       EXISTS (SELECT 1 FROM conversation_bootstraps b WHERE b.invitation_id=q.id)
                 FROM chat_requests q JOIN devices d ON d.id=q.sender_device JOIN users u ON u.id=d.user_id
                 JOIN users target ON target.id=q.recipient_user LEFT JOIN devices receiver ON receiver.id=q.recipient_device
                 WHERE (q.recipient_user=$1 OR q.sender_device=$2) AND q.expires_at>now() AND NOT d.revoked AND d.trusted
                 ORDER BY q.created_at,q.id LIMIT 100
                 """,actor.UserId,actor.DeviceId);
             await using var r=await cmd.ExecuteReaderAsync();var rows=new List<object>();
-            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),username=r.GetString(1),senderDevice=r.GetGuid(2),senderKey=Convert.ToBase64String((byte[])r[3]),recipientDevice=r.IsDBNull(4)?(Guid?)null:r.GetGuid(4),recipientKey=r.IsDBNull(5)?null:Convert.ToBase64String((byte[])r[5]),accepted=!r.IsDBNull(4),outgoing=r.GetBoolean(6)});
+            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),username=r.GetString(1),senderDevice=r.GetGuid(2),senderKey=Convert.ToBase64String((byte[])r[3]),recipientDevice=r.IsDBNull(4)?(Guid?)null:r.GetGuid(4),recipientKey=r.IsDBNull(5)?null:Convert.ToBase64String((byte[])r[5]),accepted=!r.IsDBNull(4),outgoing=r.GetBoolean(6),established=r.GetBoolean(7)});
             return Results.Ok(rows);
+        });
+        app.MapPost("/v1/chat-requests/{id:guid}/dismiss",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
+        {
+            var actor=await Sql.Authenticate(ctx,db);
+            await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
+            // Retain the request ID for retry deduplication. An accepted request may
+            // already have an MLS lease, so its identity binding must stay intact.
+            await using var cmd=Sql.Cmd(c,"""
+                UPDATE chat_requests SET expires_at=LEAST(expires_at,now())
+                WHERE id=$1 AND (recipient_user=$2 OR sender_device=$3) AND recipient_device IS NULL
+                """,id,actor.UserId,actor.DeviceId);
+            if(await cmd.ExecuteNonQueryAsync(ctx.RequestAborted)!=1) throw new ApiError(404,"PENDING_REQUEST_NOT_FOUND");
+            return Results.NoContent();
         });
         app.MapPost("/v1/chat-requests/{id:guid}/accept",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
         {
@@ -73,16 +92,17 @@ public static class MlsDirectory
         {
             var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync();
             await using var cmd=Sql.Cmd(c,"""
-                SELECT c.id,d.id,d.public_key,u.username FROM members own JOIN conversations c ON c.id=own.conversation_id
-                JOIN members peer ON peer.conversation_id=c.id AND peer.device_id<>own.device_id
+                SELECT c.id,d.id,d.public_key,u.username,u.display_name,p.version FROM conversation_devices own JOIN conversations c ON c.id=own.conversation_id
+                JOIN members peer ON peer.conversation_id=c.id
                 JOIN devices d ON d.id=peer.device_id JOIN users u ON u.id=d.user_id
+                LEFT JOIN profile_photos p ON p.user_id=u.id
                 LEFT JOIN conversation_bootstraps b ON b.conversation_id=c.id
-                WHERE own.device_id=$1 AND (SELECT count(*) FROM members WHERE conversation_id=c.id)=2
-                  AND (b.conversation_id IS NULL OR b.sender_device=$1 OR b.received)
+                WHERE own.device_id=$1 AND d.user_id<>$2 AND (SELECT count(*) FROM members WHERE conversation_id=c.id)=2
+                  AND (b.conversation_id IS NULL OR b.sender_device=$1 OR b.received OR own.join_seq>0)
                 ORDER BY c.id LIMIT 100
-                """,actor.DeviceId);
+                """,actor.DeviceId,actor.UserId);
             await using var r=await cmd.ExecuteReaderAsync();var rows=new List<object>();
-            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),peerDevice=r.GetGuid(1),peerKey=Convert.ToBase64String((byte[])r[2]),peerName=r.GetString(3),mode="E2EE_PRIVATE"});
+            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),peerDevice=r.GetGuid(1),peerKey=Convert.ToBase64String((byte[])r[2]),peerName=r.GetString(3),peerDisplayName=r.IsDBNull(4)?null:r.GetString(4),peerPhotoVersion=r.IsDBNull(5)?(Guid?)null:r.GetGuid(5),mode="E2EE_PRIVATE"});
             return Results.Ok(rows);
         });
         app.MapGet("/v1/crypto/welcomes",async(HttpContext ctx,NpgsqlDataSource db)=>

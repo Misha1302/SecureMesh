@@ -9,7 +9,7 @@ public sealed record ConversationRequest(Guid Id, Guid[] DeviceIds, long Initial
 public sealed record SendRequest(Guid ConversationId, Guid ClientMessageId, long MlsEpoch, int EnvelopeKind, byte[] Ciphertext);
 public sealed record Saved(Guid ServerMessageId, long ServerSequence, bool AlreadyCommitted, bool Durable = true);
 public sealed record Message(Guid ConversationId, Guid ClientMessageId, Guid SenderDeviceId, long MlsEpoch, int EnvelopeKind, byte[] Ciphertext, long ServerSequence, Guid ServerMessageId, byte[] CiphertextSha256);
-public sealed record Page(Guid ConversationId, List<Message> Messages, string NextCursor, bool HasMore);
+public sealed record Page(Guid ConversationId, List<Message> Messages, string NextCursor, bool HasMore, long PeerProcessedSequence);
 public sealed record ProcessedAckRequest(Guid ConversationId, long Sequence);
 
 public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protection)
@@ -22,15 +22,15 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         var digest=SHA256.HashData(input.Ciphertext);
         await using var c=await db.OpenConnectionAsync(ct);
         await using var tx=await c.BeginTransactionAsync(ct);
-        long epoch,seq;
+        long epoch,seq; bool removed;
         // One conversation row serializes sequence allocation and MLS epoch compare-and-swap.
-        await using(var cmd=Sql.Cmd(c,"SELECT epoch,next_seq FROM conversations WHERE id=$1 FOR UPDATE",input.ConversationId))
+        await using(var cmd=Sql.Cmd(c,"SELECT epoch,next_seq,account_removed FROM conversations WHERE id=$1 FOR UPDATE",input.ConversationId))
         await using(var r=await cmd.ExecuteReaderAsync(ct))
         {
             if(!await r.ReadAsync(ct)) throw new ApiError(403,"MEMBERSHIP_REQUIRED");
-            epoch=r.GetInt64(0); seq=r.GetInt64(1);
+            epoch=r.GetInt64(0); seq=r.GetInt64(1); removed=r.GetBoolean(2);
         }
-        await Sql.RequireMember(c,input.ConversationId,actor.DeviceId);
+        await Sql.DeliveryFloor(c,input.ConversationId,actor.DeviceId);
         Saved? existing=null;
         await using(var cmd=Sql.Cmd(c,"SELECT id,seq,digest,epoch,kind FROM messages WHERE conversation_id=$1 AND device_id=$2 AND client_id=$3",input.ConversationId,actor.DeviceId,input.ClientMessageId))
         await using(var r=await cmd.ExecuteReaderAsync(ct))
@@ -43,6 +43,19 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
             }
         }
         if(existing is not null) {await tx.CommitAsync(ct); return existing;}
+        if(removed) throw new ApiError(409,"CONVERSATION_READ_ONLY");
+        // Revocation does not remove an MLS leaf. Serialize acceptance with device
+        // revocation so no new envelope can be saved for a known stale roster.
+        await using(var cmd=Sql.Cmd(c,"""
+            SELECT d.trusted, d.revoked FROM conversation_devices m JOIN devices d ON d.id=m.device_id
+            WHERE m.conversation_id=$1 ORDER BY d.id FOR SHARE OF d
+            """,input.ConversationId))
+        await using(var reader=await cmd.ExecuteReaderAsync(ct))
+        {
+            while(await reader.ReadAsync(ct))
+                if(!reader.GetBoolean(0) || reader.GetBoolean(1))
+                    throw new ApiError(409,"MLS_ROSTER_REKEY_REQUIRED");
+        }
         if(input.MlsEpoch!=epoch) throw new ApiError(409,"MLS_EPOCH_CONFLICT");
         seq=checked(seq+1);
         var id=Guid.NewGuid();
@@ -68,7 +81,10 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
             if(parts.Length!=3 || parts[0]!=actor.DeviceId.ToString("D") || parts[1]!=conversation.ToString("D") || !long.TryParse(parts[2],out after) || after<0) throw new ApiError(400,"INVALID_CURSOR");
         }
         await using var c=await db.OpenConnectionAsync(ct);
-        await Sql.RequireMember(c,conversation,actor.DeviceId);
+        await using var tx=await c.BeginTransactionAsync(ct);
+        await using(var barrier=Sql.Cmd(c,"SELECT id FROM conversations WHERE id=$1 FOR SHARE",conversation))
+            await barrier.ExecuteScalarAsync(ct);
+        after=Math.Max(after,await Sql.DeliveryFloor(c,conversation,actor.DeviceId));
         await using var cmd=Sql.Cmd(c,"SELECT client_id,device_id,epoch,kind,ciphertext,seq,id,digest FROM messages WHERE conversation_id=$1 AND seq>$2 ORDER BY seq LIMIT $3",conversation,after,limit+1);
         await using var r=await cmd.ExecuteReaderAsync(ct);
         var messages=new List<Message>(); var total=0; bool more=false;
@@ -82,12 +98,21 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         }
         var last=messages.Count==0?after:messages[^1].ServerSequence;
         var next=cursorProtector.Protect($"{actor.DeviceId:D}/{conversation:D}/{last.ToString(CultureInfo.InvariantCulture)}");
-        return new Page(conversation,messages,next,more);
+        await r.CloseAsync();
+        await using var receipt = Sql.Cmd(c, """
+            SELECT COALESCE(max(cur.seq), 0) FROM cursors cur
+            JOIN conversation_devices m ON m.conversation_id=cur.conversation_id AND m.device_id=cur.device_id
+            JOIN devices d ON d.id=m.device_id
+            WHERE cur.conversation_id=$1 AND d.user_id<>$2 AND d.trusted AND NOT d.revoked
+            """, conversation, actor.UserId);
+        var peerProcessed = (long)(await receipt.ExecuteScalarAsync(ct))!;
+        await tx.CommitAsync(ct);
+        return new Page(conversation,messages,next,more,peerProcessed);
     }
     public async Task Ack(Actor actor,ProcessedAckRequest input)
     {
         await using var c=await db.OpenConnectionAsync(); await using var tx=await c.BeginTransactionAsync();
-        await Sql.RequireMember(c,input.ConversationId,actor.DeviceId);
+        await Sql.DeliveryFloor(c,input.ConversationId,actor.DeviceId);
         await using(var cmd=Sql.Cmd(c,"SELECT next_seq FROM conversations WHERE id=$1",input.ConversationId))
         {var max=(long)(await cmd.ExecuteScalarAsync())!; if(input.Sequence<0 || input.Sequence>max) throw new ApiError(400,"INVALID_RECEIPT");}
         await using(var cmd=Sql.Cmd(c,"INSERT INTO cursors VALUES($1,$2,$3) ON CONFLICT(conversation_id,device_id) DO UPDATE SET seq=greatest(cursors.seq,excluded.seq)",input.ConversationId,actor.DeviceId,input.Sequence)) await cmd.ExecuteNonQueryAsync();

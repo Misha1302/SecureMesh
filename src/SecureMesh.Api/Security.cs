@@ -7,6 +7,22 @@ namespace SecureMesh;
 
 public static class Passwords
 {
+    // The extra '$' also makes older six-component PHC parsers reject this row.
+    public static string Marker(int version) => version == 2 ? "sm2$" : "";
+    public static string? Input(int version, string? password, string? credential)
+    {
+        if (version == 1) return credential is null && password is { Length: >= 1 and <= 256 } ? password : null;
+        if (version != 2 || password is not null || credential is not { Length: 44 }) return null;
+        Span<byte> decoded = stackalloc byte[32];
+        return Convert.TryFromBase64String(credential, decoded, out var len) && len == 32 &&
+            Convert.ToBase64String(decoded) == credential ? credential : null;
+    }
+    public static async Task<bool> VerifyVersion(int version, string secret, string stored, string dummy)
+    {
+        bool matches = stored.StartsWith("sm2$", StringComparison.Ordinal) == (version == 2);
+        return await Verify(secret, matches ? stored[Marker(version).Length..] : dummy) && matches;
+    }
+
     private const int Memory = 65536;
     public static async Task<string> Hash(string password)
     {
@@ -43,6 +59,21 @@ public static class Sql
     }
     public static byte[] Hash(string token) => SHA256.HashData(Encoding.UTF8.GetBytes(token));
     public static string Token() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+    internal static async Task LockTrustedProfileOwner(NpgsqlConnection c, Actor actor, CancellationToken cancellationToken)
+    {
+        // Serialize with device revocation, then recheck this session while it holds the account lock.
+        await using (var owner = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", actor.UserId))
+            await owner.ExecuteScalarAsync(cancellationToken);
+        await using (var session = Sql.Cmd(c, """
+            SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
+            WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND d.trusted AND NOT d.revoked
+                AND NOT s.used AND NOT s.revoked AND s.expires_at>now()
+                AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
+            """, actor.SessionId, actor.DeviceId, actor.UserId))
+            if (await session.ExecuteScalarAsync(cancellationToken) is null)
+                throw new ApiError(401, "AUTH_REQUIRED");
+    }
+
     public static async Task<Actor> Authenticate(HttpContext ctx, NpgsqlDataSource db, bool requireTrusted = true)
     {
         var header = ctx.Request.Headers.Authorization.ToString();
@@ -51,12 +82,18 @@ public static class Sql
         await using var cmd = Cmd(c, """
             SELECT d.user_id,d.id,s.id,d.trusted FROM sessions s JOIN devices d ON d.id=s.device_id
             WHERE s.access_hash=$1 AND s.expires_at>now() AND NOT s.revoked AND NOT s.used AND NOT d.revoked
+              AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
             """, Hash(header[7..]));
         await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
         if (!await r.ReadAsync(ctx.RequestAborted)) throw new ApiError(401, "AUTH_REQUIRED");
         var trusted = r.GetBoolean(3);
         if (requireTrusted && !trusted) throw new ApiError(403, "DEVICE_PENDING_TRUST");
         return new Actor(r.GetGuid(0), r.GetGuid(1), r.GetGuid(2), trusted);
+    }
+    public static async Task<long> DeliveryFloor(NpgsqlConnection c, Guid conversation, Guid device)
+    {
+        await using var cmd=Cmd(c,"SELECT m.join_seq FROM conversation_devices m JOIN devices d ON d.id=m.device_id WHERE m.conversation_id=$1 AND d.id=$2 AND d.trusted AND NOT d.revoked",conversation,device);
+        return await cmd.ExecuteScalarAsync() is long floor ? floor : throw new ApiError(403,"MEMBERSHIP_REQUIRED");
     }
     public static async Task RequireMember(NpgsqlConnection c, Guid conversation, Guid device)
     {

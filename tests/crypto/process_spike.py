@@ -62,6 +62,16 @@ def main():
         root=Path(tmp)
         a,b,c,attacker=[Device(root) for _ in range(4)]
         assert len({a.public,b.public,c.public,attacker.public})==4
+        def peer_status(key):
+            return a.call('peer_key_status', identity=b.identity, public_key=key)['status']
+
+        assert peer_status(b.public) == 'unknown'
+        assert peer_status(attacker.public) == 'unknown'
+        a.call('peer_key_status', reject=True, identity=b.identity, public_key='AA==')
+        a.pin(b)
+        assert peer_status(b.public) == 'matches'
+        assert peer_status(attacker.public) == 'changed'
+        assert peer_status(b.public) == 'matches'
         for x in (a,b,c):
             for y in (a,b,c): x.pin(y)
         group=str(uuid.uuid4())
@@ -99,6 +109,27 @@ def main():
         assert all(x['id']!=crash_id for x in a.call('outbox')['messages'])
         retry=a.call('queue',group=group,id=crash_id,text='crash consistency')
         assert b.call('process',group=group,ciphertext=retry['ciphertext'])['text']=='crash consistency'
+        # NativeDelivery uses the generic durable ACK for every envelope. Verify
+        # a rekey becomes usable before the sender's sync echo arrives.
+        staged = a.call('stage_rekey', group=group, id=str(uuid.uuid4()))
+        ack = dict(group=group, id=staged['id'], seq=15)
+        a.call('saved', reject=True, crash_before_commit=True, **ack)
+        assert staged in a.call('outbox')['messages']
+        confirmed = a.call('saved', **ack)
+        assert confirmed['saved'] and confirmed['epoch'] == staged['epoch'] + 1
+        assert staged not in a.call('outbox')['messages']
+        assert a.call('commit_saved', **ack)['already_saved']
+        a.call('saved', reject=True, **{**ack, 'seq': 16})
+        a.call('ingest', reject=True, **{**staged, 'sender': a.identity, 'seq': 1})
+        assert a.call('cursor', group=group)['seq'] == 0
+        b.call('process', group=group, ciphertext=staged['ciphertext'])
+        next_message = a.call('queue', group=group, id=str(uuid.uuid4()), text='durable epoch')
+        assert next_message['epoch'] == confirmed['epoch']
+        assert b.call('process', group=group, ciphertext=next_message['ciphertext'])['text'] == 'durable epoch'
+        following = a.call('queue', group=group, id=str(uuid.uuid4()), text='second queued')
+        timeline = a.call('timeline', group=group)['messages']
+        pending = [msg['id'] for msg in timeline if msg['own'] and msg['status'] == 'queued']
+        assert pending[-2:] == [next_message['id'], following['id']]
         for d in (a,b,c):
             assert not d.path.read_bytes().startswith(b'SQLite format')
             assert b'private test sentinel' not in d.path.read_bytes()

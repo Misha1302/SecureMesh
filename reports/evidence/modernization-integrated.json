@@ -1,0 +1,168 @@
+{
+  "integrated_application_source": "afa4fc541a0b661cca8b82a71ae0f47e5725ecb5",
+  "test_commits": [
+    "3c8a8e659e4513f9e16ed88590eb5a5ad2dc7f63",
+    "b6d5c860a20aaecf98e5975f46cd2a82734a452d"
+  ],
+  "runtime": {
+    "dotnet_sdk": "10.0.111",
+    "postgresql": "17.12",
+    "rust": "1.93.1",
+    "dart": "3.14.0",
+    "mailpit": "1.27.10"
+  },
+  "test_method": "Isolated local TLS ASP.NET API, Mailpit, PostgreSQL, OpenMLS and SQLCipher. Temporary copies of repository tests substituted the host PostgreSQL client executable for docker compose exec and resolved the Dart SDK executable. Assertions preserved. UTF8 PostgreSQL used for Unicode limits. Full API migrations and pg_dump/pg_restore checked on seven-migration schema.",
+  "binary_sha256": {
+    "src/crypto_core/target/debug/securemesh-crypto": "a55cd11b65df084ddb0defa20ca65f54a36cedcc92c56bfcf921c10ebdc06398",
+    "src/crypto_core/target/debug/libsecuremesh_crypto.so": "9cafe75dd75cb697290c8f8d3adb2ab1bd511679c9a70a6670ac0e1fff1a71a7",
+    "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "3dc95f240dc3d6b9ba6cc32172bd9c813e136957f7a9f5ebe763575ea69596c4"
+  },
+  "suites": {
+    "delivery": {
+      "status": "PASS",
+      "file_sha256": "e1bece91fa3da8c89132fe1da4437df4aeaf902e64f9200668ca7b4a98bd1ead",
+      "checks": [
+        "PASS: verified email + one-use token; Argon2 login; independent Ed25519 device proof; untrusted device denied; refresh rotation/reuse; real MLS HTTPS/WSS exchange; persistent offline queue; lost ACK/idempotent concurrent retries; digest/epoch conflict; encrypted receiver crash recovery; paginated scoped cursors; API restart; device revocation on active WSS; membership/IDOR denial; log secret checks; atomic message/outbox counts."
+      ]
+    },
+    "directory": {
+      "status": "PASS",
+      "file_sha256": "6a809c170a7f33f67cc4e218dbcf15f5d79ec84f2c432428bb5b98498a630649",
+      "checks": [
+        "PASS: real OpenMLS public KeyPackage validation; credential/key/signature substitution denied; trusted publication; explicit recipient consent; atomic one-use lease/race/idempotency; signed recipient-scoped Welcome; legacy bootstrap disabled; crash before local join COMMIT recovers; redelivery cannot roll back MLS; TLS two-way ciphertext delivery and membership IDOR; late bootstrap ACK retry after lease expiry; no private keys in server helper."
+      ]
+    },
+    "migrations": {
+      "status": "PASS",
+      "file_sha256": "46f71c97f422b86fbcbd6a08a8bc613db982b90d1f21de8fdface3eab103c188",
+      "checks": [
+        "PASS: fresh owned PostgreSQL database; all seven EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused."
+      ]
+    },
+    "restore_v2": {
+      "status": "PASS",
+      "file_sha256": "c874ceec731624af5a6d25d5169532ada6a87b7fb72df40d74d0517d50c74ce9",
+      "checks": [
+        "PASS: actual V2 schema with seven migrations, consented KeyPackage/Welcome DM and durable message/outbox restored into an isolated database; API login/session/DM listing and original SQLCipher/OpenMLS recipient decrypt/cursor/receipt work. Source DB remained available. Object/media restore not covered."
+      ]
+    },
+    "native_transport": {
+      "status": "PASS",
+      "file_sha256": "df729582f5ccd9728de06e809bca55121eb7d66820db4b8757030475aa3c8657",
+      "checks": [
+        "PASS: actual native Dart WSS/protobuf + Rust/OpenMLS/SQLCipher + TLS API/PG; production delivery cycle pipelines three immutable sends with sync and bounded receipts; half-open/blocked HTTPS fallback; lost ACK idempotence; WSS recovery; malformed ACK denied with outbox retained; paginated decrypt/cursors; both clients contain all 11 IDs once. Not a GUI or GPRS timing run.",
+        "PASS: native child terminated within 45 seconds including lost close frames; no hanging process accepted as success."
+      ]
+    },
+    "onboarding_recovery": {
+      "status": "PASS",
+      "file_sha256": "13ae1c3d3efc26c5c868eb669d1a013674ec3670258d9f00d0c5b9e39bced5d3",
+      "checks": [
+        "PASS: server challenge purpose/ID/device/username substitutions denied before signing/login POST; zero server sessions",
+        "PASS: lost accepted login reply + SIGKILL + wrong-password retry preserves same trusted key and one server device",
+        "PASS: durable session + SIGKILL resumes without password/new login; foreign binding and pre-COMMIT abort rejected; pending device remains private-data denied",
+        "PASS: expired saved session requests password with same key; SIGKILL after profile COMMIT reopens without another login",
+        "PASS: wrong local passphrase denied; invalid initializer rolls back identity+journal; legacy initialized store remains compatible"
+      ]
+    },
+    "epochs": {
+      "status": "PASS",
+      "file_sha256": "cfc37fc23e1aacfcf79a058bcff1c9e3ec0b7da8695fddd2edc539e7aaff63f7",
+      "checks": [
+        "PASS: two real MLS commits race at epoch 1; exactly one accepted; lost ACK retry preserves commit; winner merges only after durable save; loser discards confirmed-rejected pending commit, processes winner, rebases at epoch 2; both clients resume encrypted text at epoch 3 with contiguous cursors. Group membership workflow remains separate."
+      ]
+    },
+    "enrollment": {
+      "status": "PASS",
+      "file_sha256": "9504c7f51b964590a752c0a1554d46c87f01a5e0c0bd10982b9e5b4a3b0921db",
+      "checks": [
+        "PASS: pending login isolation; independent device keys; owner/key-bound two-device signatures; pinned approver and explicit confirmation; durable immutable approval retry; activation proof only after local grant verification; invalid activation/proof/substitution/account/replay/expiry/IDOR/self-approval/race/revoked-approver denied; no automatic MLS/history access. Camera QR and MLS multi-device enrollment/rekey still unimplemented."
+      ]
+    },
+    "enrollment_quota": {
+      "status": "PASS",
+      "file_sha256": "c7e92036433e3894980ff91f485d4e4028794ff9cec3315447e94d23957b73e6",
+      "checks": [
+        "PASS: 32 real new enrollment issuances across expired-row cleanup; same pending request retry does not consume quota; 33rd denied by ENROLLMENT_LIMIT, including after API restart; next rolling-day window allows issuance; candidate stays pending. Expiry/window timestamps advanced only in an owned isolated DB; no mocked API/crypto."
+      ]
+    },
+    "native_cursor_recovery": {
+      "status": "PASS",
+      "file_sha256": "5efba5c5abe4d3a4089d52d1b3c158753d578fedaa5f5e73ed6652b5bea36d64",
+      "checks": [
+        "PASS: native 1000-event ordered cursor recovery; no delivery during blackout; local inbox and cursor committed before processed receipt.",
+        "PASS: actual 60.000s blackout blocked WSS and HTTPS, all 1000 ordered IDs recovered, cursor/receipt=1000 and reopened SQLCipher state verified."
+      ]
+    },
+    "crypto_spike": {
+      "status": "PASS",
+      "file_sha256": "a2f9744f5ecb277f0c71c83c909c74f0620d543a5035a7192ecffa20dacdf5d8"
+    },
+    "upgrade_round_trip": {
+      "status": "PASS",
+      "file_sha256": "1113c9c3bddb6fc486684359b57328b20de65a49e55f23698604663f1ccdbd40",
+      "original_cli_commit": "857208f1f8743342eea6371bd0e63ecbbe841fd5",
+      "original_cli_sha256": "e017f9afb4a3b88986b2d9ff46ca50e9801f25fc4c45438da4699aa381aace8a",
+      "checked": "Identity/pins, history, queued immutable ciphertext, cross-version MLS, encrypted draft, remote delivered state and pending status across previous-client writes."
+    },
+    "native_session": {
+      "status": "PASS",
+      "file_sha256": "58e25b82bbe304f3c2f7d0639c841cf870fc55cdf3131b2371ad05859b152a1a",
+      "checks": [
+        "PASS: eight actual concurrent Dart API calls share one rotating refresh; new tokens persisted in SQLCipher before use; closed session denied.",
+        "PostgreSQL confirms one rotation and no refresh-family reuse revocation."
+      ]
+    }
+  },
+  "known_limits": [
+    "No physical device or mobile network",
+    "Blackout and shaped-TCP trials are separate different conditions",
+    "UI and installation coverage tracked separately"
+  ],
+  "blackout": {
+    "count": 1000,
+    "duplicates": 0,
+    "missing_ids": 0,
+    "received_during_blackout": 0,
+    "cursor_sequence": 1000,
+    "elapsed_seconds": 211.925,
+    "network_failures_observed": 2,
+    "api_statuses_observed": [],
+    "blackout_seconds": 60.000381095999956,
+    "sender_finished_seconds": 11.431183187999977,
+    "dropped_transport_bytes": 10977,
+    "source_head": "3c8a8e659e4513f9e16ed88590eb5a5ad2dc7f63",
+    "source_sha256": {
+      "apps/client_flutter/lib/delivery_client.dart": "87a7490462f054007c9220c320174116a17eb8061e30cf283685cb12617fd7fe",
+      "apps/client_flutter/lib/transport.dart": "f9affe6c9ad5845c60382a0f77c346eb8fc5a38b96e849dcade168ca8d9bfbbe",
+      "apps/client_flutter/tool/cursor_recovery.dart": "78d070868c5c45d135e5126ea7e2f04dc95cf252f0a55f7366fe33616836e4b9"
+    }
+  },
+  "bandwidth_trial": {
+    "profile": "gprs",
+    "seed": 7,
+    "messages_each_direction": 20,
+    "delivery_p50": 6.190439000000001,
+    "delivery_p95": 7.974036000000002,
+    "delivery_p99": 8.482312999999998,
+    "duplicates": 0,
+    "missing_ids": 0,
+    "elapsed_seconds": 26.571237,
+    "retries": 0,
+    "recent_errors": [],
+    "https_requests": 0,
+    "wss_application_bytes_sent": [
+      17473,
+      18218
+    ],
+    "wss_application_bytes_received": [
+      23418,
+      22942
+    ],
+    "platform": "Linux native Dart; production NativeDelivery/MeshTransport/FRB/OpenMLS/SQLCipher",
+    "protocol": "two real Dart clients via warmed WSS/HTTPS on isolated loopback",
+    "emulator": "Toxiproxy 2.13.0, 750ms one-way and 2 KB/s per TCP direction per connection, no packet-loss injection",
+    "exit_code": 0,
+    "source_head": "3c8a8e659e4513f9e16ed88590eb5a5ad2dc7f63"
+  }
+}

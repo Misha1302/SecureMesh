@@ -1,0 +1,232 @@
+name: Android release-mode verification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/client_flutter/**'
+      - 'src/crypto_core/**'
+      - 'scripts/build-android-release.sh'
+      - '.github/workflows/android-candidate.yml'
+      - '.github/gradle/central-mirror.init.gradle'
+      - 'tests/android/**'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verified-apk:
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.find.outputs.run }}
+      source: ${{ steps.find.outputs.source }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: find
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash tests/android/find-verified-apk.sh
+
+  package-and-launch:
+    needs: verified-apk
+    if: needs.verified-apk.outputs.run == ''
+    outputs:
+      apk_artifact: ${{ steps.laboratory_apk.outputs.artifact-id }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+      - name: Install pinned Android SDK packages
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+      - run: cargo install cargo-ndk --locked --version 4.1.2
+      - name: Use the Google Cloud Maven Central mirror on the CI runner
+        run: install -Dm644 .github/gradle/central-mirror.init.gradle ~/.gradle/init.d/central-mirror.gradle
+      - name: Build APK using an ephemeral test certificate
+        shell: bash
+        run: |
+          export SECUREMESH_SIGNING_STORE="$RUNNER_TEMP/test.jks"
+          export SECUREMESH_KEY_ALIAS=ci-only
+          SECUREMESH_STORE_PASSWORD=$(openssl rand -hex 24)
+          echo "::add-mask::$SECUREMESH_STORE_PASSWORD"
+          export SECUREMESH_STORE_PASSWORD
+          export SECUREMESH_KEY_PASSWORD="$SECUREMESH_STORE_PASSWORD"
+          keytool -genkeypair -storetype JKS -keystore "$SECUREMESH_SIGNING_STORE" \
+            -storepass:env SECUREMESH_STORE_PASSWORD -keypass:env SECUREMESH_KEY_PASSWORD \
+            -alias "$SECUREMESH_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 1 \
+            -dname "CN=Ephemeral SecureMesh CI"
+          SECUREMESH_SIGNER_SHA256=$(keytool -exportcert -keystore "$SECUREMESH_SIGNING_STORE" \
+            -storepass:env SECUREMESH_STORE_PASSWORD -alias "$SECUREMESH_KEY_ALIAS" | sha256sum | cut -d' ' -f1)
+          export SECUREMESH_SIGNER_SHA256
+          scripts/build-android-release.sh
+          if (cd apps/client_flutter/android && ./gradlew :app:assembleReleaseAndroidTest); then
+            touch "$RUNNER_TEMP/biometric-test-built"
+          else
+            echo '::error::Biometric instrumentation APK did not compile. The required biometric check will fail.'
+          fi
+      - name: Allow emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install APK and launch its main activity
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          script: |
+            set -e
+            adb install apps/client_flutter/build/app/outputs/flutter-apk/app-release.apk
+            adb shell am start -W -n com.example.securemesh_client/.MainActivity | tee "$RUNNER_TEMP/activity.txt"
+            grep -q 'Status: ok' "$RUNNER_TEMP/activity.txt"
+            sleep 3
+            adb shell pidof com.example.securemesh_client > "$RUNNER_TEMP/securemesh-pid"
+            grep -Eq '[0-9]+' "$RUNNER_TEMP/securemesh-pid"
+            test -f "$RUNNER_TEMP/biometric-test-built"
+            adb install -t apps/client_flutter/build/app/outputs/apk/androidTest/release/app-release-androidTest.apk
+            adb shell am instrument -w -r com.example.securemesh_client.test/com.example.securemesh_client.BiometricFallbackInstrumentation | tee "$RUNNER_TEMP/biometric-instrumentation.txt"
+            adb logcat -b crash -d -t 250
+      - name: Check the installed app remained alive after launch
+        id: apk_launch
+        if: ${{ !cancelled() }}
+        run: |
+          if grep -q 'Status: ok' "$RUNNER_TEMP/activity.txt" && grep -Eq '[0-9]+' "$RUNNER_TEMP/securemesh-pid"; then
+            echo 'verified=true' >> "$GITHUB_OUTPUT"
+          else
+            exit 1
+          fi
+      - name: Retain emulator-tested APK for laboratory use
+        id: laboratory_apk
+        if: ${{ !cancelled() && steps.apk_launch.outputs.verified == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: securemesh-android-ephemeral-test-key
+          path: apps/client_flutter/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Require OS biometric fallback and profile isolation
+        if: ${{ !cancelled() && steps.apk_launch.outputs.verified == 'true' }}
+        run: |
+          test -f "$RUNNER_TEMP/biometric-test-built"
+          tr -d '\r' < "$RUNNER_TEMP/biometric-instrumentation.txt" | grep -Fxq 'INSTRUMENTATION_RESULT: fallback=verified'
+
+  android-linux-interop:
+    needs: [verified-apk, package-and-launch]
+    if: ${{ !cancelled() && (needs.verified-apk.outputs.run != '' || needs.package-and-launch.outputs.apk_artifact != '') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      APK_SOURCE_SHA: ${{ needs.verified-apk.outputs.source || github.sha }}
+      APK_SOURCE_RUN: ${{ needs.verified-apk.outputs.run || github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: securemesh-android-ephemeral-test-key
+          github-token: ${{ github.token }}
+          run-id: ${{ env.APK_SOURCE_RUN }}
+          path: ${{ runner.temp }}/android-candidate
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+      - run: make bootstrap
+      - run: dotnet build src/SecureMesh.Api --no-restore
+      - working-directory: apps/client_flutter
+        run: flutter pub get --enforce-lockfile
+      - name: Build the Linux desktop client for cross-device file exchange
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgles2 xvfb xauth xdotool imagemagick tesseract-ocr dbus-x11 ffmpeg pulseaudio pulseaudio-utils
+          cd apps/client_flutter
+          flutter build linux --release --no-pub
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Prepare synthetic camera, microphone and speaker
+        run: |
+          convert -size 640x480 xc:'#18c33a' "$RUNNER_TEMP/mesh-camera.png"
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=mesh_mic rate=48000
+          pactl load-module module-null-sink sink_name=mesh_speaker rate=48000
+          pactl set-default-source mesh_mic.monitor
+          pactl set-default-sink mesh_speaker
+          pulse_socket="$(pactl info | sed -n 's/^Server String: //p')"
+          test -S "$pulse_socket"
+          # The Linux headless QEMU binary lacks the PulseAudio backend.
+          # Run the audio-capable binary on a private virtual X display.
+          display=:90
+          authority="$RUNNER_TEMP/mesh-xauthority"
+          touch "$authority"
+          chmod 0600 "$authority"
+          xauth -f "$authority" add "$display" . "$(openssl rand -hex 16)"
+          Xvfb "$display" -screen 0 1280x800x24 -nolisten tcp -auth "$authority" >"$RUNNER_TEMP/mesh-xvfb.log" 2>&1 &
+          for attempt in {1..20}; do
+            if DISPLAY="$display" XAUTHORITY="$authority" xdotool getdisplaygeometry >/dev/null 2>&1; then break; fi
+            sleep .25
+          done
+          DISPLAY="$display" XAUTHORITY="$authority" xdotool getdisplaygeometry
+          {
+            echo "PULSE_SERVER=unix:$pulse_socket"
+            echo "QEMU_PA_SERVER=unix:$pulse_socket"
+            echo "DISPLAY=$display"
+            echo "XAUTHORITY=$authority"
+          } >> "$GITHUB_ENV"
+      - name: Verify encrypted messages and bidirectional files on Android 28 and Linux
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 28
+          target: default
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -writable-system -camera-front none -camera-back none -noaudio
+          script: |
+            bash tests/android/prepare-emulator.sh 28
+            xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- .local/venv/bin/python tests/android/interop.py files
+      # API 28 requests NV21 from the emulator imagefile camera. The newer
+      # system camera HAL provides the virtual lens frames for the media gate.
+      - name: Record and play authenticated private media on Android 35
+        env:
+          PULSE_SOURCE: mesh_mic.monitor
+          PULSE_SINK: mesh_speaker
+          QEMU_PA_SOURCE: mesh_mic.monitor
+          QEMU_PA_SINK: mesh_speaker
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          emulator-options: -gpu swiftshader_indirect -no-snapshot -no-boot-anim -writable-system -camera-front imagefile:${{ runner.temp }}/mesh-camera.png -camera-back none -audio pa -allow-host-audio
+          script: |
+            bash tests/android/prepare-emulator.sh 35
+            .local/venv/bin/python tests/android/interop.py video
+      - name: Retain cross-device evidence and build identities
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-linux-interop-evidence
+          path: ${{ runner.temp }}/android-interop-evidence
+          if-no-files-found: warn
+      - if: always()
+        run: make down

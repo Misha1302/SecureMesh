@@ -13,4 +13,4 @@ assert hashlib.file_digest(p.open('rb'),'sha256').hexdigest()=='6ea2d806fd57269a
 with tarfile.open(p) as archive:archive.extractall('.local',filter='data')
 PY
 fi
-FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$PWD/.local/pub-cache" .local/flutter/bin/flutter pub get --directory apps/client_flutter
+FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$PWD/.local/pub-cache" .local/flutter/bin/flutter pub get --enforce-lockfile --directory apps/client_flutter

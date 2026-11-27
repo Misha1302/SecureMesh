@@ -1,0 +1,37 @@
+{
+  "date": "2026-11-27",
+  "clientCommit": "f4291f7761a83d7ae47350a8d130157976df30b8",
+  "android": {
+    "build": "debug",
+    "sdk": 35,
+    "abi": "x86_64",
+    "installedApkSha256": "155af72d995aad903aa8b6a1cdc01350ce6e65295a7f9a620f8ecc1d7513e914"
+  },
+  "linux": {
+    "build": "release candidate",
+    "ciRun": "https://github.com/Misha1302/SecureMesh/actions/runs/46046212593",
+    "archiveSha256": "b45ca9e43addecc8edf70920935ae22d44b7bba78b35df8d927c551aa5218eba"
+  },
+  "text": {
+    "senderInput": "Installed APK, Android input",
+    "linuxPeer": "Dart delivery client with independent Rust/SQLCipher store",
+    "androidToLinuxDecrypted": true,
+    "linuxToAndroidDisplayed": true,
+    "serverDeliveryWatermarkObserved": true,
+    "preloadedEnvelopes": 6,
+    "newUniqueEnvelopes": 2
+  },
+  "files": {
+    "androidToLinux": {
+      "bytes": 8193,
+      "sourceSha256": "b14bbab39650a8d0f7726aabf1f259051bffd41cc15189aeb83946d3eb406981",
+      "exportSha256": "b14bbab39650a8d0f7726aabf1f259051bffd41cc15189aeb83946d3eb406981"
+    },
+    "linuxToAndroid": {
+      "bytes": 12289,
+      "sourceSha256": "9ff512f9bb83879abf5a6b2436e9eb4547c9926eafa691c051176a289fe167ba",
+      "exportSha256": "9ff512f9bb83879abf5a6b2436e9eb4547c9926eafa691c051176a289fe167ba"
+    }
+  },
+  "conditions": "Two synthetic accounts on an isolated local HTTPS API. Text and files used the same private conversation. The Android-to-Linux file was selected and exported before the Linux OCR fix. The reverse direction resumed the native picker and export flow after the fix. Both exports were independently compared again. This local report was generated separately because the standalone fixture did not have the initial CI interop.json."
+}

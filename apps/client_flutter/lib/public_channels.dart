@@ -1,0 +1,581 @@
+import 'package:material_ui/material_ui.dart';
+
+import 'display_name.dart';
+import 'local_client.dart';
+import 'transport.dart';
+
+class PublicChannels extends StatefulWidget {
+  const PublicChannels({
+    super.key,
+    required this.api,
+    required this.russian,
+    required this.close,
+  });
+  final DisplayNameApi api;
+  final bool russian;
+  final VoidCallback close;
+  @override
+  State<PublicChannels> createState() => _PublicChannelsState();
+}
+
+class _PublicChannelsState extends State<PublicChannels> {
+  static const path = '/v1/public-channels';
+  final search = TextEditingController(),
+      slug = TextEditingController(),
+      title = TextEditingController(),
+      post = TextEditingController(),
+      inviteName = TextEditingController();
+  List<Map> rooms = [], posts = [];
+  Map? room;
+  String? directoryCursor, error;
+  int? feedCursor;
+  String activeQuery = '';
+  bool restricted = false;
+  String? inviteNote;
+  bool mine = false, creating = false, busy = false;
+  String? createId, creationKey, postId, postKey;
+  String tr(String ru, String en) => widget.russian ? ru : en;
+  String get roomPath => '$path/${room!['id']}';
+
+  @override
+  void initState() {
+    super.initState();
+    run(catalog);
+  }
+
+  @override
+  void dispose() {
+    search.dispose();
+    slug.dispose();
+    title.dispose();
+    post.dispose();
+    inviteName.dispose();
+    super.dispose();
+  }
+
+  Future<void> run(Future<void> Function() job) async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      await job();
+    } catch (e) {
+      if (!mounted) return;
+      error = switch (e) {
+        ApiFailure(status: 429) => tr(
+          'Слишком много действий. Повторите позже.',
+          'Too many actions. Try again later.',
+        ),
+        ApiFailure(code: 'CHANNEL_POST_CHANGED') => tr(
+          'Публикацию уже изменили. Обновите список перед редактированием.',
+          'This post changed. Refresh the list before editing.',
+        ),
+        ApiFailure(status: 409) => tr(
+          'Действие конфликтует с текущим состоянием или достигнут лимит. Для нового канала проверьте адрес.',
+          'Conflict or quota reached. If creating a channel, check its handle.',
+        ),
+        ApiFailure(status: 403) => tr(
+          'Для этого действия нужны права владельца или подписка.',
+          'This action requires ownership or a subscription.',
+        ),
+        ApiFailure(status: 404) => tr(
+          'Канал уже недоступен. Вернитесь к списку.',
+          'This channel is unavailable. Return to the list.',
+        ),
+        ApiFailure(status: 400) => tr(
+          'Проверьте адрес канала и длину текста.',
+          'Check the handle and text length.',
+        ),
+        _ => tr(
+          'Не удалось завершить действие. Проверьте соединение и повторите.',
+          'Could not complete the action. Check the connection and retry.',
+        ),
+      };
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> catalog({bool more = false}) async {
+    final q = more ? activeQuery : search.text.trim().toLowerCase();
+    final params = {
+      'q': q,
+      'mine': '$mine',
+      'includeRestricted': 'true',
+      if (more && directoryCursor != null) 'after': directoryCursor!,
+    };
+    final result = await widget.api(
+      Uri(path: path, queryParameters: params).toString(),
+    ) as Map;
+    if (!mounted) return;
+    final page = (result['items'] as List).cast<Map>();
+    rooms = more ? [...rooms, ...page] : page;
+    directoryCursor = result['next'] as String?;
+    activeQuery = q;
+  }
+
+  Future<void> feed({bool more = false}) async {
+    final url = more ? '$roomPath/posts?before=$feedCursor' : '$roomPath/posts';
+    final result = await widget.api(url) as Map;
+    if (!mounted) return;
+    final page = (result['items'] as List).cast<Map>();
+    posts = more ? [...posts, ...page] : page;
+    feedCursor = result['next'] as int?;
+  }
+
+  Future<void> open(Map target) async {
+    room = Map.of(target);
+    inviteName.clear();
+    inviteNote = null;
+    posts = [];
+    feedCursor = null;
+    post.clear();
+    postId = null;
+    if (room!['owner'] == true || room!['subscribed'] == true) await feed();
+  }
+
+  Future<void> create() async {
+    final handle = slug.text.trim().toLowerCase(), name = title.text.trim();
+    if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(handle) || name.isEmpty) {
+      error = tr(
+        'Укажите название и адрес из 3–32 латинских букв, цифр или _.',
+        'Enter a title and a 3–32 character handle using a–z, digits or _.',
+      );
+      return;
+    }
+    final key = '$handle\n$name\n$restricted';
+    if (creationKey != key || createId == null) {
+      createId = newUuid();
+      creationKey = key;
+    }
+    final result = await widget.api(
+      restricted ? '$path/invite-only' : path,
+      data: {'id': createId, 'slug': handle, 'title': name},
+    ) as Map;
+    if (!mounted) return;
+    if (restricted && result['inviteOnly'] != true) {
+      throw StateError('Unknown channel visibility');
+    }
+    creating = false;
+    createId = null;
+    slug.clear();
+    title.clear();
+    await open({
+      'id': result['id'],
+      'slug': handle,
+      'title': name,
+      'owner': true,
+      'inviteOnly': restricted,
+      'subscribed': false,
+    });
+  }
+
+  Future<void> subscribe() async {
+    final add = room!['subscribed'] != true;
+    await widget.api('$roomPath/subscription', method: add ? 'PUT' : 'DELETE');
+    if (!mounted) return;
+    room!['subscribed'] = add;
+    room!['invited'] = false;
+    if (add) {
+      await feed();
+    } else {
+      posts = [];
+      feedCursor = null;
+      if (room!['inviteOnly'] == true) await closeRoom();
+    }
+  }
+
+  Future<void> invite() async {
+    final name = inviteName.text.trim().toLowerCase();
+    if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(name)) {
+      error = tr(
+        'Введите точное имя пользователя без @.',
+        'Enter the exact username without @.',
+      );
+      return;
+    }
+    await widget.api('$roomPath/invitations', data: {'username': name});
+    if (!mounted) return;
+    inviteName.clear();
+    inviteNote = tr(
+      'Если аккаунт существует, приглашение появится в его каналах.',
+      'If this account exists, the invitation will appear in its channels.',
+    );
+  }
+
+  Future<void> revoke() async {
+    final name = inviteName.text.trim().toLowerCase();
+    if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(name)) {
+      error = tr(
+        'Введите точное имя пользователя без @.',
+        'Enter the exact username without @.',
+      );
+      return;
+    }
+    if (!await confirm(
+          tr(
+            'Отозвать доступ к каналу для @$name?',
+            'Revoke channel access for @$name?',
+          ),
+          positive: tr('Отозвать', 'Revoke'),
+        ) ||
+        !mounted) {
+      return;
+    }
+    await widget.api('$roomPath/revoke-access', data: {'username': name});
+    if (!mounted) return;
+    inviteName.clear();
+    inviteNote = tr(
+      'Доступ по этому имени отозван.',
+      'Access for this username has been revoked.',
+    );
+  }
+
+  Future<void> decline() async {
+    await widget.api('$roomPath/subscription', method: 'DELETE');
+    if (mounted) await closeRoom();
+  }
+
+  Future<void> editPost(Map item) async {
+    var draft = item['body'] as String;
+    final body = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('Изменить публикацию', 'Edit post')),
+        content: TextFormField(
+          initialValue: draft,
+          onChanged: (v) => draft = v,
+          maxLength: 2048,
+          minLines: 1,
+          maxLines: 5,
+          decoration: InputDecoration(
+            labelText: tr('Текст публикации', 'Post text'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, draft.trim()),
+            child: Text(tr('Сохранить', 'Save')),
+          ),
+        ],
+      ),
+    );
+    if (body == null || body.isEmpty || !mounted) return;
+    await widget.api(
+      '$roomPath/posts/${item['seq']}',
+      method: 'PUT',
+      data: {'expectedRevision': item['revision'], 'body': body},
+    );
+    if (mounted) await feed();
+  }
+
+  Future<void> publish() async {
+    final body = post.text.trim();
+    if (body.isEmpty) return;
+    if (postId == null || postKey != body) {
+      postId = newUuid();
+      postKey = body;
+    }
+    await widget.api(
+      '$roomPath/posts',
+      data: {'requestId': postId, 'body': body},
+    );
+    if (!mounted) return;
+    post.clear();
+    postId = null;
+    await feed();
+  }
+
+  Future<bool> confirm(String question, {String? positive}) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(question),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(positive ?? tr('Удалить', 'Delete')),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+  Future<void> removeRoom() async {
+    if (!await confirm(
+          tr(
+            'Удалить канал и все его публикации?',
+            'Delete this channel and all its posts?',
+          ),
+        ) ||
+        !mounted) {
+      return;
+    }
+    await widget.api(roomPath, method: 'DELETE');
+    if (!mounted) return;
+    await closeRoom();
+  }
+
+  Future<void> removePost(int seq) async {
+    if (!await confirm(tr('Удалить публикацию?', 'Delete this post?')) ||
+        !mounted) {
+      return;
+    }
+    await widget.api('$roomPath/posts/$seq', method: 'DELETE');
+    if (mounted) await feed();
+  }
+
+  Future<void> closeRoom() async {
+    room = null;
+    post.clear();
+    posts = [];
+    feedCursor = null;
+    await catalog();
+  }
+
+  Widget action(String ru, String en, Future<void> Function() f) => TextButton(
+    onPressed: busy ? null : () => run(f),
+    child: Text(tr(ru, en)),
+  );
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(20),
+    children: [
+      Row(
+        children: [
+          IconButton(
+            tooltip: tr('Назад', 'Back'),
+            icon: const Icon(Icons.arrow_back),
+            onPressed: busy
+                ? null
+                : () {
+                    if (room != null) {
+                      run(closeRoom);
+                    } else if (creating) {
+                      setState(() => creating = false);
+                    } else {
+                      widget.close();
+                    }
+                  },
+          ),
+          Expanded(
+            child: Text(
+              room?['title'] as String? ?? tr('Каналы', 'Channels'),
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+        ],
+      ),
+      Text(
+        room?['inviteOnly'] == true || (creating && restricted)
+            ? tr(
+                'Канал по приглашениям. Публикации видны серверу и подписчикам.',
+                'Invite-only channel. The server and subscribers can read posts.',
+              )
+            : tr(
+                'Публикации видны серверу. Публичные каналы доступны всем участникам.',
+                'The server can read posts. Public channels are open to all accounts.',
+              ),
+      ),
+      if (busy) const LinearProgressIndicator(),
+      if (error != null) Semantics(liveRegion: true, child: Text(error!)),
+      if (creating) ...[
+        TextField(
+          enabled: !busy,
+          controller: title,
+          maxLength: 80,
+          decoration: InputDecoration(
+            labelText: tr('Название канала', 'Channel title'),
+          ),
+        ),
+        TextField(
+          enabled: !busy,
+          controller: slug,
+          maxLength: 32,
+          autocorrect: false,
+          decoration: InputDecoration(
+            labelText: tr('Адрес канала', 'Channel handle'),
+            hintText: 'news_2026',
+          ),
+        ),
+        SwitchListTile(
+          value: restricted,
+          onChanged: busy
+              ? null
+              : (value) => setState(() => restricted = value),
+          title: Text(tr('Только по приглашению', 'Invite only')),
+        ),
+        action('Создать канал', 'Create channel', create),
+      ] else if (room == null) ...[
+        TextField(
+          enabled: !busy,
+          controller: search,
+          maxLength: 32,
+          autocorrect: false,
+          onSubmitted: (_) => run(catalog),
+          decoration: InputDecoration(
+            labelText: tr('Поиск по началу адреса', 'Search by handle prefix'),
+            suffixIcon: IconButton(
+              onPressed: busy ? null : () => run(catalog),
+              icon: const Icon(Icons.search),
+              tooltip: tr('Найти', 'Search'),
+            ),
+          ),
+        ),
+        Wrap(
+          children: [
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () => run(() async {
+                      mine = !mine;
+                      await catalog();
+                    }),
+              child: Text(
+                mine
+                    ? tr('Все каналы', 'All channels')
+                    : tr('Мои каналы', 'My channels'),
+              ),
+            ),
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () => setState(() {
+                      creating = true;
+                      restricted = false;
+                      error = null;
+                    }),
+              child: Text(tr('Новый канал', 'New channel')),
+            ),
+          ],
+        ),
+        if (!busy && rooms.isEmpty)
+          Text(tr('Каналы не найдены.', 'No channels found.')),
+        for (final c in rooms)
+          ListTile(
+            title: Text(c['title'] as String),
+            subtitle: Text(
+              c['invited'] == true
+                  ? '@${c['slug']} · ${tr('Приглашение', 'Invitation')}'
+                  : c['inviteOnly'] == true
+                  ? '@${c['slug']} · ${tr('По приглашению', 'Invite only')}'
+                  : '@${c['slug']}',
+            ),
+            leading: const Icon(Icons.campaign_outlined),
+            onTap: busy ? null : () => run(() => open(c)),
+          ),
+        if (directoryCursor != null)
+          action('Ещё каналы', 'More channels', () => catalog(more: true)),
+      ] else ...[
+        Text('@${room!['slug']}'),
+        if (room!['owner'] == true && room!['inviteOnly'] == true) ...[
+          TextField(
+            controller: inviteName,
+            enabled: !busy,
+            maxLength: 32,
+            autocorrect: false,
+            decoration: InputDecoration(
+              labelText: tr('Точное имя пользователя', 'Exact username'),
+            ),
+          ),
+          Wrap(
+            children: [
+              action('Пригласить', 'Invite', invite),
+              action('Отозвать доступ', 'Revoke access', revoke),
+            ],
+          ),
+          if (inviteNote != null)
+            Semantics(liveRegion: true, child: Text(inviteNote!)),
+        ],
+        if (room!['owner'] == true) ...[
+          TextField(
+            controller: post,
+            enabled: !busy,
+            minLines: 1,
+            maxLines: 5,
+            maxLength: 2048,
+            decoration: InputDecoration(
+              labelText: room!['inviteOnly'] == true
+                  ? tr('Публикация для подписчиков', 'Post for subscribers')
+                  : tr('Публичная публикация', 'Public post'),
+            ),
+          ),
+          action('Опубликовать', 'Publish', publish),
+        ] else
+          action(
+            room!['subscribed'] == true
+                ? 'Отписаться'
+                : room!['invited'] == true
+                ? 'Принять приглашение'
+                : 'Подписаться',
+            room!['subscribed'] == true
+                ? 'Unsubscribe'
+                : room!['invited'] == true
+                ? 'Accept invitation'
+                : 'Subscribe',
+            subscribe,
+          ),
+        if (room!['invited'] == true)
+          action('Отклонить приглашение', 'Decline invitation', decline),
+        if (room!['owner'] == true || room!['subscribed'] == true) ...[
+          action('Обновить публикации', 'Refresh posts', feed),
+          if (!busy && posts.isEmpty)
+            Text(tr('Публикаций пока нет.', 'No posts yet.')),
+          for (final p in posts)
+            ListTile(
+              title: SelectableText(p['body'] as String),
+              subtitle: Text(
+                [
+                  MaterialLocalizations.of(context).formatMediumDate(
+                    DateTime.parse(p['publishedAt'] as String).toLocal(),
+                  ),
+                  if ((p['revision'] as int? ?? 1) > 1)
+                    tr('Изменено', 'Edited'),
+                ].join(' · '),
+              ),
+              trailing: room!['owner'] == true
+                  ? PopupMenuButton<String>(
+                      enabled: !busy,
+                      tooltip: tr('Действия с публикацией', 'Post actions'),
+                      onSelected: (value) => run(
+                        () => value == 'edit'
+                            ? editPost(p)
+                            : removePost(p['seq'] as int),
+                      ),
+                      itemBuilder: (_) => [
+                        if (p['revision'] is int)
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text(tr('Изменить публикацию', 'Edit post')),
+                          ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Text(tr('Удалить публикацию', 'Delete post')),
+                        ),
+                      ],
+                    )
+                  : null,
+            ),
+          if (feedCursor != null)
+            action(
+              'Более ранние публикации',
+              'Older posts',
+              () => feed(more: true),
+            ),
+        ],
+        if (room!['owner'] == true)
+          action('Удалить канал', 'Delete channel', removeRoom),
+      ],
+    ],
+  );
+}

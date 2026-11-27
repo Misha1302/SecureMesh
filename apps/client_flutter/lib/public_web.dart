@@ -28,11 +28,11 @@ class ClientApp extends StatelessWidget {
                   ),
                   SizedBox(height: 16),
                   Text(
-                    'Интеграция OpenMLS/WASM ещё не прошла проверку. Используйте нативный клиент. Публичные каналы находятся в разработке.',
+                    'Интеграция OpenMLS/WASM ещё не прошла проверку. Для переписки и каналов используйте приложение SecureMesh.',
                   ),
                   SizedBox(height: 16),
                   Text(
-                    'Private chats are disabled until the browser crypto integration is verified. Public channels are not implemented yet.',
+                    'Private chats are disabled until the browser crypto integration is verified. Use the SecureMesh app for messaging and channels.',
                   ),
                 ],
               ),

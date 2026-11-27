@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent
 START = "<!-- PRODUCT_STATUS_START -->"
 END = "<!-- PRODUCT_STATUS_END -->"
+IMAGES = ("android-chat.png", "linux-chat.png", "welcome.png")
 LABELS = {"available": "Доступно", "experimental": "Экспериментально", "development": "В разработке", "planned": "Запланировано"}
 def e(value):
     return html.escape(str(value), quote=True)
@@ -57,6 +58,9 @@ def main():
         if re.search(r'<(?:script|form|iframe)\b|\son[a-z]+\s*=', result, re.I):
             raise ValueError(f"Active content is not allowed in {name}")
     for name, result in pages.items():
+        for src in re.findall(r'\bsrc="([^"]+)"', result):
+            if html.unescape(src) not in IMAGES:
+                raise ValueError(f"Unapproved asset in {name}: {src}")
         for href in re.findall(r'\bhref="([^"]+)"', result):
             parsed = urlsplit(html.unescape(href))
             if parsed.scheme or parsed.netloc:
@@ -64,12 +68,12 @@ def main():
                     raise ValueError(f"Unexpected URL scheme: {href}")
                 continue
             target = parsed.path or name
-            if target == "style.css" and not parsed.fragment:
+            if target in ("style.css", *IMAGES) and not parsed.fragment and not parsed.query:
                 continue
             if target not in ids or (parsed.fragment and parsed.fragment not in ids[target]):
                 raise ValueError(f"Broken link in {name}: {href}")
         (output / name).write_text(result, encoding="utf-8")
-    for name in ("style.css", ".nojekyll"):
+    for name in ("style.css", ".nojekyll", *IMAGES):
         (output / name).write_bytes((ROOT / name).read_bytes())
 if __name__ == "__main__":
     main()

@@ -1,0 +1,45 @@
+ID,Stage,Priority,Scenario,Platforms,Status,Evidence,Commit,Environment,ExitCode,Notes
+V3-01,CORE,P0,Android installed binary: crypto SQLCipher signup DM SIGKILL permissions and real E2E,Android emulator + device,NOT_RUN,docs/PLATFORM_RELEASE_RU.md,1b61725,API 28 emulator and Linux; GitHub Actions 45965441405,0,Partial evidence. Two-way text and peer receipt verified. Remaining platforms and full scenario pending.
+V3-02,FULL,P0,iOS real Xcode build signing simulation/device and full E2E crypto store push,macOS Xcode + iPhone,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-03,CORE,P0,Linux native GTK full tested secure UI and safe local store,Linux GTK/Xvfb + physical,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-04,FULL,P0,Windows native bundle store and UI end to end run on Windows,Windows,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-05,CORE,P0,Verified signup login logout and account-only trust boundary,Android iOS Linux Windows,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-06,CORE,P0,OS-bound local unlock without daily second password and no insecure fallback,Android iOS Linux Windows,NOT_RUN,,,,,
+V3-07,CORE,P0,Atomic same-key SQLCipher migration from existing local passphrase; crash cases,Linux + migrated clients,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-08,CORE,P0,Password and passkey cannot restore MLS old history; recovery secret required,All clients,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-09,CORE,P0,New login is PENDING_TRUST and denied all private data until verified grant,API + two devices,PASS,reports/evidence/modernization-integrated.json,afa4fc5,"Linux; PostgreSQL 17.12, .NET 10 and SQLCipher",0,"Two accounts, pending-device access and signed enrollment; see integration cases."
+V3-10,CORE,P0,Signed expiring QR SAS trusted approval and replay MITM expired race denies,Two distinct native devices,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-11,CORE,P0,Each trusted device own MLS leaf and private future messages across sessions,Two accounts >=3 devices,NOT_RUN,,,,,
+V3-12,CORE,P0,Authenticated encrypted old-history transfer and recovery backup with negatives,Two native devices + backup,NOT_RUN,,,,,
+V3-13,CORE,P0,Device revoke denies future API and MLS epoch decryption; peers alerted,Two accounts >=3 devices,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-14,CORE,P0,Malicious server key directory grant Welcome rollback split-view tests,Native crypto + API,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-15,CORE,P0,Server config hidden for ordinary UI with authentic origin and TLS checks intact,All four UIs,NOT_RUN,,,,,
+V3-16,FULL,P0,Telegram-familiar chat UI behavior without copied assets and trust warnings,All four UIs,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-17,CORE,P0,Private E2EE vs server-readable public visibly distinguished,All four UIs,NOT_RUN,,,,,
+V3-18,FULL,P0,Private three-user multi-device MLS group invite remove rekey and ACL,Three accounts >=4 devices,NOT_RUN,,,,,
+V3-19,FULL,P0,Public and restricted channel subscription create edit publish search,All four UIs + API,NOT_RUN,,,,,
+V3-20,FULL,P0,Posts feed comments discussions reactions and scheduled publishing,All four UIs + API,NOT_RUN,,,,,
+V3-21,FULL,P0,Public moderation roles admin MFA and private-message exclusion,API + all clients,NOT_RUN,,,,,
+V3-22,FULL,P0,Private file/photo E2EE chunked resume checksum thumbnails and ACL,All four UIs + object storage,NOT_RUN,reports/evidence/native-integration-2026-11-27.json,,,,Partial native and server evidence; complete installed-device scenario pending.
+V3-23,FULL,P0,Real microphone voice note record encrypt send decrypt play seek,Android iOS Linux Windows,NOT_RUN,reports/evidence/native-integration-2026-11-27.json,,,,Partial native and server evidence; complete installed-device scenario pending.
+V3-24,FULL,P0,Real camera video circle capture encrypt send decrypt circular play,Android iOS Linux Windows,NOT_RUN,reports/evidence/native-integration-2026-11-27.json,,,,Partial native and server evidence; complete installed-device scenario pending.
+V3-25,FULL,P0,Authenticated WebRTC 1-to-1 voice/video via TURN and signaling negatives,Android iOS Linux Windows,NOT_RUN,,,,,
+V3-26,FULL,P0,Privacy-safe push with no plaintext and eventual E2EE resume,Android iOS,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-27,CORE,P0,Actual new native runtime GPRS 20kbit RTT1.5s loss3 percent three seeds 200 each p95<=15s,Linux + additional clients,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-28,CORE,P0,Actual new native runtime severe 10kbit RTT3s loss10 percent eventual 1200 unique,Linux + additional clients,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-29,CORE,P0,Combined 2G blackout ACK-loss crash DB-down media fairness without loss or duplicates,Native full stack,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-30,CORE,P0,3G 4G 5G WiFi offline handover profiles with measured loss RTT throughput,Android iOS Linux Windows,NOT_RUN,,,,,
+V3-31,CORE,P0,Baseline matched p50/p95 CPU memory battery UI frame regression protected,All supported platforms,NOT_RUN,,,,,
+V3-32,FULL,P0,Real account create then delete: sessions private access and data deletion policy,API + native UI,NOT_RUN,,,,,
+V3-33,CORE,P0,Property fuzz and contract test across Dart Rust .NET protobuf SQLCipher,Build and full stack,NOT_RUN,,,,,
+V3-34,FULL,P0,Real E2E all mandatory user journeys J-01..J-19 executed with production paths,Android iOS Linux Windows,NOT_RUN,,,,,
+V3-35,FULL,P0,Text ACK MLS control priority vs competing private media on 2G,Native transport and media,NOT_RUN,,,,,
+V3-36,CORE,P0,RustSec zero release-blocking advisories and platform package SBOM scans,Rust .NET Dart Android iOS,NOT_RUN,reports/evidence/rustsec-remediation.json,,RustSec database c9f6c91,0,Partial evidence. Historical 4 findings resolved in reports/evidence/rustsec-remediation.json; multi-platform package verification pending.
+V3-37,PRODUCTION,P0,Independent cryptographic mobile and infrastructure audits owner approval,External audit,BLOCKED,,,,,Independent audit missing.
+V3-38,CONDITIONAL,P2,If web enabled private chat has distinct audit; otherwise private web disabled,Web browser,PASS,reports/evidence/modernization-flutter-tests.txt,a45e2ad,"Linux, Flutter 3.50.0",0,Native-only private surface; compact browser explicitly gates private chat.
+V3-39,FULL,P0,Isolated PostgreSQL object encrypted backup restore and rollback tests,Backend and clients,NOT_RUN,reports/evidence/native-integration-2026-11-27.json,,,,Partial native and server evidence; complete installed-device scenario pending.
+V3-40,FULL,P0,Native UX accessibility 320dp RU EN desktop keyboard and comprehension test,Android iOS Linux Windows,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-41,FULL,P0,Android Doze and iOS background restrictions with protected notification content,Android iOS device,NOT_RUN,,,,,
+V3-42,FULL,P0,A Android B iPhone C Windows D Linux multi-device interoperability and revocation,Cross-platform,NOT_RUN,docs/PLATFORM_RELEASE_RU.md,1b61725,API 28 emulator and Linux; GitHub Actions 45965441405,0,Partial evidence. Two-way text and peer receipt verified. Remaining platforms and full scenario pending.
+V3-43,FULL,P0,Multi-device MLS group concurrent control epoch races and restart recovery,Three accounts >=4 devices,NOT_RUN,,,,,
+V3-44,FULL,P0,Large public fanout pointer not N copies of E2EE; ACL and rate tests,API PostgreSQL UI,NOT_RUN,,,,,

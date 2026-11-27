@@ -97,7 +97,17 @@ def main():
         assert d.request('/v1/users/me',token=es['accessToken'])['trustState']=='DEVICE_PENDING_TRUST'
         future=d.Device(root);fs,fr,fa,fp=start(a,future)
         fg=da.call('enrollment_approve',payload=fr['payload'],account=fa,candidate_signature=fp,confirmed=True)['signature']
+        previous=db.call('queue',group=group,id=str(uuid.uuid4()),text='before revocation')
+        saved=d.request('/v1/messages',d.envelope(previous,group),token=bt)
         d.request('/v1/devices/'+da.identity,token=token,method='DELETE',expected=204)
+        retry=d.request('/v1/messages',d.envelope(previous,group),token=bt)
+        assert retry['alreadyCommitted'] and retry['serverSequence']==saved['serverSequence']
+        pending=db.call('queue',group=group,id=str(uuid.uuid4()),text='must await removal')
+        denied=d.request('/v1/messages',d.envelope(pending,group),token=bt,expected=409)
+        assert denied['code']=='MLS_ROSTER_REKEY_REQUIRED'
+        assert pending in db.call('outbox')['messages']
+        page=d.request('/v1/sync?conversationId='+group,token=bt)
+        assert max(m['serverSequence'] for m in page['messages'])==saved['serverSequence']
         d.request(f"/v1/devices/enrollment/{fr['id']}/approve",dict(signature=fg),token=at,expected=401)
         d.request('/v1/auth/refresh',dict(token=a['session']['refreshToken']),expected=401)
         d.request('/v1/sync?conversationId='+group,token=at,expected=401)

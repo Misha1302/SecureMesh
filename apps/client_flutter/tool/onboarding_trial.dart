@@ -27,6 +27,7 @@ Future<void> main(List<String> args) async {
         endpoint: Uri.parse(input['endpoint'] as String),
         username: input['username'] as String,
         registeredHere: input['registeredHere'] == true,
+        credentialVersion: input['credentialVersion'] as int? ?? 1,
       );
     }
     await setup.finish(password: input['accountPassword'] as String?);

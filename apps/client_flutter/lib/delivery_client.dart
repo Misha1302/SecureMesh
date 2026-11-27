@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'linux_notifications.dart' show isNewIncomingText;
 import 'transport.dart';
 
 typedef CryptoCommand = Future<Map<String, dynamic>> Function(
@@ -31,13 +32,24 @@ class DeliveryProgress {
 /// The native UI and executable network tests share this exact delivery cycle.
 /// No timer owns message durability: the encrypted store owns outbox and cursor.
 class NativeDelivery {
-  NativeDelivery({required this.crypto, required this.transport});
+  NativeDelivery({
+    required this.crypto,
+    required this.transport,
+    this.onIncomingText,
+    this.onCallSignal,
+    this.onRosterChange,
+  });
+  final void Function(String group)? onIncomingText;
+  final void Function(String group)? onCallSignal;
+  final Future<void> Function(String, Map)? onRosterChange;
   final CryptoCommand crypto;
   final MeshTransport transport;
   Future<void>? _receipt;
+  final Map<String, int> _peerProcessed = {};
   final Map<String, int> _acknowledged = {};
   final Map<String, Future<void>> _sends = {};
   Future<void>? _pull;
+  String? _lastListedGroup;
   Object? _error;
   StackTrace? _errorStack;
   int _sent = 0, _received = 0;
@@ -48,7 +60,10 @@ class NativeDelivery {
     _closed = true;
   }
 
-  Future<DeliveryProgress> tick(String group) async {
+  Future<DeliveryProgress> tick(
+    String group, {
+    List<String> listedGroups = const [],
+  }) async {
     if (_closed || _busy) throw StateError('DELIVERY_NOT_AVAILABLE');
     _busy = true;
     try {
@@ -58,7 +73,8 @@ class NativeDelivery {
         _errorStack = null;
         Error.throwWithStackTrace(error, stack);
       }
-      final pending = (await crypto('outbox'))['messages'] as List;
+      final pending =
+          (await crypto('outbox', {'dispatch': true}))['messages'] as List;
       // Refill available write slots independently of a slow sync or another
       // write's ACK. Waiting for a whole batch makes one TCP retransmission
       // stall all future writes and builds an unbounded queue on 2G.
@@ -75,9 +91,17 @@ class NativeDelivery {
         if (_sends.length >= 3) break;
         _startSend(key, message);
       }
-      _pull ??= _pullMessages(group)
-          .catchError(_rememberError)
-          .whenComplete(() => _pull = null);
+      if (_pull == null) {
+        var next = group;
+        if (listedGroups.isNotEmpty) {
+          final previous = listedGroups.indexOf(_lastListedGroup ?? '');
+          next = listedGroups[(previous + 1) % listedGroups.length];
+          _lastListedGroup = next;
+        }
+        _pull = _pullMessages(next)
+            .catchError(_rememberError)
+            .whenComplete(() => _pull = null);
+      }
       await Future.any<void>([
         ..._sends.values,
         ?_pull,
@@ -129,6 +153,22 @@ class NativeDelivery {
   }
 
   Future<void> _pullMessages(String group) async {
+    if (onRosterChange != null) {
+      final pending = (await crypto('roster_pending', {
+        'group': group,
+      }))['transition'];
+      if (pending is Map) {
+        final ack = await transport.https(
+          '/v1/roster/transitions',
+          data: Map<String, dynamic>.from(pending),
+        ) as Map;
+        await crypto('roster_saved', {
+          'group': group,
+          'id': pending['id'],
+          ...Map<String, dynamic>.from(ack),
+        });
+      }
+    }
     var cursor = (await crypto('cursor', {'group': group}))['cursor'] as String;
     for (var pages = 0; pages < 10 && !_closed; pages++) {
       Map<String, dynamic> page;
@@ -149,7 +189,31 @@ class NativeDelivery {
       for (var i = 0; i < messages.length; i++) {
         if (_closed) return;
         final message = messages[i] as Map;
-        await crypto('ingest', {
+        if (onRosterChange != null &&
+            message['envelopeKind'] == 3 &&
+            message['senderDeviceId'] != transport.device) {
+          Map? change;
+          try {
+            change = await transport.https(
+              '/v1/conversations/$group/roster/${message['serverSequence']}',
+            ) as Map;
+          } on ApiFailure catch (failure) {
+            if (failure.status != 404) rethrow;
+          }
+          if (change != null) {
+            final t = change['transition'] as Map;
+            if (t['id'] != message['clientMessageId'] ||
+                t['seq'] != message['serverSequence'] ||
+                t['epoch'] != message['mlsEpoch'] ||
+                t['committer'] != message['senderDeviceId'] ||
+                t['commit'] != message['ciphertext']) {
+              throw StateError('ROSTER_ENVELOPE_MISMATCH');
+            }
+            await onRosterChange!(group, change);
+          }
+        }
+        if (_closed) return;
+        final committed = await crypto('ingest', {
           'group': group,
           'id': message['clientMessageId'],
           'sender': message['senderDeviceId'],
@@ -160,6 +224,18 @@ class NativeDelivery {
           'digest': message['ciphertextSha256'],
           'cursor': i == messages.length - 1 ? page['nextCursor'] : '',
         });
+        if (committed['event'] case {'type': 'call_control', 'accepted': true}
+            when !_closed) {
+          onCallSignal?.call(group);
+        }
+        if (!_closed && isNewIncomingText(committed, message['envelopeKind'])) {
+          onIncomingText?.call(group);
+        }
+      }
+      final processed = page['peerProcessedSequence'];
+      if (processed is int && processed > (_peerProcessed[group] ?? 0)) {
+        await crypto('peer_processed', {'group': group, 'seq': processed});
+        _peerProcessed[group] = processed;
       }
       _received += messages.length;
       cursor = page['nextCursor'] as String;

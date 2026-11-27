@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:securemesh_client/src/rust/api.dart';
 import 'package:securemesh_client/src/rust/frb_generated.dart';
+import 'package:securemesh_client/tls_client.dart';
 import 'package:securemesh_client/transport.dart';
 import 'package:securemesh_client/delivery_client.dart';
 
@@ -43,8 +44,10 @@ Future<void> main(List<String> args) async {
       );
       final context = SecurityContext(withTrustedRoots: true)
         ..setTrustedCertificates(fixture['cert'] as String);
-      final http = HttpClient(context: context)
-        ..connectionTimeout = const Duration(seconds: 2);
+      final http = meshTlsClient(
+        context,
+        connectionTimeout: const Duration(seconds: 2),
+      );
       clients.add(http);
       transports.add(
         MeshTransport(
@@ -223,6 +226,37 @@ Future<void> main(List<String> args) async {
             timeline.map((m) => m['id']).toSet().containsAll(sent),
         'LOGICAL_DUP_OR_LOSS',
       );
+    }
+    // Each device now has a persisted peer ACK. The production delivery cycle
+    // must relay it to the sender's store even when the sync page is empty.
+    for (var index = 0; index < stores.length; index++) {
+      final pump = NativeDelivery(
+        transport: transports[index],
+        crypto: (op, [args = const {}]) => crypto(stores[index], op, args),
+      );
+      try {
+        final elapsed = Stopwatch()..start();
+        while (true) {
+          await pump.tick(group);
+          final timeline =
+              (await crypto(stores[index], 'timeline', {
+                    'group': group,
+                  }))['messages']
+                  as List;
+          final authored = timeline.where((event) => event['own'] == true);
+          if (authored.isNotEmpty &&
+              authored.every((event) => event['status'] == 'delivered')) {
+            break;
+          }
+          require(
+            elapsed.elapsed < const Duration(seconds: 4),
+            'PEER_DELIVERY_RECEIPT_MISSING',
+          );
+        }
+        require(transports[index].mode == 'wss', 'RECEIPT_NOT_OVER_WSS');
+      } finally {
+        pump.close();
+      }
     }
     // Close an active real WSS while the proxy drops close frames. The child
     // must still terminate; a cancelled raw reader used to leak CLOSE_WAIT.

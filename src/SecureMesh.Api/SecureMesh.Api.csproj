@@ -12,6 +12,6 @@
     <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
     <PackageReference Include="Google.Protobuf" Version="3.33.5" />
     <PackageReference Include="Grpc.Tools" Version="2.78.0" PrivateAssets="All" />
-    <Protobuf Include="../../contracts/wire.proto" GrpcServices="None" />
+    <Protobuf Include="../../contracts/runtime/wire.proto" GrpcServices="None" />
   </ItemGroup>
 </Project>

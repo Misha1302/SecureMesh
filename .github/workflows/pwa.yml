@@ -1,0 +1,91 @@
+name: Package SecureMesh web app
+
+on:
+  pull_request:
+    paths:
+      - 'site/app/**'
+      - 'tests/pwa/**'
+      - 'src/SecureMesh.Api/**'
+      - 'scripts/package-pwa.py'
+      - 'src/browser_crypto/**'
+      - 'src/crypto_core/src/server_credential.rs'
+      - '.github/workflows/pwa.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'site/app/**'
+      - 'tests/pwa/**'
+      - 'src/SecureMesh.Api/**'
+      - 'scripts/package-pwa.py'
+      - 'src/browser_crypto/**'
+      - 'src/crypto_core/src/server_credential.rs'
+      - '.github/workflows/pwa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            site/app
+            scripts/package-pwa.py
+            tests/pwa/sw_release.py
+            src/browser_crypto
+            src/crypto_core/src/server_credential.rs
+          sparse-checkout-cone-mode: false
+      - name: Install pinned Rust and wasm-bindgen
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --target wasm32-unknown-unknown
+          cargo +1.100.0 install wasm-bindgen-cli --version 0.2.130 --locked --root "$RUNNER_TEMP/securemesh-wasm-cli"
+          echo "$RUNNER_TEMP/securemesh-wasm-cli/bin" >> "$GITHUB_PATH"
+      - name: Stage dedicated-origin bundle
+        run: python3 scripts/package-pwa.py "$RUNNER_TEMP/securemesh-pwa"
+      - name: Verify staged checksums
+        run: |
+          cd "$RUNNER_TEMP/securemesh-pwa"
+          sha256sum --check --strict SHA256SUMS
+      - name: Verify release integrity and offline update in Chromium
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pwa-venv"
+          "$RUNNER_TEMP/pwa-venv/bin/pip" install playwright==1.57.0
+          "$RUNNER_TEMP/pwa-venv/bin/playwright" install --with-deps chromium
+          "$RUNNER_TEMP/pwa-venv/bin/python" tests/pwa/sw_release.py "$RUNNER_TEMP/securemesh-pwa"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: securemesh-pwa
+          path: ${{ runner.temp }}/securemesh-pwa/
+          if-no-files-found: error
+
+  browser-messaging:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build API and native MLS peer
+        run: |
+          dotnet build src/SecureMesh.Api -p:RestoreLockedMode=true
+          rustup toolchain install 1.100.0 --profile minimal
+          cargo +1.100.0 build --locked --manifest-path src/crypto_core/Cargo.toml
+      - name: Start local PostgreSQL, SMTP and browser fixtures
+        run: |
+          bash scripts/bootstrap.sh --services-only
+          .local/venv/bin/pip install playwright==1.57.0
+          .local/venv/bin/playwright install --with-deps chromium
+      - name: Verify browser accounts, encrypted storage, cross-platform MLS and offline delivery
+        run: |
+          node tests/pwa/account.mjs
+          node tests/pwa/messenger_transport.mjs
+          node src/browser_crypto/tests/interop.mjs
+          .local/venv/bin/python tests/pwa/vault_browser.py
+          .local/venv/bin/python tests/pwa/live_browser.py

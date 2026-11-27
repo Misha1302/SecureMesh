@@ -43,13 +43,13 @@ def request(path,data=None,token=None,method=None,expected=200):
     assert status==expected, f'{path}: expected {expected}, got {status}: {raw[:300]!r}'
     return json.loads(raw) if raw else None
 
-def login(username,password,device,expected=200):
+def login(username,password,device,expected=200,client_os=None):
     challenge=request('/v1/auth/challenge',dict(username=username,deviceId=device.identity))
     proof=device.call('sign',payload=challenge['payload'])['signature']
-    return request('/v1/auth/login',dict(username=username,password=password,deviceId=device.identity,publicKey=device.public,challengeId=challenge['challengeId'],signature=proof),expected=expected)
+    return request('/v1/auth/login',dict(username=username,password=password,deviceId=device.identity,publicKey=device.public,challengeId=challenge['challengeId'],signature=proof,**({'clientOs':client_os} if client_os is not None else {})),expected=expected)
 
-def account(root):
-    username='u_'+uuid.uuid4().hex[:20]; email=username+'@securemesh.test'; password=secrets.token_urlsafe(24)
+def account(root, domain="securemesh.test"):
+    username='u_'+uuid.uuid4().hex[:20]; email=username+'@'+domain; password=secrets.token_urlsafe(24)
     device=Device(root)
     request('/v1/auth/register',dict(username=username,email=email,password=password),expected=202)
     search='http://127.0.0.1:58028/api/v1/search?query='+urllib.parse.quote('to:'+email)
@@ -140,6 +140,8 @@ class Server:
 def main():
     with Server() as server, tempfile.TemporaryDirectory(prefix='securemesh-delivery-',dir=ROOT/'.local') as tmp:
         root=Path(tmp); a,b,outsider=[account(root) for _ in range(3)]
+        import credential_versions
+        credential_versions.verify(sys.modules[__name__], root, a)
         da,db=a['device'],b['device']; at=a['session']['accessToken']; bt=b['session']['accessToken']; ot=outsider['session']['accessToken']
         da.pin(db); db.pin(da)
         login(a['username'],'incorrect password',da,expected=401)
@@ -187,7 +189,14 @@ def main():
         assert retry['alreadyCommitted'] and retry['serverSequence']==1
         reply=db.call('queue',group=group,id=str(uuid.uuid4()),text='Ответ после перезапуска')
         request('/v1/messages',envelope(reply,group),token=bt) # HTTPS fallback after WSS closed.
-        sync(da,at,group,limit=1); sync(db,bt,group,limit=1)
+        sync(da,at,group,limit=1)
+        assert request('/v1/sync?conversationId='+group,token=at)['peerProcessedSequence']==0
+        sync(db,bt,group,limit=1)
+        delivered=request('/v1/sync?conversationId='+group,token=at)['peerProcessedSequence']
+        assert delivered==2
+        da.call('peer_processed',group=group,seq=delivered)
+        da.call('peer_processed',group=group,seq=1)
+        assert next(m for m in da.call('timeline',group=group)['messages'] if m['id']==first['id'])['status']=='delivered'
         assert da.call('cursor',group=group)['seq']==db.call('cursor',group=group)['seq']==2
         assert len(da.call('history',group=group)['events'])==len(db.call('history',group=group)['events'])==1
         replay=request('/v1/sync?'+urllib.parse.urlencode(dict(conversationId=group,limit=1)),token=bt)

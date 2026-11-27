@@ -14,24 +14,28 @@ fn optional_meta(db: &Connection, key: &str) -> Result<Option<Value>> {
         .transpose()
 }
 
-pub(super) fn prepare(db: &Connection, input: &Value, identity: &str) -> Result<()> {
+fn principal(input: &Value) -> Result<(&str, &str)> {
     let endpoint = s(input, "endpoint")?;
     let username = s(input, "username")?;
-    ensure!(
-        endpoint.starts_with("https://")
-            && endpoint.len() > 8
-            && endpoint.len() <= 2048
-            && !endpoint[8..].contains(['/', '?', '#', '@'])
-            && !endpoint.chars().any(char::is_whitespace),
-        "invalid origin"
-    );
-    ensure!(
-        (3..=32).contains(&username.len())
-            && username
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
-        "invalid username"
-    );
+    server_credential::validate_principal(endpoint, username)?;
+    Ok((endpoint, username))
+}
+
+pub(super) fn server_credential(req: &Value) -> Result<String> {
+    let credential = server_credential::derive_server_credential(
+        s(req, "endpoint")?,
+        s(req, "username")?,
+        s(req, "password")?,
+    )?;
+    Ok(json!({"credential": credential}).to_string())
+}
+
+pub(super) fn prepare(db: &Connection, input: &Value, identity: &str) -> Result<()> {
+    let (endpoint, username) = principal(input)?;
+    let version = input
+        .get("credentialVersion")
+        .map_or(Some(1), Value::as_u64);
+    ensure!(matches!(version, Some(1 | 2)), "invalid credential version");
     let registered = input["registeredHere"]
         .as_bool()
         .context("registration state")?;
@@ -40,6 +44,7 @@ pub(super) fn prepare(db: &Connection, input: &Value, identity: &str) -> Result<
         DRAFT,
         &json!({
             "version": 1,
+            "credentialVersion": version,
             "deviceId": identity,
             "endpoint": endpoint,
             "username": username,
@@ -132,6 +137,8 @@ pub(super) fn execute(db: &Connection, req: &Value, identity: &str) -> Result<Va
             let registered = draft["registeredHere"]
                 .as_bool()
                 .context("registration state")?;
+            profile["credentialVersion"] =
+                draft.get("credentialVersion").cloned().unwrap_or(json!(1));
             profile["endpoint"] = draft["endpoint"].clone();
             profile["username"] = draft["username"].clone();
             profile["userId"] = account["userId"].clone();
@@ -153,4 +160,22 @@ pub(super) fn execute(db: &Connection, req: &Value, identity: &str) -> Result<Va
     }
     set_meta(db, DRAFT, &draft.to_string())?;
     Ok(json!({"saved": true}))
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    #[test]
+    fn argon2id_v2_matches_reference_with_exact_utf8_and_spacing() {
+        let mut request = json!({"endpoint":"https://example.org","username":"marina_24","password":"  Пароль-🔑 phrase  "});
+        let body: Value = serde_json::from_str(&server_credential(&request).unwrap()).unwrap();
+        // Generated independently with the Argon2 reference C library.
+        assert_eq!(
+            body["credential"],
+            "6o6VxV36UehxRt6qSoL6b2PpP8FxoiHtEQ/oG8NHl4s="
+        );
+        request["password"] = json!("👨‍👩‍👧‍👦".repeat(15));
+        assert!(server_credential(&request).is_err());
+    }
 }

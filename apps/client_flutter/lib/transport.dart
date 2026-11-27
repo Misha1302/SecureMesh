@@ -395,6 +395,7 @@ class MeshTransport {
           'conversationId': group,
           'nextCursor': utf8.decode(page.nextCursor),
           'hasMore': page.hasMore,
+          'peerProcessedSequence': page.peerProcessedSequence.toInt(),
           'messages': page.messages
               .map(
                 (m) => {

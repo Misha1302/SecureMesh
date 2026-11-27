@@ -13,6 +13,10 @@ Source brief remains immutable. Implementation work used `codex/securemesh-build
 Every verified increment gets a commit. `make verify` must fail if required acceptance gates remain incomplete. Unsupported or unrun checks remain NOT_RUN/BLOCKED, never PASS.
 
 
+## Модернизация от 27 ноября
+
+Приоритеты, зависимости и критерии выпуска перечислены в [ТЗ](docs/SECUREMESH_MODERNIZATION_TZ.md). Текущий результат и оставшиеся работы — в [статусе](docs/SECUREMESH_MODERNIZATION_STATUS.md).
+
 ## Checkpoint / next execution order
 
 Verified components and known failures are in STATUS.md and reports. No M0–M8 milestone is declared fully complete.

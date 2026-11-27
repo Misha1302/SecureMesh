@@ -1,0 +1,89 @@
+name: Desktop release candidates
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/client_flutter/**'
+      - 'src/crypto_core/**'
+      - '.github/workflows/desktop-bundles.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux
+            bundle: linux/x64/release/bundle
+            core: lib/libsecuremesh_crypto.so
+          - os: windows-2022
+            target: windows
+            bundle: windows/x64/runner/Release
+            core: securemesh_crypto.dll
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+      - name: Install GTK build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build libgtk-3-dev libstdc++-13-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good pulseaudio-utils
+      - working-directory: apps/client_flutter
+        run: flutter pub get --enforce-lockfile
+      - working-directory: apps/client_flutter
+        run: flutter test --no-pub
+      - working-directory: apps/client_flutter
+        run: flutter build ${{ matrix.target }} --release --no-pub
+      - name: Save, read and forget independent Windows profile credentials
+        if: runner.os == 'Windows'
+        working-directory: apps/client_flutter
+        shell: pwsh
+        run: |
+          cmake --build build/windows/x64 --config Release --target profile_credential_smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./build/windows/x64/credential-tests/Release/profile_credential_smoke.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise packaged library through the Dart FFI bridge
+        working-directory: apps/client_flutter
+        shell: pwsh
+        run: |
+          $env:SECUREMESH_CRYPTO_LIB = (Resolve-Path 'build/${{ matrix.bundle }}/${{ matrix.core }}').Path
+          dart tool/bridge_smoke.dart
+      - name: Open and close the packaged Windows client
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/client_flutter
+        run: |
+          $bundle = (Resolve-Path 'build/${{ matrix.bundle }}').Path
+          $client = Start-Process -FilePath (Join-Path $bundle 'securemesh_client.exe') -WorkingDirectory $bundle -PassThru
+          try {
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            do {
+              Start-Sleep -Milliseconds 250
+              $client.Refresh()
+              if ($client.HasExited) { throw "Client exited during startup (code $($client.ExitCode))" }
+              $ready = ($client.MainWindowHandle -ne [IntPtr]::Zero -and $client.MainWindowTitle -eq 'SecureMesh' -and $client.Responding)
+            } until ($ready -or $timer.Elapsed.TotalSeconds -ge 45)
+            if (-not $ready) { throw 'SecureMesh did not display a responsive main window' }
+            if (-not $client.CloseMainWindow() -or -not $client.WaitForExit(15000)) { throw 'Client did not close cleanly' }
+            if ($client.ExitCode -ne 0) { throw "Client exited with code $($client.ExitCode)" }
+          } finally {
+            if (-not $client.HasExited) { $client.Kill() }
+            $client.Dispose()
+          }
+      - name: Preserve bundle permissions
+        shell: bash
+        working-directory: apps/client_flutter
+        run: tar -C 'build/${{ matrix.bundle }}' -czf 'securemesh-${{ matrix.target }}-x64.tar.gz' .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: securemesh-${{ matrix.target }}-candidate
+          path: apps/client_flutter/securemesh-${{ matrix.target }}-x64.tar.gz
+          if-no-files-found: error

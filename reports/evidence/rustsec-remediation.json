@@ -1,0 +1,93 @@
+{
+  "tool": "cargo-audit 0.23.0",
+  "advisory_database": "c9f6c91a44dbad9d71742329e9df061279f9c4be",
+  "audited_lockfile_sha256": "aae204e797a4698775d055d48e0f7577908f223c01a0808befe52a6a6218a58e",
+  "scan_command": "cargo audit --file src/crypto_core/Cargo.lock --db <checkout> --no-fetch --json",
+  "advisories_ignored": [],
+  "scans": [
+    {
+      "scope": "base 398c5fa",
+      "exit_code": 1,
+      "packages": 306,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2026-0387",
+          "package": "crypto-bigint",
+          "version": "0.5.5"
+        },
+        {
+          "id": "RUSTSEC-2026-0331",
+          "package": "libcrux-kem",
+          "version": "0.0.9"
+        },
+        {
+          "id": "RUSTSEC-2026-0330",
+          "package": "libcrux-kem",
+          "version": "0.0.9"
+        },
+        {
+          "id": "RUSTSEC-2026-0459",
+          "package": "libsqlite3-sys",
+          "version": "0.35.0"
+        }
+      ],
+      "warnings": [
+        {
+          "id": "RUSTSEC-2026-0173",
+          "kind": "unmaintained",
+          "package": "proc-macro-error2"
+        }
+      ]
+    },
+    {
+      "scope": "OpenMLS RC with registry libsqlite3-sys",
+      "exit_code": 1,
+      "packages": 290,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2026-0502",
+          "package": "sqlcipher-src",
+          "version": "419.0.6+sqlcipher-4.19.0-sqlite-3.53.4-libtomcrypt-1.18.2"
+        }
+      ],
+      "warnings": [
+        {
+          "id": "RUSTSEC-2026-0173",
+          "kind": "unmaintained",
+          "package": "proc-macro-error2"
+        }
+      ]
+    },
+    {
+      "scope": "pinned upstream SQLCipher fix",
+      "exit_code": 0,
+      "packages": 290,
+      "vulnerabilities": [],
+      "warnings": [
+        {
+          "id": "RUSTSEC-2026-0173",
+          "kind": "unmaintained",
+          "package": "proc-macro-error2"
+        }
+      ]
+    }
+  ],
+  "tests": {
+    "platform": "x86_64 Linux",
+    "rustc": "1.94.1",
+    "cargo build --locked": 0,
+    "cargo fmt -- --check": 0,
+    "cargo test --locked": 0,
+    "runtime_assertions": [
+      "SQLCipher 4.20.0",
+      "SQLite >=3.54.0",
+      "six shared migration checksums accepted by upstream runner",
+      "future schema rejected on older runner"
+    ],
+    "tests/crypto/process_spike.py": 0,
+    "tests/crypto/upgrade_store.py 857208f candidate": 0,
+    "tests/crypto/upgrade_store.py 398c5fa candidate": 0,
+    "unmodified RC schema rollback probe": "Old CLI refused store after V7 and V8; candidate instead embeds the identical V1\u2013V6 used by supported old clients."
+  },
+  "scope_limit": "No independent cryptographic audit or mobile platform approval. Earlier artifacts must be rebuilt to acquire patched dependencies."
+}

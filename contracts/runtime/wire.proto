@@ -1,0 +1,112 @@
+syntax = "proto3";
+package securemesh.transport.v1;
+
+// Transport draft for Codex. No plaintext or content metadata for E2EE.
+// Frame size limits and auth requirements enforced outside Protobuf.
+option csharp_namespace = "SecureMesh.Contracts.Transport.V1";
+
+enum FrameKind {
+  FRAME_KIND_UNSPECIFIED = 0;
+  HELLO = 1;
+  AUTH = 2;
+  SEND_ENCRYPTED = 3;
+  DURABLE_ACK = 4;
+  SYNC_REQUEST = 5;
+  SYNC_RESPONSE = 6;
+  PROCESSED_ACK = 7;
+  SERVER_ERROR = 8;
+  PING = 9;
+  PONG = 10;
+  CALL_SIGNAL = 11;
+}
+
+enum EnvelopeKind {
+  ENVELOPE_KIND_UNSPECIFIED = 0;
+  MLS_APPLICATION = 1;
+  MLS_PROPOSAL = 2;
+  MLS_COMMIT = 3;
+  MLS_WELCOME = 4;
+}
+
+message Frame {
+  uint32 protocol_version = 1;
+  bytes request_id = 2; // UUID 16 bytes, request correlation only.
+  FrameKind kind = 3;
+  oneof payload {
+    Hello hello = 4;
+    Auth auth = 5;
+    EncryptedEnvelope encrypted = 6;
+    DurableAck durable_ack = 7;
+    SyncRequest sync_request = 8;
+    SyncResponse sync_response = 9;
+    ProcessedAck processed_ack = 10;
+    Error server_error = 11;
+    CallSignal call_signal = 12;
+  }
+}
+
+message Hello {
+  repeated uint32 supported_versions = 1;
+  bytes client_device_id = 2;
+  bytes opaque_resume_token = 3;
+  uint32 max_frame_bytes_supported = 4;
+}
+
+message Auth {
+  // Authentication header or secure token inside authenticated TLS connection.
+  // Never use query-string token. Redact from logs.
+  bytes access_token = 1;
+}
+
+message EncryptedEnvelope {
+  bytes conversation_id = 1;
+  bytes client_message_id = 2;
+  bytes sender_device_id = 3; // server must derive/check from auth
+  uint64 mls_epoch = 4;
+  EnvelopeKind envelope_kind = 5;
+  bytes opaque_ciphertext = 6;
+  bytes ciphertext_sha256 = 7;
+  uint64 server_sequence = 8; // 0 for client-originated message
+  bytes server_message_id = 9; // empty for new write
+}
+
+message DurableAck {
+  bytes conversation_id = 1;
+  bytes client_message_id = 2;
+  bytes server_message_id = 3;
+  uint64 server_sequence = 4;
+  bool already_committed = 5;
+}
+
+message SyncRequest {
+  bytes conversation_id = 1;
+  bytes opaque_cursor = 2;
+  uint32 limit = 3;
+}
+
+message SyncResponse {
+  bytes conversation_id = 1;
+  repeated EncryptedEnvelope messages = 2;
+  bytes next_cursor = 3;
+  bool has_more = 4;
+  uint64 peer_processed_sequence = 5; // Received and committed by another account.
+}
+
+message ProcessedAck {
+  bytes conversation_id = 1;
+  uint64 highest_contiguous_persisted_sequence = 2;
+}
+
+message Error {
+  uint32 code = 1;
+  string stable_code = 2;
+  uint32 retry_after_ms = 3;
+  string safe_details = 4; // no private content or secrets
+}
+
+message CallSignal {
+  bytes conversation_id = 1;
+  bytes sender_device_id = 2;
+  bytes recipient_device_id = 3;
+  bytes payload = 4; // call signaling with identity binding/security policy
+}

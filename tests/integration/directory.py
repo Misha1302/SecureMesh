@@ -11,6 +11,10 @@ import urllib.request
 import uuid
 from pathlib import Path
 import delivery as d
+import contact_requests
+import display_names
+import profile_photos
+import profile_text
 
 
 def sql(statement):
@@ -22,6 +26,7 @@ def establish(a,b,check_crash=False):
     invitation=str(uuid.uuid4());lease=str(uuid.uuid4())
     d.request('/v1/chat-requests',dict(id=invitation,username=b['username']),token=at,expected=201)
     d.request(f'/v1/chat-requests/{invitation}/accept',{},token=bt,expected=204)
+    assert not next(q for q in d.request('/v1/chat-requests',token=at) if q['id']==invitation)['established']
     published=d.request('/v1/crypto/keypackages',dict(payload=db.call('keypackage')['keypackage']),token=bt,expected=201)
     package=d.request('/v1/crypto/keypackages/lease',dict(invitationId=invitation,requestId=lease),token=at)
     assert package['reference']==published['reference']
@@ -33,6 +38,7 @@ def establish(a,b,check_crash=False):
     group=request['id']
     d.request('/v1/conversations/establish',request,token=at,expected=201)
     certificate=next(c for c in d.request('/v1/crypto/welcomes',token=bt) if c['group']==group)
+    assert next(q for q in d.request('/v1/chat-requests',token=at) if q['id']==invitation)['established']
     db.call('directory_join',**certificate)
     d.request(f'/v1/crypto/welcomes/{group}/ack',{},token=bt,expected=204)
     return group
@@ -53,12 +59,14 @@ def main():
         assert d.request('/v1/crypto/keypackages',dict(payload=kp),token=bt)['reference']==published['reference']
         pending=d.Device(root);ps=d.login(a['username'],a['password'],pending)
         d.request('/v1/crypto/keypackages',dict(payload=pending.call('keypackage')['keypackage']),token=ps['accessToken'],expected=403)
+        contact_requests.verify(d.request,at,bt,ot,b['username'])
         invitation=str(uuid.uuid4())
         d.request('/v1/chat-requests',dict(id=invitation,username=b['username']),token=at,expected=201)
         d.request(f'/v1/chat-requests/{invitation}',token=ot,expected=404)
         d.request(f'/v1/chat-requests/{invitation}/accept',{},token=ot,expected=404)
         d.request('/v1/crypto/keypackages/lease',dict(invitationId=invitation,requestId=str(uuid.uuid4())),token=at,expected=403)
         d.request(f'/v1/chat-requests/{invitation}/accept',{},token=bt,expected=204)
+        d.request(f'/v1/chat-requests/{invitation}/dismiss',{},token=at,expected=404)
         assert any(q['id']==invitation for q in d.request('/v1/chat-requests',token=bt))
         def lease(_):
             lid=str(uuid.uuid4());request=urllib.request.Request(d.BASE+'/v1/crypto/keypackages/lease',data=json.dumps(dict(invitationId=invitation,requestId=lid)).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+at})
@@ -82,6 +90,9 @@ def main():
         d.request('/v1/conversations/establish',request,token=bt,expected=403)
         assert not d.request('/v1/conversations/establish',request,token=at,expected=201)['alreadyCommitted']
         assert d.request('/v1/conversations/establish',request,token=at)['alreadyCommitted']
+        # A pending Welcome does not grant access to profile text in either direction.
+        d.request(f'/v1/conversations/{group}/profile-text/{da.identity}',token=bt,expected=404)
+        d.request(f'/v1/conversations/{group}/profile-text/{db.identity}',token=at,expected=404)
         server.restart()
         sql(f"UPDATE key_packages SET lease_expires_at=now()-interval '1 second' WHERE lease_id='{uuid.UUID(lid)}'")
         assert d.request('/v1/conversations/establish',request,token=at)['alreadyCommitted']
@@ -109,6 +120,9 @@ def main():
         d.request(f'/v1/crypto/welcomes/{group}/ack',{},token=bt,expected=204)
         assert all(c['group']!=group for c in d.request('/v1/crypto/welcomes',token=bt))
         assert sql(f"SELECT count(*) FROM members WHERE conversation_id='{uuid.UUID(group)}'").strip()=='2'
+        display_names.verify(d.request, at, bt, ot, ps['accessToken'], group, a['username'])
+        profile_photos.verify(d.request, at, bt, ot, ps["accessToken"], group)
+        profile_text.verify(d.request, at, bt, ot, ps['accessToken'], group, da.identity)
         # Native preparation stores group, Welcome and immutable retry request in one SQLCipher transaction.
         second=establish(a,b,check_crash=True)
         prepared=da.call('outbox')['messages']

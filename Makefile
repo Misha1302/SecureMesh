@@ -5,6 +5,7 @@ demo:
 	bash scripts/demo.sh
 crypto:
 	python3 tests/crypto/process_spike.py
+	python3 tests/crypto/device_roster.py
 seed-demo:
 	.local/venv/bin/python scripts/seed_demo.py
 build-linux:
@@ -15,10 +16,10 @@ network-gprs:
 	.local/venv/bin/python tests/chaos-2g/run.py --profile gprs --seeds 7,19,41 --count 200
 network-severe:
 	.local/venv/bin/python tests/chaos-2g/run.py --profile severe --seeds 7,19,41 --count 200
-native-network-gprs:
-	.local/venv/bin/python tests/chaos-2g/native_run.py --profile gprs --seeds 7,19,41 --count 200
-native-network-severe:
-	.local/venv/bin/python tests/chaos-2g/native_run.py --profile severe --seeds 7,19,41 --count 200
+native-network-gprs native-network-severe:
+	@status=0; for seed in 7 19 41; do \
+		.local/venv/bin/python tests/chaos-2g/native_run.py --profile $(@:native-network-%=%) --seeds "$$seed" --count 200 || status=1; \
+	done; exit $$status
 native-cursor-recovery:
 	.local/venv/bin/python tests/integration/native_cursor_recovery.py
 restore-v2:

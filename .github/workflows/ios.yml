@@ -1,0 +1,87 @@
+name: iPhone alpha
+on:
+  pull_request:
+    paths: ['apps/client_flutter/**', 'src/crypto_core/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  iphone:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.50.0
+          channel: stable
+          cache: true
+      - name: Compile native encryption library for iPhone
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.94.1 --profile minimal --target aarch64-apple-ios
+          cd src/crypto_core
+          IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo +1.94.1 rustc --locked --release --lib --target aarch64-apple-ios --crate-type staticlib
+      - name: Build and inspect device IPA
+        working-directory: apps/client_flutter
+        run: |
+          set -euo pipefail
+          flutter pub get --enforce-lockfile
+          flutter build ios --release --no-codesign --no-pub
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          ditto build/ios/iphoneos/Runner.app "$RUNNER_TEMP/package/Payload/Runner.app"
+          cd "$RUNNER_TEMP/package"
+          xcrun vtool -show-build Payload/Runner.app/Runner | grep -w IOS
+          lipo Payload/Runner.app/Runner -verify_arch arm64
+          nm -gU Payload/Runner.app/Runner > "$RUNNER_TEMP/symbols.txt"
+          grep -q ' _frbgen_securemesh_client_' "$RUNNER_TEMP/symbols.txt"
+          grep -q ' _frb_get_rust_content_hash$' "$RUNNER_TEMP/symbols.txt"
+          ditto -c -k --keepParent Payload SecureMesh-iPhone-arm64-unsigned.ipa
+          unzip -tq SecureMesh-iPhone-arm64-unsigned.ipa
+          shasum -a 256 *.ipa > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone-alpha
+          path: |
+            ${{ runner.temp }}/package/*.ipa
+            ${{ runner.temp }}/package/SHA256SUMS
+          if-no-files-found: error
+
+  profile-unlock-simulator:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+      - name: Compile simulator crypto library
+        working-directory: src/crypto_core
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal --target aarch64-apple-ios-sim
+          IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo +1.94.1 rustc --locked --release --lib --target aarch64-apple-ios-sim --crate-type staticlib
+      - name: Run profile isolation and biometric fallback on a fresh iPhone simulator
+        working-directory: apps/client_flutter
+        run: |
+          set -euo pipefail
+          flutter pub get --enforce-lockfile
+          flutter build ios --simulator --debug --no-pub
+          runtime=$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; rows=[r for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and ".iOS-" in r["identifier"]]; print(max(rows,key=lambda r:tuple(map(int,r["version"].split("."))))["identifier"])')
+          type=$(xcrun simctl list devicetypes --json | python3 -c 'import json,sys; rows=[r for r in json.load(sys.stdin)["devicetypes"] if r["name"].startswith("iPhone ") and r["name"].endswith(" Pro")]; print(rows[-1]["identifier"])')
+          device=$(xcrun simctl create SecureMeshBiometricFixture "$type" "$runtime")
+          trap 'xcrun simctl delete "$device"' EXIT
+          xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -configuration Debug \
+            -destination "platform=iOS Simulator,id=$device" -parallel-testing-enabled NO \
+            -only-testing:RunnerTests -resultBundlePath "$RUNNER_TEMP/profile-unlock.xcresult"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-profile-unlock-simulator
+          path: ${{ runner.temp }}/profile-unlock.xcresult
+          if-no-files-found: ignore

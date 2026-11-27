@@ -1,7 +1,7 @@
 platform,target,priority,crypto,status,evidence
-Android,Flutter-native,P0,OpenMLS-Rust-FFI,NOT_VERIFIED,Doctor found SDK36; unaccepted licenses and missing Android Rust packaging; no build claimed
+Android,Flutter-native,P0,OpenMLS-Rust-FFI,TEXT_INTEROP_VERIFIED,Installed API 28 APK exchanged MLS messages with Linux; API 35 launch; workflow 45965441405 head 1b61725. Physical hardware pending.
 Linux,Flutter-desktop,P0,OpenMLS-Rust-FFI,PASS,reports/evidence/linux-build-v5.txt; reports/evidence/native-dart-ffi.txt; reports/evidence/ui-linux-final.png
 Web,Flutter-web,P1,OpenMLS-Rust-WASM-or-public-only,PASS_PUBLIC_ONLY,Flutter web build executed; private chat disabled; reports/evidence/wasm-probe.txt
-iOS,Flutter-native,P1,OpenMLS-Rust-FFI,BLOCKED_NO_MACOS,No Xcode/macOS runner; no build claimed
-Windows,Flutter-desktop,P1,OpenMLS-Rust-FFI,NOT_RUN,
+iOS,Flutter-native,P0,OpenMLS-Rust-FFI,UNSIGNED_BUILD,Unsigned device bundle; signing and installed device acceptance pending. See docs/PLATFORM_RELEASE_RU.md.
+Windows,Flutter-desktop,P0,OpenMLS-Rust-FFI,CANDIDATE_BUILD,Release candidate with packaged native library. Full messaging acceptance on Windows pending.
 macOS,Flutter-desktop,P1,OpenMLS-Rust-FFI,BLOCKED_NO_MACOS,No Xcode/macOS runner; no build claimed

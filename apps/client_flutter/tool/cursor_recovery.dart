@@ -7,6 +7,7 @@ import 'package:securemesh_client/delivery_client.dart';
 import 'package:securemesh_client/session.dart';
 import 'package:securemesh_client/src/rust/api.dart';
 import 'package:securemesh_client/src/rust/frb_generated.dart';
+import 'package:securemesh_client/tls_client.dart';
 import 'package:securemesh_client/transport.dart';
 
 Future<void> main(List<String> args) async {
@@ -26,8 +27,10 @@ Future<void> main(List<String> args) async {
           as Map<String, dynamic>;
   final context = SecurityContext(withTrustedRoots: true)
     ..setTrustedCertificates(fixture['cert'] as String);
-  final http = HttpClient(context: context)
-    ..connectionTimeout = const Duration(seconds: 5);
+  final http = meshTlsClient(
+    context,
+    connectionTimeout: const Duration(seconds: 5),
+  );
   var profile = Map<String, dynamic>.from(fixture['session'] as Map);
   final endpoint = Uri.parse(fixture['endpoint'] as String);
   final session = AccountSession(

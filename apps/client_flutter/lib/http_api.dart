@@ -12,6 +12,7 @@ Future<dynamic> meshHttp(
   Map<String, dynamic>? data,
   String? method,
   String? token,
+  String? notFoundCode,
 }) async {
   final uri = endpoint.resolve(route);
   if (uri.scheme != 'https' ||
@@ -31,6 +32,10 @@ Future<dynamic> meshHttp(
   if (data != null) request.write(jsonEncode(data));
   try {
     final response = await request.close().timeout(const Duration(seconds: 20));
+    if (response.statusCode == 404 && notFoundCode != null) {
+      await response.listen(null).cancel();
+      throw ApiFailure(404, notFoundCode);
+    }
     final bytes = <int>[];
     await for (final chunk in response.timeout(const Duration(seconds: 20))) {
       if (bytes.length + chunk.length > 262144) {

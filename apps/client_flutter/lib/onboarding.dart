@@ -4,30 +4,62 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 
 import 'account_setup.dart';
+import 'account_credentials.dart';
+import 'display_name.dart';
+
+import 'dart:convert';
+
 import 'http_api.dart';
 import 'local_client.dart';
 import 'profile_files.dart';
 import 'src/rust/api.dart';
 import 'transport.dart';
 
+Uri? httpsServerOrigin(String text) {
+  final value = text.trim();
+  if (value.isEmpty || value.contains(RegExp(r'[@\s\\]'))) return null;
+  try {
+    final uri = Uri.parse(value);
+    if (uri.scheme != 'https' ||
+        uri.host.isEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment ||
+        (uri.path.isNotEmpty && uri.path != '/') ||
+        uri.port < 1 ||
+        uri.port > 65535) {
+      return null;
+    }
+    return Uri.parse(uri.origin);
+  } on FormatException {
+    return null;
+  }
+}
+
 class AccountOnboarding extends StatefulWidget {
   const AccountOnboarding({
     super.key,
     required this.onReady,
     this.russian = true,
+    this.signIn = false,
+    this.defaultServer = const String.fromEnvironment('SECUREMESH_API_ORIGIN'),
     this.resumePath,
     this.resumePassphrase,
   }) : assert((resumePath == null) == (resumePassphrase == null));
   final Future<void> Function(String path, String passphrase) onReady;
-  final bool russian;
+  final bool russian, signIn;
+  final String defaultServer;
   final String? resumePath, resumePassphrase;
   @override
   State<AccountOnboarding> createState() => _AccountOnboardingState();
 }
 
 class _AccountOnboardingState extends State<AccountOnboarding> {
-  final endpoint = TextEditingController(text: 'https://127.0.0.1:5088');
+  final endpoint = TextEditingController();
+  bool editingServer = false;
   final username = TextEditingController();
+  final displayName = TextEditingController();
+  bool legacy = false, remembered = false;
+  final revealed = <TextEditingController>{};
   final email = TextEditingController();
   final password = TextEditingController();
   final localPassword = TextEditingController();
@@ -42,7 +74,10 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   bool busy = false, ru = true, verifiedRegistrationHere = false;
   bool resuming = false, profileComplete = false;
   bool get needsAccountPassword =>
-      !profileComplete && draft?['session'] == null;
+      !(verifiedRegistrationHere && !legacy) &&
+      !(resuming && !legacy) &&
+      !profileComplete &&
+      draft?['session'] == null;
   int step = 0; // register, email verification, login
   String tr(String a, String b) => ru ? a : b;
 
@@ -50,6 +85,11 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   void initState() {
     super.initState();
     ru = widget.russian;
+    final configured =
+        Platform.environment['SECUREMESH_API_ORIGIN'] ?? widget.defaultServer;
+    endpoint.text = httpsServerOrigin(configured)?.origin ?? '';
+    editingServer = endpoint.text.isEmpty;
+    if (widget.signIn) step = 2;
     if (widget.resumePath != null) {
       busy = true;
       resuming = true;
@@ -63,6 +103,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
     for (final c in [
       endpoint,
       username,
+      displayName,
       email,
       password,
       localPassword,
@@ -95,6 +136,12 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       final state = await setup!.state();
       draft = state['draft'] as Map<String, dynamic>?;
       if (draft == null) throw StateError('DRAFT_MISSING');
+      final version = draft!['credentialVersion'] ?? 1;
+      if (version != 1 && version != 2) {
+        throw StateError('Unsupported credential version');
+      }
+      legacy = version == 1;
+      if (!legacy) password.text = widget.resumePassphrase!;
       endpoint.text = draft!['endpoint'] as String;
       username.text = draft!['username'] as String;
       identity = draft!['deviceId'] as String;
@@ -119,26 +166,39 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       error = null;
     });
     try {
-      final base = Uri.parse(endpoint.text.trim());
-      if (base.scheme != 'https' ||
-          base.host.isEmpty ||
-          base.userInfo.isNotEmpty) {
+      final base = httpsServerOrigin(endpoint.text);
+      if (base == null) {
         throw ApiFailure(400, 'TLS_REQUIRED');
       }
       http ??= nativeHttpClient();
       if (step == 0) {
+        await initializeNativeBridge();
         await meshHttp(
           http!,
           base,
-          '/v1/auth/register',
+          '/v2/auth/register',
+          notFoundCode: 'REGISTRATION_V2_UNAVAILABLE',
           data: {
             'username': username.text.trim(),
             'email': email.text.trim(),
-            'password': password.text,
+            'displayName': displayName.text.trim(),
+            ...await accountCredentialFields(
+              version: 2,
+              endpoint: base,
+              username: username.text.trim(),
+              password: password.text,
+            ),
           },
         );
-        if (mounted) setState(() => step = 1);
-      } else if (step == 1) {
+        if (mounted) {
+          setState(() {
+            step = 1;
+            editingServer = false;
+          });
+        }
+        return;
+      }
+      if (step == 1) {
         await meshHttp(
           http!,
           base,
@@ -148,52 +208,49 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         verification.clear();
         verifiedRegistrationHere = true;
         if (mounted) setState(() => step = 2);
-      } else {
-        await initializeNativeBridge();
-        if (!profileComplete && setup == null) {
-          if (identity == null) {
-            final directory = await localProfileDirectory();
-            await directory.create(recursive: true);
-            identity = newUuid();
-            storePath = '${directory.path}/$identity.db';
-          }
-          store = await NativeClient.open(
-            path: storePath!,
-            passphrase: localPassword.text,
-          );
-          http ??= nativeHttpClient();
-          final prepared = AccountSetup(store: store!, http: http!);
-          try {
-            await prepared.prepare(
-              device: identity!,
-              endpoint: base,
-              username: username.text.trim(),
-              registeredHere: verifiedRegistrationHere,
-            );
-          } catch (_) {
-            // No login was sent. A rejected initializer must not trap the
-            // corrected form on an uninitialized database connection.
-            store?.dispose();
-            store = null;
-            setup = null;
-            identity = null;
-            storePath = null;
-            rethrow;
-          }
-          setup = prepared;
-          draft = (await setup!.state())['draft'] as Map<String, dynamic>;
-        }
-        if (!profileComplete) await setup!.finish(password: password.text);
-        profileComplete = true;
-        store?.dispose();
-        store = null;
-        setup = null;
-        final passphrase = localPassword.text;
-        await widget.onReady(storePath!, passphrase);
-        password.clear();
-        localPassword.clear();
-        if (mounted) Navigator.of(context).pop();
       }
+      final localKey = legacy ? localPassword.text : password.text;
+      await initializeNativeBridge();
+      if (!profileComplete && setup == null) {
+        if (identity == null) {
+          final directory = await localProfileDirectory();
+          await directory.create(recursive: true);
+          identity = newUuid();
+          storePath = '${directory.path}/$identity.db';
+        }
+        store = await NativeClient.open(path: storePath!, passphrase: localKey);
+        http ??= nativeHttpClient();
+        final prepared = AccountSetup(store: store!, http: http!);
+        try {
+          await prepared.prepare(
+            device: identity!,
+            endpoint: base,
+            username: username.text.trim(),
+            registeredHere: verifiedRegistrationHere,
+            credentialVersion: legacy ? 1 : 2,
+          );
+        } catch (_) {
+          // No login was sent. A rejected initializer must not trap the
+          // corrected form on an uninitialized database connection.
+          store?.dispose();
+          store = null;
+          setup = null;
+          identity = null;
+          storePath = null;
+          rethrow;
+        }
+        setup = prepared;
+        draft = (await setup!.state())['draft'] as Map<String, dynamic>;
+      }
+      if (!profileComplete) await setup!.finish(password: password.text);
+      profileComplete = true;
+      store?.dispose();
+      store = null;
+      setup = null;
+      await widget.onReady(storePath!, localKey);
+      password.clear();
+      localPassword.clear();
+      if (mounted) Navigator.of(context).pop();
     } catch (failure) {
       if (setup != null) {
         try {
@@ -221,8 +278,16 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       if (mounted) {
         setState(() {
           error =
-              failure is ApiFailure &&
-                  failure.code == 'DEVICE_CHALLENGE_MISMATCH'
+              step == 0 &&
+                  failure is ApiFailure &&
+                  failure.status == 404 &&
+                  failure.code == 'REGISTRATION_V2_UNAVAILABLE'
+              ? (
+                  ru: 'Сервер несовместим с этой версией приложения. Для регистрации укажите сервер с поддержкой SecureMesh API v2.',
+                  en: 'This server is incompatible with this app version. To create an account, use a server that supports SecureMesh API v2.',
+                )
+              : failure is ApiFailure &&
+                    failure.code == 'DEVICE_CHALLENGE_MISMATCH'
               ? (
                   ru: 'Сервер вернул неподходящий запрос подписи. Проверьте адрес сервера; вход не выполнен.',
                   en: 'The server returned an invalid signing challenge. Check the server address; sign-in was stopped.',
@@ -269,14 +334,36 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       controller: controller,
       enabled: !busy,
       readOnly:
-          draft != null &&
-          [endpoint, username, localPassword].contains(controller),
-      obscureText: secret,
+          (verifiedRegistrationHere && controller == username) ||
+          (draft != null &&
+              ([endpoint, username, localPassword].contains(controller) ||
+                  (!legacy && controller == password))),
+      obscureText: secret && !revealed.contains(controller),
       autocorrect: false,
       enableSuggestions: !secret,
+      autofillHints: controller == password
+          ? [step == 0 ? AutofillHints.newPassword : AutofillHints.password]
+          : controller == username
+          ? const [AutofillHints.username]
+          : null,
       keyboardType: keyboard,
       decoration: InputDecoration(
         labelText: label,
+        suffixIcon: secret
+            ? IconButton(
+                tooltip: revealed.contains(controller)
+                    ? tr('Скрыть', 'Hide')
+                    : tr('Показать', 'Show'),
+                icon: Icon(
+                  revealed.contains(controller)
+                      ? Icons.visibility_off
+                      : Icons.visibility,
+                ),
+                onPressed: () => setState(() {
+                  if (!revealed.remove(controller)) revealed.add(controller);
+                }),
+              )
+            : null,
         helperText: help,
         helperMaxLines: 8,
         errorMaxLines: 5,
@@ -284,26 +371,55 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         border: const OutlineInputBorder(),
       ),
       validator: (v) {
-        if (v == null || v.length < min || v.length > max) {
+        if (controller == displayName) {
+          return peerDisplayName(v) == null
+              ? tr(
+                  'Введите имя длиной от 1 до 64 символов в одну строку.',
+                  'Enter a name of 1–64 characters on one line.',
+                )
+              : null;
+        }
+        final length = legacy && controller == password
+            ? v?.length
+            : v?.characters.length;
+        if (v == null ||
+            length == null ||
+            length < min ||
+            length > max ||
+            (controller == password &&
+                !legacy &&
+                (utf8.encode(v).length > 4096 || v.contains('\u0000')))) {
+          if (controller == password) {
+            return tr(
+              'Пароль должен содержать от $min до $max символов.',
+              'Password must contain $min–$max characters.',
+            );
+          }
           return tr(
             'Введите от $min до $max символов.',
             'Enter $min–$max characters.',
           );
         }
+        if (controller == localPassword && v == password.text) {
+          return tr(
+            'Выберите отдельный пароль хранилища.',
+            'Choose a separate local passphrase.',
+          );
+        }
         if (controller == endpoint) {
-          final uri = Uri.tryParse(v.trim());
-          if (uri == null ||
-              uri.scheme != 'https' ||
-              uri.host.isEmpty ||
-              uri.userInfo.isNotEmpty ||
-              uri.hasQuery ||
-              uri.hasFragment ||
-              (uri.path.isNotEmpty && uri.path != '/')) {
+          if (httpsServerOrigin(v) == null) {
             return tr(
               'Укажите HTTPS-адрес сервера без пути, например https://chat.example.org.',
               'Enter the HTTPS server address without a path, for example https://chat.example.org.',
             );
           }
+        }
+        if (controller == email &&
+            !RegExp(r'^[^@\s<>]+@[^@\s<>]+$').hasMatch(v.trim())) {
+          return tr(
+            'Введите адрес почты, например name@example.org.',
+            'Enter an email address, such as name@example.org.',
+          );
         }
         if (controller == username &&
             !RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(v)) {
@@ -359,8 +475,8 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                       Text(
                         step == 1
                             ? tr(
-                                'Введите код из письма. В локальной версии письмо доступно в Mailpit.',
-                                'Enter the code from your email. Local development mail is available in Mailpit.',
+                                'Проверьте почту ${email.text.trim()} и папку «Спам». Код действует 30 минут.',
+                                'Check ${email.text.trim()} and your spam folder. The code is valid for 30 minutes.',
                               )
                             : step == 2
                             ? resuming || draft != null
@@ -378,19 +494,49 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                               ),
                       ),
                       const SizedBox(height: 24),
-                      field(
-                        endpoint,
-                        tr('Сервер HTTPS', 'HTTPS server'),
-                        help: tr(
-                          'Введите https:// и имя сервера, без пути /health/ready или /v1.',
-                          'Enter https:// and the server name. Leave off paths such as /health/ready or /v1.',
+                      if (editingServer &&
+                          step != 1 &&
+                          !verifiedRegistrationHere &&
+                          !resuming &&
+                          draft == null)
+                        field(
+                          endpoint,
+                          tr('Сервер HTTPS', 'HTTPS server'),
+                          help: tr(
+                            'Введите адрес, полученный от организатора или администратора сервера.',
+                            'Enter the address supplied by your organizer or server administrator.',
+                          ),
+                          example: 'https://chat.example.org',
+                          keyboard: TextInputType.url,
+                        )
+                      else if (endpoint.text.isNotEmpty)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(tr('Сервер аккаунта', 'Account server')),
+                          subtitle: Text(endpoint.text),
+                          trailing:
+                              step != 1 &&
+                                  !verifiedRegistrationHere &&
+                                  !resuming &&
+                                  draft == null
+                              ? IconButton(
+                                  tooltip: tr(
+                                    'Изменить сервер',
+                                    'Change server',
+                                  ),
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: busy
+                                      ? null
+                                      : () => setState(
+                                          () => editingServer = true,
+                                        ),
+                                )
+                              : null,
                         ),
-                        keyboard: TextInputType.url,
-                      ),
                       if (step != 1)
                         field(
                           username,
-                          tr('Имя пользователя', 'Username'),
+                          tr('Уникальный @username', 'Unique @username'),
                           help: tr(
                             'От 3 до 32 символов: строчные латинские буквы, цифры и знак _.',
                             'Use 3–32 lowercase letters (a–z), digits or underscores.',
@@ -398,6 +544,15 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           example: 'marina_24',
                           min: 3,
                           max: 32,
+                        ),
+                      if (step == 0)
+                        field(
+                          displayName,
+                          tr('Имя в профиле', 'Name on profile'),
+                          help: tr(
+                            'От 1 до 64 символов. Имя может совпадать с чужим.',
+                            'Use 1–64 characters. Other people can have the same name.',
+                          ),
                         ),
                       if (step == 0)
                         field(
@@ -416,15 +571,29 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           tr('Пароль аккаунта', 'Account password'),
                           help: step == 0
                               ? tr(
-                                  'Придумайте пароль длиной от 12 до 256 символов.',
-                                  'Choose a password of 12–256 characters.',
+                                  'Придумайте уникальный пароль из 16–256 символов и сохраните в менеджере паролей. Он также открывает переписку на этом устройстве.',
+                                  'Choose a unique password of 16–256 characters and save it in your password manager. It also unlocks chats on this device.',
                                 )
                               : tr(
                                   'Введите пароль, который указали при регистрации.',
                                   'Enter the password you chose at registration.',
                                 ),
                           secret: true,
-                          min: 12,
+                          min: legacy ? 12 : 16,
+                        ),
+                      if (step == 0)
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: remembered,
+                          onChanged: busy
+                              ? null
+                              : (v) => setState(() => remembered = v == true),
+                          title: Text(
+                            tr(
+                              'Я запомнил или сохранил пароль',
+                              'I remember or have saved my password',
+                            ),
+                          ),
                         ),
                       if (step == 1)
                         field(
@@ -437,7 +606,39 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           secret: true,
                           max: 128,
                         ),
-                      if (step == 2 && !resuming) ...[
+                      if (step == 2 &&
+                          !resuming &&
+                          !verifiedRegistrationHere &&
+                          draft == null)
+                        TextButton(
+                          onPressed: busy
+                              ? null
+                              : () => setState(() {
+                                  legacy = !legacy;
+                                  password.clear();
+                                  localPassword.clear();
+                                  revealed.clear();
+                                  error = null;
+                                }),
+                          child: Text(
+                            legacy
+                                ? tr(
+                                    'Вход с единым паролем',
+                                    'Use single-password sign-in',
+                                  )
+                                : tr(
+                                    'Вход в аккаунт старой версии',
+                                    'Sign in to a legacy account',
+                                  ),
+                          ),
+                        ),
+                      if (step == 2 && legacy && !resuming) ...[
+                        Text(
+                          tr(
+                            'Только для старых аккаунтов: их пароль передаётся серверу по HTTPS. Здесь нельзя вводить единый пароль нового аккаунта.',
+                            'For legacy accounts only: the old account password is sent to the server over HTTPS. Never enter a new account’s single password here.',
+                          ),
+                        ),
                         field(
                           localPassword,
                           tr(
@@ -468,6 +669,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                       FilledButton(
                         onPressed:
                             busy ||
+                                (step == 0 && !remembered) ||
                                 (resuming && setup == null && !profileComplete)
                             ? null
                             : submit,
@@ -496,7 +698,17 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           onPressed: busy
                               ? null
                               : () => setState(() {
+                                  password.clear();
+                                  localPassword.clear();
+                                  revealed.clear();
+                                  remembered = false;
+                                  legacy = false;
                                   step = step == 0 ? 2 : 0;
+                                  if (step == 0 && verifiedRegistrationHere) {
+                                    verifiedRegistrationHere = false;
+                                    password.clear();
+                                    localPassword.clear();
+                                  }
                                   error = null;
                                 }),
                           child: Text(
