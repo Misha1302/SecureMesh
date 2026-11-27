@@ -52,25 +52,31 @@ class Desktop:
         self.process.terminate()
         self.process.wait(timeout=10)
 
-    def words(self, layout=11):
+    def words(self, layout=11, region=None):
         if self.process.poll() is not None:
             raise RuntimeError('Linux packaged client exited')
         frame = run('import', '-window', self.window, 'png:-', capture_output=True).stdout
-        large = run('convert', 'png:-', '-resize', '200%', 'png:-', input=frame,
+        x, y, scale = 0, 0, 2
+        crop = []
+        if region is not None:
+            x, y, width, height = region
+            crop = ['-crop', f'{width}x{height}+{x}+{y}', '+repage']
+            scale = 3
+        large = run('convert', 'png:-', *crop, '-resize', f'{scale * 100}%', 'png:-', input=frame,
                     capture_output=True).stdout
         raw = run('tesseract', 'stdin', 'stdout', '--psm', str(layout), 'tsv', input=large,
                   capture_output=True).stdout.decode()
-        return [(r['text'].strip().casefold(), (int(r['left']) + int(r['width']) // 2) // 2,
-                 (int(r['top']) + int(r['height']) // 2) // 2)
+        return [(r['text'].strip().casefold(), x + (int(r['left']) + int(r['width']) // 2) // scale,
+                 y + (int(r['top']) + int(r['height']) // 2) // scale)
                 for r in csv.DictReader(io.StringIO(raw), delimiter='\t') if r.get('text')]
 
-    def word(self, expected, timeout=35):
+    def word(self, expected, timeout=35, region=None):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             # Sparse segmentation can omit the label of an outlined text field.
             # The block pass locates it on the same rendered Linux window.
             for layout in (11, 6):
-                for text, x, y in self.words(layout):
+                for text, x, y in self.words(layout, region):
                     if text.strip('.,:;/|') == expected.casefold():
                         return x, y
             time.sleep(.25)
@@ -128,13 +134,23 @@ class Desktop:
         raise RuntimeError('Linux export did not reproduce the Android file')
 
     def send(self, path):
-        # Find the paperclip by its actual tooltip. Other buttons can precede
-        # the editor depending on the client build (e.g. voice recording).
-        mx, my = self.word('Message')
-        for x in range(max(16, mx - 190), mx - 18, 13):
+        # The GTK save dialog just closed. Restore focus to Flutter before
+        # hovering the composer. Keep OCR away from chat and sidebar text.
+        run('xdotool', 'windowfocus', '--sync', self.window)
+        geometry = run('xdotool', 'getwindowgeometry', '--shell', self.window,
+                       capture_output=True, text=True).stdout.splitlines()
+        dimensions = dict(line.split('=', 1) for line in geometry)
+        width, height = int(dimensions['WIDTH']), int(dimensions['HEIGHT'])
+        mx, my = self.word('Message', region=(0, height - 48, width, 32))
+        for x in range(max(16, mx - 200), mx - 18, 13):
             run('xdotool', 'mousemove', '--window', self.window, str(x), str(my))
             time.sleep(.65)
-            if any(t == 'attach' for t, _, _ in self.words()):
+            # Only the observed Attach file tooltip may select a button.
+            # A nearby clipboard, camera or microphone action is not enough.
+            left = max(0, x - 150)
+            region = (left, my - 65, min(300, width - left), min(100, height - my + 65))
+            if any('attach file' in ' '.join(t for t, _, _ in self.words(layout, region))
+                   for layout in (11, 6)):
                 self.click((x, my))
                 break
         else:
