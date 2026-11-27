@@ -5,35 +5,57 @@ const cacheName = `${cachePrefix}v1`;
 const url = (name) => new URL(name, self.registration.scope).href;
 const home = url('./');
 const index = url('index.html');
-const assets = [
-  index,
-  url('profile.html'),
-  url('profile.css'),
-  url('profile.js'),
-  url('vault.js'),
-  url('mesh-worker.js'),
-  url('messenger.js'),
-  url('account.js'),
-  url('crypto/securemesh_browser_crypto.js'),
-  url('crypto/securemesh_browser_crypto_bg.wasm'),
-  url('app.css'),
-  url('app.js'),
-  url('manifest.webmanifest'),
-  url('icon-192.png'),
-  url('icon-512.png'),
-  url('icon-maskable-512.png'),
-  url('apple-touch-icon.png'),
+const releaseIntegrity = null;
+const labAssets = [
+  'index.html',
+  'profile.html',
+  'profile.css',
+  'profile.js',
+  'vault.js',
+  'mesh-worker.js',
+  'messenger.js',
+  'account.js',
+  'crypto/securemesh_browser_crypto.js',
+  'crypto/securemesh_browser_crypto_bg.wasm',
+  'app.css',
+  'app.js',
+  'manifest.webmanifest',
+  'icon-192.png',
+  'icon-512.png',
+  'icon-maskable-512.png',
+  'apple-touch-icon.png',
 ];
+
+const entries = releaseIntegrity ? Object.entries(releaseIntegrity) : labAssets.map((name) => [name, '']);
+const assets = new Map(entries.map(([name, integrity]) => [url(name), integrity]));
+
+function assetRequest(asset) {
+  const integrity = assets.get(asset);
+  const request = new Request(asset, {
+    cache: 'no-store',
+    credentials: 'omit',
+    integrity,
+    mode: 'same-origin',
+    redirect: 'error',
+  });
+  if (integrity && request.integrity !== integrity) {
+    throw new Error('Static asset integrity is unavailable');
+  }
+  return request;
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
+    const existingCache = await caches.has(cacheName);
     const cache = await caches.open(cacheName);
-    await cache.addAll(assets.map((asset) => new Request(asset, {
-      cache: 'reload',
-      credentials: 'omit',
-      redirect: 'error',
-    })));
-    await self.skipWaiting();
+    try {
+      // Cache.addAll writes the complete set or none of it.
+      await cache.addAll([...assets.keys()].map(assetRequest));
+    } catch (error) {
+      if (releaseIntegrity && !existingCache) await caches.delete(cacheName);
+      throw error;
+    }
+    // The default activation lifecycle leaves earlier controlled clients on their release.
   })());
 });
 
@@ -54,7 +76,7 @@ self.addEventListener('fetch', (event) => {
       request.headers.has('range')) return;
 
   const asset = request.mode === 'navigate' && request.url === home ? index : request.url;
-  if (!assets.includes(asset)) return;
+  if (!assets.has(asset)) return;
 
   event.respondWith((async () => {
     try {
@@ -63,6 +85,6 @@ self.addEventListener('fetch', (event) => {
     } catch {
       // A disabled or evicted cache can still use the browser's network path.
     }
-    return fetch(request);
+    return fetch(assetRequest(asset));
   })());
 });

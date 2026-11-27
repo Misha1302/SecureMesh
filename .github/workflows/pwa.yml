@@ -35,6 +35,7 @@ jobs:
           sparse-checkout: |
             site/app
             scripts/package-pwa.py
+            tests/pwa/sw_release.py
             src/browser_crypto
             src/crypto_core/src/server_credential.rs
           sparse-checkout-cone-mode: false
@@ -49,6 +50,12 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/securemesh-pwa"
           sha256sum --check --strict SHA256SUMS
+      - name: Verify release integrity and offline update in Chromium
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pwa-venv"
+          "$RUNNER_TEMP/pwa-venv/bin/pip" install playwright==1.57.0
+          "$RUNNER_TEMP/pwa-venv/bin/playwright" install --with-deps chromium
+          "$RUNNER_TEMP/pwa-venv/bin/python" tests/pwa/sw_release.py "$RUNNER_TEMP/securemesh-pwa"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: securemesh-pwa

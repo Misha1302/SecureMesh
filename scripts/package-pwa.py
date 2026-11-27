@@ -2,7 +2,9 @@
 """Stage the allowlisted SecureMesh PWA and checksums for a dedicated origin."""
 
 import argparse
+import base64
 import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -36,6 +38,7 @@ ASSETS = (
     "vault.js",
 )
 CACHE_MARKER = b"${cachePrefix}v1"
+INTEGRITY_MARKER = b"const releaseIntegrity = null;"
 
 
 def digest(data: bytes) -> str:
@@ -44,6 +47,22 @@ def digest(data: bytes) -> str:
 
 def checksum_lines(files: dict[str, bytes]) -> str:
     return "".join(f"{digest(data)}  app/{name}\n" for name, data in files.items())
+
+
+def render_service_worker(files: dict[str, bytes]) -> bytes:
+    worker = files["sw.js"]
+    if worker.count(CACHE_MARKER) != 1 or worker.count(INTEGRITY_MARKER) != 1:
+        raise ValueError("Expected exactly one service worker cache marker and one integrity marker")
+
+    integrity = {
+        name: "sha256-" + base64.b64encode(hashlib.sha256(files[name]).digest()).decode("ascii")
+        for name in ASSETS if name != "sw.js"
+    }
+    cache_id = digest(checksum_lines(files).encode("ascii"))[:24].encode("ascii")
+    manifest = json.dumps(integrity, indent=2).encode("ascii")
+    return worker.replace(CACHE_MARKER, CACHE_MARKER + b"-" + cache_id).replace(
+        INTEGRITY_MARKER, b"const releaseIntegrity = " + manifest + b";"
+    )
 
 
 def verify_browser_crypto(files: dict[str, bytes], staging: Path) -> None:
@@ -86,17 +105,12 @@ def package(destination: Path) -> None:
             raise ValueError(f"Expected a regular PWA asset: {name}")
         files[name] = path.read_bytes()
 
-    worker = files["sw.js"]
-    if worker.count(CACHE_MARKER) != 1:
-        raise ValueError("Expected exactly one service worker cache version marker")
-
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
         temporary_path = Path(temporary)
         verify_browser_crypto(files, temporary_path)
 
-        cache_id = digest(checksum_lines(files).encode("ascii"))[:24].encode("ascii")
-        files["sw.js"] = worker.replace(CACHE_MARKER, CACHE_MARKER + b"-" + cache_id)
+        files["sw.js"] = render_service_worker(files)
         staging = temporary_path / "bundle"
         for name, data in files.items():
             target = staging / "app" / name
