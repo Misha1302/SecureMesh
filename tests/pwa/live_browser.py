@@ -147,20 +147,98 @@ def register(page, base, username):
     password = secrets.token_urlsafe(25)
     email = f"{username}@securemesh.test"
     page.goto(base + "/app/profile.html")
-    page.locator("#entry [name=name]").fill(username)
-    page.locator("#entry [name=username]").fill(username)
-    page.locator("#password").fill(password)
-    page.locator("#entry [name=remembered]").check()
-    page.locator("#enter").click()
+    create_profile(page, username, password)
     page.locator("#register [name=email]").fill(email)
     page.locator("#register button").click()
     page.locator("#verify [name=code]").fill(verification_token(email))
     page.locator("#verify button").click()
     page.locator("#login button").click()
     expect(page.locator("#conversations")).to_be_visible(timeout=20_000)
+    return device_code(page), password
+
+
+def create_profile(page, username, password):
+    page.locator("#entry [name=name]").fill(username)
+    page.locator("#entry [name=username]").fill(username)
+    page.locator("#password").fill(password)
+    page.locator("#entry [name=remembered]").check()
+    page.locator("#enter").click()
+
+
+def device_code(page):
     code = page.locator("#my-code")
     expect(code).to_have_text(re.compile(r"^(?:[A-F0-9]{4} ){15}[A-F0-9]{4}$"))
-    return code.text_content(), password
+    return code.text_content()
+
+
+def exercise_archive(browser, exporter, app_origin, exporter_code, peer, messages):
+    secret = secrets.token_urlsafe(25)
+    exporter.locator("#backup summary").click()
+    exporter.locator("#export [name=secret]").fill(secret)
+    with exporter.expect_download() as downloaded:
+        exporter.locator("#export button").click()
+    download = downloaded.value
+    assert download.suggested_filename == "SecureMesh-history.smbackup"
+    archive = download.path().read_bytes()
+    assert all(text.encode() not in archive for text in messages)
+    assert exporter_code.encode() not in archive
+
+    with browser.new_context() as context:
+        viewer = context.new_page()
+        viewer.goto(app_origin + "/app/profile.html")
+        viewer.locator("#archives > summary").click()
+        archive_view = viewer.locator("#archive-view")
+
+        def open_file(content, password):
+            file_input = viewer.locator("#restore input[type=file]")
+            with viewer.expect_file_chooser() as chooser:
+                file_input.click()
+            chooser.value.set_files({
+                "name": download.suggested_filename,
+                "mimeType": "application/octet-stream",
+                "buffer": content,
+            })
+            viewer.locator("#restore [name=secret]").fill(password)
+            viewer.locator("#restore button").click()
+
+        notice = viewer.locator("#notice")
+        authentication_error = "Проверьте пароль. Открыть зашифрованные данные не удалось."
+        open_file(archive, secrets.token_urlsafe(25))
+        expect(notice).to_have_text(authentication_error)
+        expect(archive_view).to_be_empty()
+        record = json.loads(archive)
+        old_ciphertext = record["ciphertext"]
+        record["ciphertext"] = ("A" if old_ciphertext[0] != "A" else "B") + old_ciphertext[1:]
+        open_file(json.dumps(record).encode(), secret)
+        expect(notice).to_have_text(authentication_error)
+        expect(archive_view).to_be_empty()
+
+        # An authenticated file with identity data must also fail the text-only schema.
+        malicious = viewer.evaluate("""async (password) => {
+          const {exportBackup} = await import('/app/vault.js');
+          return exportBackup(password, {
+            type: 'securemesh-text-archive-v1', chats: [], identity: {secretKey: 'unexpected field'},
+          });
+        }""", secret)
+        open_file(malicious.encode(), secret)
+        expect(notice).to_have_text("Формат файла или ответа не поддерживается.")
+        expect(archive_view).to_be_empty()
+
+        open_file(archive, secret)
+        expect(archive_view).to_contain_text("Архив для чтения")
+        archive_view.get_by_text("@" + peer, exact=True).click()
+        for message in messages:
+            expect(archive_view.get_by_text(message)).to_be_visible()
+        expect(viewer.locator("#conversations")).to_be_hidden()
+        expect(viewer.locator("#my-code")).to_be_empty()
+        assert viewer.evaluate("""async () => !(await (await import('/app/vault.js')).hasVault())""")
+
+        create_profile(viewer, "archive_" + uuid.uuid4().hex[:12], secrets.token_urlsafe(25))
+        assert device_code(viewer) != exporter_code
+        expect(viewer.locator("#register")).to_be_visible()
+        viewer.locator("#lock").click()
+        expect(archive_view).to_be_empty()
+        expect(viewer.locator("#my-code")).to_be_empty()
 
 
 def exercise(app_origin, api_port, pin):
@@ -196,8 +274,8 @@ def exercise(app_origin, api_port, pin):
         bob.locator("[data-action=join]").click()
         for page, peer in [(alice, bob_name), (bob, alice_name)]:
             page.locator("#chat-list").get_by_role("button", name=re.compile(peer)).click()
-        for sender, recipient, text in [(alice, bob, "Первое сообщение на iPhone 🔐"),
-                                        (bob, alice, "Ответ с другого профиля 🔐")]:
+        first, reply = "Первое сообщение на iPhone 🔐", "Ответ с другого профиля 🔐"
+        for sender, recipient, text in [(alice, bob, first), (bob, alice, reply)]:
             sender.locator("#compose textarea").fill(text)
             sender.locator("#compose button").click()
             expect(recipient.locator("#messages").get_by_text(text, exact=True)).to_be_visible(timeout=20_000)
@@ -227,6 +305,7 @@ def exercise(app_origin, api_port, pin):
             wire = base64.b64decode(row["ciphertext"], validate=True)
             assert row["envelopeKind"] == 1 and len(wire) > 32
             assert not any(word.encode() in wire for word in ("сообщение", "профиля", "Очередь"))
+        exercise_archive(browser, alice, app_origin, alice_code, bob_name, [first, reply, queued])
         browser.close()
 
 
@@ -236,3 +315,4 @@ if __name__ == "__main__":
             exercise(app_origin, api_port, pin)
     print("Two isolated Chromium profiles exchanged verified MLS text through live .NET, PostgreSQL, and Mailpit")
     print("An offline message survived vault lock and unlock and was durably saved on reconnect")
+    print("A fresh browser opened an encrypted history archive and rejected wrong passwords, tampering, and identity data")
