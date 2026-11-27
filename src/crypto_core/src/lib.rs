@@ -280,39 +280,58 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             set_meta(db, &format!("pending:{gid}"), id)?;
             Ok(envelope)
         }
-        "commit_saved" | "commit_rejected" => {
+        "saved" | "commit_saved" => {
             let gid = s(req, "group")?;
             let id = s(req, "id")?;
-            let status: String = db.query_row(
-                "SELECT status FROM outgoing WHERE group_id=? AND id=?",
+            let seq = req["seq"].as_i64().context("sequence")?;
+            ensure!(seq > 0, "invalid sequence");
+            let (kind, status, old_seq): (i64, String, Option<i64>) = db.query_row(
+                "SELECT json_extract(envelope,'$.kind'),status,seq FROM outgoing WHERE group_id=? AND id=?",
                 params![gid, id],
-                |r| r.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
-            if status == "saved" && op == "commit_saved" {
-                return Ok(json!({"already_saved":true}));
+            ensure!(op == "saved" || kind == 3, "expected MLS commit");
+            let already_saved = status == "saved";
+            ensure!(status == "queued" || already_saved, "unexpected outbox state");
+            ensure!(!already_saved || old_seq == Some(seq), "sequence changed");
+            let mut result = json!({"saved":true,"already_saved":already_saved});
+            if kind == 3 {
+                // Older clients could persist the ACK before merging the pending commit.
+                let pending_key = format!("pending:{gid}");
+                if meta(db, &pending_key)? == id {
+                    let mut group = load_group(p, gid)?;
+                    group.merge_pending_commit(p)?;
+                    set_meta(db, &pending_key, "")?;
+                    result["epoch"] = json!(group.epoch().as_u64());
+                } else {
+                    ensure!(already_saved, "pending commit mismatch");
+                }
             }
+            if !already_saved {
+                db.execute(
+                    "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
+                    params![seq, gid, id],
+                )?;
+            }
+            Ok(result)
+        }
+        "commit_rejected" => {
+            let gid = s(req, "group")?;
+            let id = s(req, "id")?;
+            ensure!(
+                req["epoch_conflict_confirmed"].as_bool() == Some(true),
+                "explicit conflict required"
+            );
             ensure!(
                 meta(db, &format!("pending:{gid}"))? == id,
                 "pending commit mismatch"
             );
             let mut group = load_group(p, gid)?;
-            if op == "commit_saved" {
-                group.merge_pending_commit(p)?;
-                db.execute(
-                    "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
-                    params![req["seq"].as_i64().context("sequence")?, gid, id],
-                )?;
-            } else {
-                ensure!(
-                    req["epoch_conflict_confirmed"].as_bool() == Some(true),
-                    "explicit conflict required"
-                );
-                group.clear_pending_commit(p.storage())?;
-                db.execute(
-                    "UPDATE outgoing SET status='rejected' WHERE group_id=? AND id=?",
-                    params![gid, id],
-                )?;
-            }
+            group.clear_pending_commit(p.storage())?;
+            db.execute(
+                "UPDATE outgoing SET status='rejected' WHERE group_id=? AND id=?",
+                params![gid, id],
+            )?;
             set_meta(db, &format!("pending:{gid}"), "")?;
             Ok(json!({"epoch":group.epoch().as_u64()}))
         }
@@ -515,17 +534,6 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 .map(|r| Ok(serde_json::from_str::<Value>(&r?)?))
                 .collect::<Result<Vec<_>>>()?;
             Ok(json!({"messages":values}))
-        }
-        "saved" => {
-            db.execute(
-                "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
-                params![
-                    req["seq"].as_i64().context("seq")?,
-                    s(req, "group")?,
-                    s(req, "id")?
-                ],
-            )?;
-            Ok(json!({"saved":true}))
         }
         "history" => {
             let mut q = db

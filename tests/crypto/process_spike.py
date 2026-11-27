@@ -99,6 +99,21 @@ def main():
         assert all(x['id']!=crash_id for x in a.call('outbox')['messages'])
         retry=a.call('queue',group=group,id=crash_id,text='crash consistency')
         assert b.call('process',group=group,ciphertext=retry['ciphertext'])['text']=='crash consistency'
+        # NativeDelivery uses the generic durable ACK for every envelope. Verify
+        # a rekey becomes usable before the sender's sync echo arrives.
+        staged = a.call('stage_rekey', group=group, id=str(uuid.uuid4()))
+        ack = dict(group=group, id=staged['id'], seq=15)
+        a.call('saved', reject=True, crash_before_commit=True, **ack)
+        assert staged in a.call('outbox')['messages']
+        confirmed = a.call('saved', **ack)
+        assert confirmed['saved'] and confirmed['epoch'] == staged['epoch'] + 1
+        assert staged not in a.call('outbox')['messages']
+        assert a.call('commit_saved', **ack)['already_saved']
+        a.call('saved', reject=True, **{**ack, 'seq': 16})
+        b.call('process', group=group, ciphertext=staged['ciphertext'])
+        next_message = a.call('queue', group=group, id=str(uuid.uuid4()), text='durable epoch')
+        assert next_message['epoch'] == confirmed['epoch']
+        assert b.call('process', group=group, ciphertext=next_message['ciphertext'])['text'] == 'durable epoch'
         for d in (a,b,c):
             assert not d.path.read_bytes().startswith(b'SQLite format')
             assert b'private test sentinel' not in d.path.read_bytes()
