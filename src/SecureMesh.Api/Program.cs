@@ -44,6 +44,7 @@ app.Use(async(ctx,next)=>
 });
 app.UseRateLimiter();
 app.MapIdentity();
+app.MapSessionInactivity();
 app.MapAccountRemoval();
 app.MapProfilePhotos();
 app.MapProfileText();

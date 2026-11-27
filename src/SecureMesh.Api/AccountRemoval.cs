@@ -77,6 +77,7 @@ public static class AccountRemoval
             SELECT u.id,u.username,u.password_hash,d.trusted FROM sessions s
             JOIN devices d ON d.id=s.device_id JOIN users u ON u.id=d.user_id
             WHERE s.access_hash=$1 AND NOT s.revoked AND NOT s.used AND s.expires_at>now()
+                AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
                 AND NOT d.revoked AND u.verified FOR UPDATE OF u FOR SHARE OF d,s
             """, Sql.Hash(token)))
         await using (var reader = await confirm.ExecuteReaderAsync(ct))

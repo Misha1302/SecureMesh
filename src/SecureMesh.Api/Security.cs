@@ -68,6 +68,7 @@ public static class Sql
             SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
             WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND d.trusted AND NOT d.revoked
                 AND NOT s.used AND NOT s.revoked AND s.expires_at>now()
+                AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
             """, actor.SessionId, actor.DeviceId, actor.UserId))
             if (await session.ExecuteScalarAsync(cancellationToken) is null)
                 throw new ApiError(401, "AUTH_REQUIRED");
@@ -81,6 +82,7 @@ public static class Sql
         await using var cmd = Cmd(c, """
             SELECT d.user_id,d.id,s.id,d.trusted FROM sessions s JOIN devices d ON d.id=s.device_id
             WHERE s.access_hash=$1 AND s.expires_at>now() AND NOT s.revoked AND NOT s.used AND NOT d.revoked
+              AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
             """, Hash(header[7..]));
         await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
         if (!await r.ReadAsync(ctx.RequestAborted)) throw new ApiError(401, "AUTH_REQUIRED");

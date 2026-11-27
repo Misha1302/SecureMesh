@@ -127,8 +127,12 @@ public static class Identity
             }
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM devices WHERE id=$1 AND NOT revoked FOR UPDATE",device))
                 if(await cmd.ExecuteScalarAsync() is null) throw new ApiError(401,"DEVICE_REVOKED");
-            await using(var cmd=Sql.Cmd(c,"UPDATE sessions SET used=true WHERE id=$1",id)) await cmd.ExecuteNonQueryAsync();
-            var result=await NewSession(c,device,family); await tx.CommitAsync(); return Results.Ok(result);
+            await using(var cmd=Sql.Cmd(c,"""
+                UPDATE sessions SET used=true WHERE id=$1 AND refresh_expires_at>statement_timestamp()
+                  AND session_idle_active(last_interactive_at,idle_timeout_days)
+                """,id))
+                if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(401,"INVALID_REFRESH");
+            var result=await NewSession(c,device,family,id); await tx.CommitAsync(); return Results.Ok(result);
         });
         app.MapPost("/v1/auth/logout",async(HttpContext ctx,NpgsqlDataSource db)=>
         {
@@ -158,6 +162,7 @@ public static class Identity
                 FROM devices d JOIN sessions s ON s.device_id=d.id
                 WHERE u.id=$2 AND d.user_id=u.id AND d.id=$3 AND d.trusted AND NOT d.revoked
                   AND s.id=$4 AND NOT s.revoked AND NOT s.used AND s.expires_at>now()
+                  AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
                 """, name, actor.UserId, actor.DeviceId, actor.SessionId);
             if (await cmd.ExecuteNonQueryAsync() != 1) throw new ApiError(401, "AUTH_REQUIRED");
             return Results.Ok(new { displayName = name.Length == 0 ? null : name });
@@ -168,7 +173,8 @@ public static class Identity
             await using var cmd=Sql.Cmd(c,"""
                 SELECT d.id,d.public_key,d.revoked,d.trusted,d.created_at,d.last_login_at,d.client_os,d.device_name,
                     NOT d.revoked AND EXISTS(SELECT 1 FROM sessions s WHERE s.device_id=d.id
-                      AND NOT s.used AND NOT s.revoked AND s.refresh_expires_at>now())
+                      AND NOT s.used AND NOT s.revoked AND s.refresh_expires_at>now()
+                      AND session_idle_active(s.last_interactive_at,s.idle_timeout_days))
                 FROM devices d WHERE d.user_id=$1 ORDER BY (d.id=$2) DESC,d.created_at,d.id
                 """,a.UserId,a.DeviceId);
             await using var r=await cmd.ExecuteReaderAsync(); var devices=new List<object>();
@@ -192,10 +198,17 @@ public static class Identity
             await tx.CommitAsync(); return Results.NoContent();
         });
     }
-    private static async Task<object> NewSession(NpgsqlConnection c,Guid device,Guid family)
+    private static async Task<object> NewSession(NpgsqlConnection c,Guid device,Guid family,Guid? previousSession=null)
     {
         var access=Sql.Token(); var refresh=Sql.Token();
-        await using var cmd=Sql.Cmd(c,"INSERT INTO sessions(id,family,device_id,access_hash,refresh_hash,expires_at,refresh_expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '15 minutes',now()+interval '30 days')",Guid.NewGuid(),family,device,Sql.Hash(access),Sql.Hash(refresh));
+        await using var cmd=Sql.Cmd(c,"""
+            INSERT INTO sessions(id,family,device_id,access_hash,refresh_hash,expires_at,refresh_expires_at,
+                                 last_interactive_at,idle_timeout_days)
+            SELECT $1,$2,$3,$4,$5,now()+interval '15 minutes',now()+interval '30 days',
+                coalesce(s.last_interactive_at,statement_timestamp()),
+                CASE WHEN s.id IS NULL THEN 7 ELSE s.idle_timeout_days END
+            FROM (SELECT $6::uuid AS id) previous LEFT JOIN sessions s ON s.id=previous.id
+            """,Guid.NewGuid(),family,device,Sql.Hash(access),Sql.Hash(refresh),(object?)previousSession ?? DBNull.Value);
         await cmd.ExecuteNonQueryAsync();
         await using var state=Sql.Cmd(c,"SELECT trusted FROM devices WHERE id=$1",device);
         var trusted=(bool)(await state.ExecuteScalarAsync())!;

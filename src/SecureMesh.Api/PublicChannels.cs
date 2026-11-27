@@ -56,6 +56,7 @@ public static class PublicChannels
             SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
             WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND d.trusted AND NOT d.revoked
               AND NOT s.used AND NOT s.revoked AND s.expires_at>now()
+              AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
             """, a.SessionId, a.DeviceId, a.UserId);
         if (await current.ExecuteScalarAsync() is null) throw new ApiError(401,"AUTH_REQUIRED");
     }
