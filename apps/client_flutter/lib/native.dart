@@ -9,6 +9,7 @@ import 'src/rust/api.dart';
 import 'local_client.dart';
 import 'session.dart';
 import 'delivery_client.dart';
+import 'message_markup.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
 import 'account_hub.dart';
@@ -892,7 +893,7 @@ class _ClientAppState extends State<ClientApp> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              SelectableText(m['text'] as String),
+                              MessageMarkup(m['text'] as String, tr: tr),
                               const SizedBox(height: 6),
                               Text(
                                 m['status'] == 'queued'
@@ -949,16 +950,9 @@ class _ClientAppState extends State<ClientApp> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child: TextField(
+              child: MessageComposer(
                 controller: composer,
-                minLines: 1,
-                maxLines: 4,
-                maxLength: 4000,
-                decoration: InputDecoration(
-                  labelText: tr('Сообщение', 'Message'),
-                  border: const OutlineInputBorder(),
-                  counterText: '',
-                ),
+                tr: tr,
                 onSubmitted: (_) => send(),
               ),
             ),
