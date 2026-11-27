@@ -209,24 +209,46 @@ function element(tag, text) {
 function renderChats() {
   const chats = opened?.handle.state.messenger?.chats ?? {};
   const list = byId("chat-list");
-  list.replaceChildren();
-  for (const chat of Object.values(chats)) {
-    const btn = element("button", "@" + chat.peerName);
-    btn.onclick = () => {
-      selected = chat.id;
-      renderChats();
-    };
-    list.append(btn);
+  const identities = Object.values(chats).map(({ id, peerName }) => [
+    id,
+    peerName,
+  ]);
+  const signature = JSON.stringify(identities);
+  if (opened.listSignature !== signature) {
+    opened.listSignature = signature;
+    list.replaceChildren();
+    for (const [id, peerName] of identities) {
+      const btn = element("button", "@" + peerName);
+      btn.onclick = () => {
+        if (selected !== id) {
+          opened.visibleMessages = 100;
+          byId("compose").reset();
+        }
+        selected = id;
+        opened.mesh.select(id);
+        renderChats();
+      };
+      list.append(btn);
+    }
+    if (!identities.length)
+      list.textContent = "Здесь появятся проверенные диалоги.";
   }
-  if (!list.childElementCount)
-    list.textContent = "Здесь появятся проверенные диалоги.";
   const chat = chats[selected];
   show("thread", Boolean(chat));
   if (!chat) return;
   byId("peer").textContent = "@" + chat.peerName;
   const messages = byId("messages");
+  const count = opened.visibleMessages ?? 100;
+  show("earlier", chat.messages.length > count);
+  const rows = chat.messages.slice(-count);
+  const version = JSON.stringify([
+    selected,
+    rows.map(({ id, status }) => [id, status]),
+  ]);
+  if (opened.timelineSignature === version) return;
+  opened.timelineSignature = version;
   messages.replaceChildren();
-  for (const message of chat.messages.slice(-100)) {
+  for (const message of rows) {
     const row = element("li", message.text);
     row.dir = "auto";
     if (message.direction === "outgoing") {
@@ -526,6 +548,11 @@ bind(byId("restore"), async () => {
 });
 byId("show-password").onchange = (e) => {
   byId("password").type = e.target.checked ? "text" : "password";
+};
+byId("earlier").onclick = () => {
+  if (!opened) return;
+  opened.visibleMessages = (opened.visibleMessages ?? 100) + 100;
+  renderChats();
 };
 byId("lock").onclick = lock;
 byId("refresh").onclick = () => {
