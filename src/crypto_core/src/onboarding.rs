@@ -17,52 +17,17 @@ fn optional_meta(db: &Connection, key: &str) -> Result<Option<Value>> {
 fn principal(input: &Value) -> Result<(&str, &str)> {
     let endpoint = s(input, "endpoint")?;
     let username = s(input, "username")?;
-    ensure!(
-        endpoint.starts_with("https://")
-            && endpoint.len() > 8
-            && endpoint.len() <= 2048
-            && !endpoint[8..].contains(['/', '?', '#', '@'])
-            && !endpoint.chars().any(char::is_whitespace),
-        "invalid origin"
-    );
-    ensure!(
-        (3..=32).contains(&username.len())
-            && username
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
-        "invalid username"
-    );
+    server_credential::validate_principal(endpoint, username)?;
     Ok((endpoint, username))
 }
 
 pub(super) fn server_credential(req: &Value) -> Result<String> {
-    use argon2::{Algorithm, Argon2, Params, Version};
-    use sha2::{Digest, Sha256};
-    use unicode_segmentation::UnicodeSegmentation;
-    let (origin, username) = principal(req)?;
-    let password = s(req, "password")?;
-    ensure!(
-        password.len() <= 4096
-            && !password.contains('\0')
-            && (16..=256).contains(&password.graphemes(true).count()),
-        "invalid passphrase length"
-    );
-    let salt = Sha256::digest(
-        [
-            b"SecureMesh/server-credential/v2\0",
-            origin.as_bytes(),
-            b"\0",
-            username.as_bytes(),
-        ]
-        .concat(),
-    );
-    let params = Params::new(65536, 3, 4, Some(32))
-        .map_err(|_| anyhow::anyhow!("invalid KDF parameters"))?;
-    let mut output = [0u8; 32];
-    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(password.as_bytes(), &salt, &mut output)
-        .map_err(|_| anyhow::anyhow!("credential derivation failed"))?;
-    Ok(json!({"credential": base64::engine::general_purpose::STANDARD.encode(output)}).to_string())
+    let credential = server_credential::derive_server_credential(
+        s(req, "endpoint")?,
+        s(req, "username")?,
+        s(req, "password")?,
+    )?;
+    Ok(json!({"credential": credential}).to_string())
 }
 
 pub(super) fn prepare(db: &Connection, input: &Value, identity: &str) -> Result<()> {

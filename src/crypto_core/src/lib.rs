@@ -13,6 +13,7 @@ mod history_search;
 mod onboarding;
 mod profile_archive;
 mod roster;
+mod server_credential;
 
 mod profile_schema {
     // OpenMLS 0.10 adds two migrations for the experimental virtual-clients
