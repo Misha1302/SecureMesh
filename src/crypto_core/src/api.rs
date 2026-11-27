@@ -20,8 +20,7 @@ impl NativeClient {
 
     pub fn execute(&self, request: String) -> Result<String, String> {
         let action = || -> anyhow::Result<String> {
-            anyhow::ensure!(request.len() <= 262144, "input too large");
-            let req = serde_json::from_str(&request)?;
+            let req = crate::attachments::parse_command(&request)?;
             let db = self
                 .db
                 .lock()

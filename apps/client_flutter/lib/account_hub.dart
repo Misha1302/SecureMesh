@@ -617,7 +617,7 @@ class _AccountHubState extends State<AccountHub> {
         if (widget.channelApi != null)
           ListTile(
             leading: const Icon(Icons.campaign_outlined),
-            title: Text(tr('Публичные каналы', 'Public channels')),
+            title: Text(tr('Каналы', 'Channels')),
             onTap: () => setState(() => channelsOpen = true),
           ),
 

@@ -70,12 +70,31 @@ def verify(request, owner, reader, outsider, pending):
 
 
 def main():
+    import os
+    import subprocess
+    import sys
     import delivery as d
+    import invite_channels
     d.BASE='https://127.0.0.1:5119'
-    with d.Server(), tempfile.TemporaryDirectory(dir=d.ROOT/'.local') as tmp:
+    with d.Server() as server, tempfile.TemporaryDirectory(dir=d.ROOT/'.local') as tmp:
         a,b,c=[d.account(Path(tmp)) for _ in range(3)]
         pending=d.login(a['username'],a['password'],d.Device(Path(tmp)))
-        verify(d.request,a['session']['accessToken'],b['session']['accessToken'],c['session']['accessToken'],pending['accessToken'])
+        tokens=[a['session']['accessToken'],b['session']['accessToken'],c['session']['accessToken'],pending['accessToken']]
+        verify(d.request,*tokens)
+        # Start a fresh service token bucket; the two suites deliberately exercise many requests.
+        server.restart()
+        invite_channels.verify(d.request,tokens[1],tokens[2],tokens[0],tokens[3],c['username'])
+        if '--ui' in sys.argv:
+            server.restart()
+            env={**os.environ,'SECUREMESH_CHANNEL_FIXTURE_URL':d.BASE,
+                 'SECUREMESH_CHANNEL_FIXTURE_CA':str(d.ROOT/'.local/tls.pem'),
+                 'SECUREMESH_CHANNEL_OWNER':tokens[1], 'SECUREMESH_CHANNEL_READER':tokens[0],
+                 'SECUREMESH_CHANNEL_READER_USERNAME':a['username']}
+            flutter=d.ROOT/'.local/flutter/bin/flutter'
+            subprocess.run([str(flutter) if flutter.exists() else 'flutter','test','--no-pub',
+                           '--concurrency=1','integration/public_channels_hosted_test.dart'],
+                           cwd=d.ROOT/'apps/client_flutter',env=env,check=True)
+
     print('PASS trusted public channels, owner writes, subscription ACL, idempotency, Unicode and feed pagination.')
 
 

@@ -55,7 +55,7 @@ Verified, trusted devices can browse the catalog. Public channel content is read
 
 | Route | Contract |
 |---|---|
-| GET /v1/public-channels | Search by ASCII handle prefix `q`. Set `mine=true` for owned/subscribed channels. Pass the response's optional `next` slug as `after` for the following 25-item page. |
+| GET /v1/public-channels | Search by ASCII handle prefix `q`. Set `mine=true` for owned/subscribed channels. Pass the response's optional opaque `next` cursor as `after` for the following 25-item page. |
 | POST /v1/public-channels | Send a client-generated UUID `id`, lowercase `slug` (3–32 ASCII letters, digits or underscores) and `title` (1–80 Unicode scalars). An identical retry returns the existing ID. |
 | PUT or DELETE /v1/public-channels/{id}/subscription | Subscribe or unsubscribe the authenticated account. Ownership already grants read access. |
 | POST /v1/public-channels/{id}/posts | Owner sends `requestId` (client UUID) and `body` (1–2,048 Unicode scalars). Reusing an ID with different text returns 409. |
@@ -64,3 +64,20 @@ Verified, trusted devices can browse the catalog. Public channel content is read
 | DELETE /v1/public-channels/{id} | Owner deletes the channel, posts and subscriptions. Its creator's request ID remains reserved for at least 24 hours. |
 
 Each account can own eight channels and subscribe to 128 others. Each channel holds up to 2,000 visible posts. The API accepts up to ten new channels, 120 new publications and 180 new subscriptions per account per hour. The PostgreSQL transaction combines state changes and quota accounting. Deletions prevent future retrieval from the service. Recipients may retain earlier copies. Public text channels currently lack media, additional administrators, moderation reports, push delivery and external share links.
+
+### Invitation-only server-readable channels and owner edits
+
+To create a restricted channel, send the ordinary channel body to the distinct `POST /v1/public-channels/invite-only` route. The response must include `inviteOnly:true` before the native client offers to publish. Older servers reject this route. Privacy cannot be downgraded to public creation by ignoring an unknown JSON property. The visibility mode is immutable. This is an access-controlled bulletin, not a private MLS group. The hosting service can read the posts and membership.
+
+Set `includeRestricted=true` in the catalog request to list your own channels, active invitations and subscribed restricted channels alongside public matches. Pre-invitation clients receive only public results. A restricted channel never reserves its slug in the public namespace. Cursors sort by slug and ID to handle equal names. Unrelated trusted accounts cannot discover, subscribe to or read a restricted channel even when given its UUID. A pending invitation grants access to metadata only. No public invitation URLs are generated.
+
+| Operation | Behavior |
+|---|---|
+| Owner invites | POST `/v1/public-channels/{id}/invitations` with an exact `username`. Verified recipients see the invitation for seven days. An unknown username gets the same generic acknowledgement. Up to 120 attempts per owner per hour, 64 active invitations per channel and 128 per recipient. |
+| Invitee accepts or declines | PUT `.../subscription` accepts; DELETE declines or leaves. Both consume the invitation. A former member needs a new invitation to return. |
+| Owner withdraws access | POST `.../revoke-access` with the exact username to cancel an invitation or remove a subscriber. Future reads require a new invitation and acceptance. Up to 240 attempts per owner per hour. Copies already received by members remain outside server control. |
+| Owner edits a post | PUT `.../posts/{seq}` with `body` and `expectedRevision`. A successful edit increments `revision` without reordering the feed. A stale revision returns 409, except when the immediately preceding identical edit succeeded and its response was lost. The UI marks edited posts. Up to 240 edits per owner per hour. |
+
+Migration 011 keeps a public-only compatibility view for the original server binary, while all upgraded writes and visibility checks use the full catalog. Existing public channels retain their accounts, post IDs, subscriptions and visibility. The upgraded client labels restricted channels as server-readable.
+
+For two real Flutter sessions against the isolated HTTPS integration server, run `.local/venv/bin/python tests/integration/public_channels.py --ui` from the repository root after local bootstrap and Flutter dependency installation. Test accounts, device keys and credentials belong to that fixture.

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'src/rust/api.dart';
@@ -10,6 +11,7 @@ import 'local_client.dart';
 import 'session.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
+import 'attachment_transfer.dart';
 import 'linux_notifications.dart';
 import 'message_markup.dart';
 import 'history_search.dart';
@@ -83,6 +85,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   final pass = TextEditingController();
   final composer = TextEditingController();
   ConversationDrafts? drafts;
+  PrivateAttachments? attachments;
   bool draftLoadFailed = false;
   int chatView = 0;
   Future<void> closingStore = Future.value();
@@ -136,6 +139,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   }
 
   void releaseLocalStore() {
+    attachments?.dispose();
+    attachments = null;
     final current = store;
     final pending = drafts?.close();
     drafts = null;
@@ -150,6 +155,27 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   Future<void> restoreDraft(String? group) async {
     final active = drafts;
     if (active == null) return;
+    attachments?.dispose();
+    attachments = null;
+    final currentSession = session;
+    if (group != null && currentSession != null) {
+      final current = PrivateAttachments(
+        group,
+        (op, args) => crypto(op, args),
+        SessionBlobs(currentSession, group),
+        () {
+          if (mounted && profile?['group'] == group) {
+            unawaited(pump());
+            unawaited(reload(follow: true).catchError((_) {}));
+          }
+        },
+      );
+      attachments = current;
+      current.addListener(() {
+        if (mounted && identical(current, attachments)) setState(() {});
+      });
+      unawaited(current.load());
+    }
     final view = ++chatView;
     final restoring = active.select(group);
     if (mounted) {
@@ -529,6 +555,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       online = progress.connected;
       connectionState = online ? 'connected' : 'offline';
       lite = progress.weak || delivery!.receiptError != null;
+      if (online && profile?['trustConfirmed'] == true) {
+        unawaited(attachments?.resume(explicit: false, weak: lite));
+      }
       error = null;
     } catch (failure) {
       if (epoch != generation) return;
@@ -1018,7 +1047,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-              if (Platform.isAndroid)
+              if (Platform.isAndroid || Platform.isIOS)
                 ProfileBiometricActions(
                   path: path,
                   disabled: loading || choosing,
@@ -1052,6 +1081,159 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       ),
     ),
   );
+  Future<void> chooseAttachment(BuildContext context) async {
+    final current = attachments;
+    if (current == null || current.busy || profile?['trustConfirmed'] != true) {
+      return;
+    }
+    await current.stage(() async {
+      final chosen = await openFile();
+      if (chosen == null ||
+          !context.mounted ||
+          !identical(attachments, current)) {
+        return null;
+      }
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(tr('Отправить файл?', 'Send this file?')),
+          content: Text(attachmentName(chosen.name)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('Отправить', 'Send')),
+            ),
+          ],
+        ),
+      );
+      return confirm == true && identical(attachments, current) ? chosen : null;
+    });
+    if (identical(current, attachments) && online && !lite) {
+      unawaited(current.resume(explicit: false, weak: false));
+    }
+  }
+
+  Widget attachmentMessage(
+    BuildContext context,
+    String id,
+    Map<String, dynamic> meta,
+  ) {
+    final name = attachmentName(meta['name'] as String);
+    final current = attachments;
+    final enabled = current != null && !current.busy;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('$name · ${((meta['size'] as int) / 1024).ceil()} KiB'),
+        Wrap(
+          children: [
+            TextButton.icon(
+              icon: const Icon(Icons.download_outlined),
+              label: Text(tr('Сохранить', 'Save')),
+              onPressed: enabled
+                  ? () => current.download(id, meta, exportAttachment)
+                  : null,
+            ),
+            if (meta['media'] == 'photo')
+              TextButton.icon(
+                icon: const Icon(Icons.image_outlined),
+                label: Text(tr('Посмотреть', 'View')),
+                onPressed: enabled
+                    ? () => current.download(id, meta, (name, bytes) async {
+                        final image = await attachmentPreview(bytes);
+                        if (!context.mounted ||
+                            !identical(attachments, current)) {
+                          image.dispose();
+                          return false;
+                        }
+                        // The dialog's reverse transition may outlive showDialog's result.
+                        final route = DialogRoute<void>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: Text(name),
+                            content: RawImage(
+                              image: image,
+                              fit: BoxFit.contain,
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                child: Text(tr('Закрыть', 'Close')),
+                              ),
+                            ],
+                          ),
+                        );
+                        try {
+                          await Navigator.of(context).push(route);
+                          await route.completed;
+                        } finally {
+                          image.dispose();
+                        }
+                        return false;
+                      })
+                    : null,
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget attachmentStatus(PrivateAttachments current) {
+    final status = current.status;
+    final label = switch (status) {
+      'size' => tr(
+        'Выберите файл размером от 1 байта до 4 МиБ.',
+        'Choose a file between 1 byte and 4 MiB.',
+      ),
+      'failed' => tr(
+        'Операция с файлом не удалась. Повторите попытку.',
+        'File transfer failed. Try again.',
+      ),
+      'saved' => tr('Файл сохранён', 'File saved'),
+      'upload' => tr('Отправка вложения', 'Uploading attachment'),
+      'download' => tr('Получение вложения', 'Downloading attachment'),
+      _ => '',
+    };
+    return Column(
+      children: [
+        if (label.isNotEmpty) Text(label),
+        if (current.busy && current.progress != null)
+          LinearProgressIndicator(value: current.progress),
+        if (current.pending.isNotEmpty)
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                tr(
+                  'Вложений в очереди: ${current.pending.length}',
+                  'Attachments queued: ${current.pending.length}',
+                ),
+              ),
+              TextButton(
+                onPressed: current.busy || !online
+                    ? null
+                    : () => current.resume(explicit: true, weak: lite),
+                child: Text(tr('Отправить сейчас', 'Send now')),
+              ),
+              IconButton(
+                tooltip: tr(
+                  'Убрать первое вложение из очереди',
+                  'Remove first queued attachment',
+                ),
+                icon: const Icon(Icons.close),
+                onPressed: current.busy ? null : current.cancelFirst,
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+
   Widget chat(BuildContext context) {
     final bySenderAndId = {
       for (final message in messages)
@@ -1264,7 +1446,15 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(ctx).textTheme.labelMedium,
                                 ),
-                              MessageMarkup(m['text'] as String, tr: tr),
+                              if (m['attachment']
+                                  case final Map<String, dynamic> attachment)
+                                attachmentMessage(
+                                  ctx,
+                                  m['id'] as String,
+                                  attachment,
+                                )
+                              else
+                                MessageMarkup(m['text'] as String, tr: tr),
                               IconButton(
                                 tooltip: tr('Ответить', 'Reply'),
                                 icon: const Icon(Icons.reply),
@@ -1325,6 +1515,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             label: Text(tr('Новые сообщения', 'New messages')),
           ),
         ),
+      if (attachments case final PrivateAttachments current)
+        attachmentStatus(current),
       if (selectedReply != null)
         ListTile(
           dense: true,
@@ -1359,6 +1551,19 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            IconButton(
+              tooltip: tr(
+                'Прикрепить файл (до 4 МиБ)',
+                'Attach file (up to 4 MiB)',
+              ),
+              icon: const Icon(Icons.attach_file),
+              onPressed:
+                  attachments == null ||
+                      attachments!.busy ||
+                      profile?['trustConfirmed'] != true
+                  ? null
+                  : () => chooseAttachment(context),
+            ),
             Expanded(
               child: draftLoadFailed
                   ? TextButton(

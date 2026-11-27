@@ -31,18 +31,26 @@ class AccountSession {
     Map<String, dynamic>? data,
     String? method,
     bool retried = false,
+  }) => authorized(
+    (token) => meshHttp(
+      http,
+      endpoint,
+      route,
+      data: data,
+      method: method,
+      token: token,
+    ),
+    retried: retried,
+  );
+
+  Future<T> authorized<T>(
+    Future<T> Function(String token) action, {
+    bool retried = false,
   }) async {
     _check();
     final token = profile()['accessToken'] as String;
     try {
-      final response = await meshHttp(
-        http,
-        endpoint,
-        route,
-        data: data,
-        method: method,
-        token: token,
-      );
+      final response = await action(token);
       _check();
       return response;
     } on ApiFailure catch (failure) {
@@ -62,7 +70,7 @@ class AccountSession {
         })().whenComplete(() => _rotation = null);
         await _rotation;
       }
-      return request(route, data: data, method: method, retried: true);
+      return authorized(action, retried: true);
     }
   }
 }

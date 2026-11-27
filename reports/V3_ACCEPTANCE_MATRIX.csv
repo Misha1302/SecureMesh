@@ -1,5 +1,5 @@
 ID,Stage,Priority,Scenario,Platforms,Status,Evidence,Commit,Environment,ExitCode,Notes
-V3-01,CORE,P0,Android installed binary: crypto SQLCipher signup DM SIGKILL permissions and real E2E,Android emulator + device,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
+V3-01,CORE,P0,Android installed binary: crypto SQLCipher signup DM SIGKILL permissions and real E2E,Android emulator + device,PARTIAL,docs/PLATFORM_RELEASE_RU.md,1b61725,API 28 emulator and Linux; GitHub Actions 45965441405,0,Two-way text and peer receipt verified. Remaining platforms and full scenario pending.
 V3-02,FULL,P0,iOS real Xcode build signing simulation/device and full E2E crypto store push,macOS Xcode + iPhone,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
 V3-03,CORE,P0,Linux native GTK full tested secure UI and safe local store,Linux GTK/Xvfb + physical,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
 V3-04,FULL,P0,Windows native bundle store and UI end to end run on Windows,Windows,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
@@ -40,6 +40,6 @@ V3-38,CONDITIONAL,P2,If web enabled private chat has distinct audit; otherwise p
 V3-39,FULL,P0,Isolated PostgreSQL object encrypted backup restore and rollback tests,Backend and clients,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
 V3-40,FULL,P0,Native UX accessibility 320dp RU EN desktop keyboard and comprehension test,Android iOS Linux Windows,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.
 V3-41,FULL,P0,Android Doze and iOS background restrictions with protected notification content,Android iOS device,NOT_RUN,,,,,
-V3-42,FULL,P0,A Android B iPhone C Windows D Linux multi-device interoperability and revocation,Cross-platform,NOT_RUN,,,,,
+V3-42,FULL,P0,A Android B iPhone C Windows D Linux multi-device interoperability and revocation,Cross-platform,PARTIAL,docs/PLATFORM_RELEASE_RU.md,1b61725,API 28 emulator and Linux; GitHub Actions 45965441405,0,Two-way text and peer receipt verified. Remaining platforms and full scenario pending.
 V3-43,FULL,P0,Multi-device MLS group concurrent control epoch races and restart recovery,Three accounts >=4 devices,NOT_RUN,,,,,
 V3-44,FULL,P0,Large public fanout pointer not N copies of E2EE; ACL and rate tests,API PostgreSQL UI,NOT_RUN,,,,,

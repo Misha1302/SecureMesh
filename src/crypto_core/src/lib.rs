@@ -1,6 +1,7 @@
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 // Local client process. No server keys, no plaintext fallback, no crypto primitives.
 pub mod api;
+mod attachments;
 mod directory;
 mod enrollment;
 mod history_search;
@@ -242,6 +243,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     if op.starts_with("onboarding_") {
         return onboarding::execute(db, req, &identity);
     }
+    if op.starts_with("attachment_") && op != "attachment_queue" {
+        return attachments::execute(db, p, req);
+    }
     match op {
         "identity" => Ok(json!({"identity":identity,"public_key":B64.encode(public)})),
         "sign" => Ok(
@@ -460,7 +464,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             }
             Ok(json!({}))
         }
-        "queue" => {
+        "queue" | "attachment_queue" => {
             let gid = s(req, "group")?;
             let id = s(req, "id")?;
             uuid::Uuid::parse_str(id)?;
@@ -471,17 +475,41 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                     |r| r.get(0),
                 )
                 .optional()?;
+            let attachment = if op == "attachment_queue" {
+                let info = attachments::descriptor(db, gid, id)?;
+                let owned: bool = db.query_row(
+                    "SELECT source_digest IS NOT NULL FROM private_files WHERE group_id=? AND id=?",
+                    params![gid, id],
+                    |r| r.get(0),
+                )?;
+                ensure!(owned, "not a staged attachment");
+                Some(info)
+            } else {
+                let staged: bool = db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM private_files WHERE group_id=? AND id=?)",
+                    params![gid, id],
+                    |r| r.get(0),
+                )?;
+                ensure!(!staged, "attachment id conflict");
+                None
+            };
             if let Some(old) = old {
                 return Ok(serde_json::from_str(&old)?);
             }
             let mut g = load_group(p, gid)?;
             check_group(db, &g)?;
-            let text = s(req, "text")?;
+            let text = match &attachment {
+                Some(info) => format!("📎 {}", s(info, "name")?),
+                None => s(req, "text")?.to_owned(),
+            };
             ensure!(text.chars().count() <= 4000, "text too large");
             let reply = local_reply(db, gid, req)?;
             let mut payload = json!({"id":id,"group":gid,"sender":identity,"text":text});
             if let Some(reference) = &reply {
                 payload["replyTo"] = reference.clone();
+            }
+            if let Some(info) = &attachment {
+                payload["attachment"] = info.clone();
             }
             let epoch = g.epoch().as_u64();
             let msg = g.create_message(p, &signer, &serde_json::to_vec(&payload)?)?;
@@ -490,6 +518,13 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 "INSERT INTO outgoing(group_id,id,envelope,status) VALUES(?,?,?,'queued')",
                 params![gid, id, serde_json::to_string(&result)?],
             )?;
+            if let Some(info) = &attachment {
+                attachments::hide_key(&mut payload, info);
+                db.execute(
+                    "UPDATE private_files SET sealed=NULL WHERE group_id=? AND id=?",
+                    params![gid, id],
+                )?;
+            }
             db.execute(
                 "INSERT INTO authored VALUES(?,?,?)",
                 params![gid, id, serde_json::to_string(&payload)?],
@@ -511,7 +546,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             let sender_id = std::str::from_utf8(sender.identity())?.to_string();
             match processed.into_content() {
                 ProcessedMessageContent::ApplicationMessage(app) => {
-                    let event: Value = serde_json::from_slice(&app.into_bytes())?;
+                    let mut event: Value = serde_json::from_slice(&app.into_bytes())?;
                     ensure!(
                         s(&event, "group")? == gid && s(&event, "sender")? == sender_id,
                         "binding mismatch"
@@ -519,6 +554,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                     if let Some(expected) = req["sender"].as_str() {
                         ensure!(expected == sender_id, "sender mismatch");
                     }
+                    attachments::receive(db, gid, &mut event)?;
                     db.execute(
                         "INSERT INTO incoming(group_id,id,event) VALUES(?,?,?)",
                         params![gid, s(&event, "id")?, serde_json::to_string(&event)?],
@@ -664,7 +700,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 .prepare("SELECT event FROM incoming WHERE group_id=? ORDER BY rowid LIMIT 1000")?;
             let rows = q.query_map([s(req, "group")?], |r| r.get::<_, String>(0))?;
             let values = rows
-                .map(|r| Ok(serde_json::from_str::<Value>(&r?)?))
+                .map(|r| Ok(attachments::view(serde_json::from_str::<Value>(&r?)?)))
                 .collect::<Result<Vec<_>>>()?;
             Ok(json!({"events":values}))
         }
@@ -709,7 +745,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             })?;
             for row in rows {
                 let (event, status, seq) = row?;
-                let mut event: Value = serde_json::from_str(&event)?;
+                let mut event = attachments::view(serde_json::from_str(&event)?);
                 event["status"] = if status == "saved" && seq.is_some_and(|s| s <= peer_seq) {
                     json!("delivered")
                 } else {
@@ -728,7 +764,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             })?;
             for row in rows {
                 let (event, seq) = row?;
-                let mut event: Value = serde_json::from_str(&event)?;
+                let mut event = attachments::view(serde_json::from_str(&event)?);
                 event["status"] = json!("received");
                 event["seq"] = json!(seq);
                 event["own"] = json!(false);
@@ -741,9 +777,10 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     }
 }
 
+pub const MAX_LOCAL_COMMAND_BYTES: usize = attachments::MAX_REQUEST;
+
 pub fn execute_json(path: &str, input: &str) -> Result<String> {
-    ensure!(input.len() <= 262144, "input too large");
-    let req: Value = serde_json::from_str(&input)?;
+    let req = attachments::parse_command(input)?;
     let pass = s(&req, "passphrase")?;
     let db = open_store(path, pass)?;
     transact(&db, &req)
@@ -774,6 +811,7 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS local_cursors(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL,cursor TEXT NOT NULL);")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS peer_receipts(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS private_files(group_id TEXT NOT NULL,id TEXT NOT NULL,descriptor TEXT NOT NULL,sealed BLOB,source_digest BLOB,PRIMARY KEY(group_id,id));")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS conversation_drafts(group_id TEXT PRIMARY KEY,body TEXT NOT NULL);")?;
     // Each lookup walks the selected conversation in reverse insertion order.
     db.execute_batch(

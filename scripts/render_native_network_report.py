@@ -2,10 +2,12 @@
 """Render only observed production-native measurements; missing/failed trials fail the gate."""
 import hashlib
 import json
+import subprocess
 from collections import Counter
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
+head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 rows = []
 failures = []
 binary_set = None
@@ -30,6 +32,12 @@ for profile, rate, rtt, loss in [('gprs', 20, 1500, 3), ('severe', 10, 3000, 10)
             reasons.append('profile/count mismatch')
         if len(records) != 400 or len({r['id'] for r in records}) != 400 or sorted(counts.values()) != [200, 200] or data['duplicates'] or data['missing_ids']:
             reasons.append('missing/duplicate/direction mismatch')
+        if len(records) < 380:
+            failures.append(f'{profile}/{seed}: only {len(records)} observations; p95 gate cannot be evaluated')
+            rows.append(f'| {profile} | {seed} | FAIL (short run) | — | — | — | [{path.name}](evidence/{path.name}) |')
+            continue
+        if data.get('source_head_at_start') != head:
+            reasons.append('measurement belongs to a different checkout')
         measured = sorted(r['delivery_seconds'] for r in records)[379]
         if abs(measured - data['delivery_p95']) > 1e-8 or measured < 0:
             reasons.append('inconsistent measured percentile')
@@ -58,9 +66,9 @@ Each trial offers 200 Unicode messages in each direction (400 distinct IDs), one
 |---|---:|---|---:|---:|---:|---|
 ''' + '\n'.join(rows) + '''
 
-GPRS gate remains p95 <=15 seconds in every full trial. Severe requires eventual delivery, with a bounded 1200-second harness watchdog and no claimed latency SLA. The raw failure from the first native seed 19 (p95 18.559 seconds) is preserved in v2-native-gprs-initial-fail.txt and native-netem-gprs-initial-19-200.json. No impairment, count or threshold was reduced. The fix removes batch-wide ACK/sync waiting: bounded writes refill independently from sync, immutable ciphertext remains in SQLCipher until durable ACK, and MLS control commits remain serial barriers.
+GPRS gate remains p95 <=15 seconds in every full trial. Severe requires eventual delivery, with a 1300-second parent watchdog and no claimed latency SLA. The raw failure from the first native seed 19 (p95 18.559 seconds) is preserved in v2-native-gprs-initial-fail.txt and native-netem-gprs-initial-19-200.json. No impairment, count or threshold was reduced. The fix removes batch-wide ACK/sync waiting: bounded writes refill independently from sync, immutable ciphertext remains in SQLCipher until durable ACK, and MLS control commits remain serial barriers.
 
-A separate earlier severe trial delivered 400 IDs but failed to terminate with a CLOSE_WAIT socket. Both unsuccessful SDK-close variants remain FAIL; see [WEBSOCKET_CLOSE_FIX.md](WEBSOCKET_CLOSE_FIX.md). The measured fix explicitly owns and destroys the detached TLS socket after a validated Upgrade. Printed measurements from a hanging child are insufficient: the parent requires successful process exit. The gate also checks current measured transport/controller source hashes, equal binary sets across all six trials and actual raw ID/percentile consistency. It does not assert that a later rebuilt crypto binary equals the measured binary; the six trials qualify the retained 4b003dd runtime baseline. Later account-setup journal changes have separate recovery tests, not a newly claimed six-trial network run.
+A separate earlier severe trial delivered 400 IDs but failed to terminate with a CLOSE_WAIT socket. Both unsuccessful SDK-close variants remain FAIL; see [WEBSOCKET_CLOSE_FIX.md](WEBSOCKET_CLOSE_FIX.md). The measured fix explicitly owns and destroys the detached TLS socket after a validated Upgrade. Printed measurements from a hanging child are insufficient: the parent requires successful process exit. The renderer checks each run's checkout identity and transport source hashes, the consistency of its percentiles and the equality of the measured binary hashes across all six runs. Previous releases' measurements stay in version history.
 
 WSS byte counters cover application framing, not TLS/network overhead or an exact 100-character envelope. Historical Python-client figures are separate in 2G_REPORT.md. These steady-link measurements do not complete the combined 60-second blackout, lost-ACK, SIGKILL, half-open, DB interruption and competing-media schedule. AT-013 and V2-08 remain partial. No universal 2G or production claim. PRODUCTION_APPROVED=false.
 '''

@@ -5,7 +5,9 @@ using Npgsql;
 
 namespace SecureMesh;
 
-public sealed record ChannelInput(Guid Id, string Slug, string Title);
+public sealed record ChannelInput(Guid Id, string Slug, string Title, bool InviteOnly = false);
+public sealed record ChannelInvite(string Username);
+public sealed record PostEdit(int ExpectedRevision, string Body);
 public sealed record PostInput(Guid RequestId, string Body);
 
 public static class PublicChannels
@@ -17,11 +19,15 @@ public static class PublicChannels
     {
         var routes = app.MapGroup("/v1/public-channels");
         routes.MapGet("", List);
-        routes.MapPost("", Create);
+        routes.MapPost("", CreatePublic);
+        routes.MapPost("/invite-only", CreateRestricted);
         routes.MapDelete("/{id:guid}", Remove);
         routes.MapPut("/{id:guid}/subscription", Subscribe);
         routes.MapDelete("/{id:guid}/subscription", Unsubscribe);
+        routes.MapPost("/{id:guid}/invitations", Invite);
+        routes.MapPost("/{id:guid}/revoke-access", RevokeAccess);
         routes.MapGet("/{id:guid}/posts", Feed);
+        routes.MapPut("/{id:guid}/posts/{seq:long}", Edit);
         routes.MapPost("/{id:guid}/posts", Publish);
         routes.MapDelete("/{id:guid}/posts/{seq:long}", RemovePost);
     }
@@ -44,7 +50,7 @@ public static class PublicChannels
     // Serialize quotas across multiple devices of the same account and order writes with revocation.
     private static async Task LockAccount(NpgsqlConnection c, Actor a)
     {
-        await using (var user = Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 FOR UPDATE", a.UserId))
+        await using (var user = Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE", a.UserId))
             await user.ExecuteScalarAsync();
         await using var current = Sql.Cmd(c, """
             SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
@@ -67,11 +73,23 @@ public static class PublicChannels
         if (await cmd.ExecuteScalarAsync() is null) throw new ApiError(429,"CHANNEL_RATE_LIMIT");
     }
 
-    private static async Task<Guid> Owner(NpgsqlConnection c, Guid id, bool write = false)
+    private sealed record ChannelAccess(bool Owner, bool Restricted, bool Subscribed, bool Invited);
+
+    private static async Task<ChannelAccess> Access(NpgsqlConnection c, Guid id, Actor a, bool write = false)
     {
-        var sql = "SELECT owner_id FROM public_channels WHERE id=$1" + (write ? " FOR UPDATE" : "");
-        await using var cmd=Sql.Cmd(c,sql,id);
-        return await cmd.ExecuteScalarAsync() is Guid owner ? owner : throw new ApiError(404,"CHANNEL_NOT_FOUND");
+        var sql = """
+            SELECT p.owner_id=$2,p.invite_only,
+                EXISTS (SELECT 1 FROM public_channel_subscriptions s WHERE s.user_id=$2 AND s.channel_id=p.id),
+                EXISTS (SELECT 1 FROM channel_invitations i WHERE i.user_id=$2 AND i.channel_id=p.id AND i.expires_at>now())
+            FROM channel_catalog p WHERE p.id=$1
+            """ + (write ? " FOR UPDATE OF p" : " FOR SHARE OF p");
+        await using var cmd=Sql.Cmd(c,sql,id,a.UserId);
+        await using var r=await cmd.ExecuteReaderAsync();
+        if (!await r.ReadAsync()) throw new ApiError(404,"CHANNEL_NOT_FOUND");
+        var access=new ChannelAccess(r.GetBoolean(0),r.GetBoolean(1),r.GetBoolean(2),r.GetBoolean(3));
+        if(access.Restricted && !access.Owner && !access.Subscribed && !access.Invited)
+            throw new ApiError(404,"CHANNEL_NOT_FOUND");
+        return access;
     }
 
     private static async Task<int> Count(NpgsqlConnection c, string query, Guid id)
@@ -80,30 +98,46 @@ public static class PublicChannels
         return Convert.ToInt32(await cmd.ExecuteScalarAsync());
     }
 
-    private static async Task<IResult> List(string? q, string? after, bool? mine, HttpContext ctx, NpgsqlDataSource db)
+    private static async Task<IResult> List(string? q, string? after, bool? mine, bool? includeRestricted, HttpContext ctx, NpgsqlDataSource db)
     {
         var a=await Sql.Authenticate(ctx,db);
-        q=(q??"").ToLowerInvariant(); after??="";
-        if (!Prefix.IsMatch(q) || !Prefix.IsMatch(after)) throw new ApiError(400,"INVALID_CHANNEL_FILTER");
+        q=(q??"").ToLowerInvariant();
+        var parts=(after??"").Split('~',2);
+        var afterSlug=parts[0];
+        var afterId=Guid.Empty;
+        if(!Prefix.IsMatch(q) || !Prefix.IsMatch(afterSlug) ||
+            (parts.Length==2 && !Guid.TryParseExact(parts[1],"D",out afterId)))
+            throw new ApiError(400,"INVALID_CHANNEL_FILTER");
+        // A pre-migration cursor supplied only a slug and already consumed that row.
+        if(parts.Length==1 && afterSlug.Length!=0) afterId=Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
         await using var c=await db.OpenConnectionAsync();
-        // C collation and the bounded ASCII alphabet make the prefix interval indexable,
-        // including literal underscores. One extra row distinguishes a full last page.
         await using var cmd=Sql.Cmd(c,"""
-            SELECT p.id,p.slug,p.title,p.owner_id=$1,s.user_id IS NOT NULL
-            FROM public_channels p LEFT JOIN public_channel_subscriptions s ON s.channel_id=p.id AND s.user_id=$1
-            WHERE p.slug > $2 AND p.slug >= $3 AND p.slug < $4 AND (NOT $5 OR p.owner_id=$1 OR s.user_id IS NOT NULL)
-            ORDER BY p.slug LIMIT 26
-            """,a.UserId,after,q,q+"{",mine??false);
+            SELECT p.id,p.slug,p.title,p.owner_id=$1,s.user_id IS NOT NULL,p.invite_only,i.user_id IS NOT NULL
+            FROM channel_catalog p LEFT JOIN public_channel_subscriptions s ON s.channel_id=p.id AND s.user_id=$1
+            LEFT JOIN channel_invitations i ON i.channel_id=p.id AND i.user_id=$1 AND i.expires_at>now()
+            WHERE (p.slug,p.id)>($2,$3) AND p.slug >= $4 AND p.slug < $5
+              AND (NOT p.invite_only OR $7)
+              AND ((NOT $6 AND NOT p.invite_only) OR p.owner_id=$1 OR s.user_id IS NOT NULL OR i.user_id IS NOT NULL)
+            ORDER BY p.slug,p.id LIMIT 26
+            """,a.UserId,afterSlug,afterId,q,q+"{",mine??false,includeRestricted??false);
         await using var r=await cmd.ExecuteReaderAsync();
         var items=new List<object>(); string? last=null; bool more=false;
         while(await r.ReadAsync())
         {
             if(items.Count==25){more=true;break;}
-            last=r.GetString(1);
-            items.Add(new {id=r.GetGuid(0),slug=last,title=r.GetString(2),owner=r.GetBoolean(3),subscribed=r.GetBoolean(4)});
+            var id=r.GetGuid(0);
+            var slug=r.GetString(1);
+            last=$"{slug}~{id:D}";
+            items.Add(new {id,slug,title=r.GetString(2),owner=r.GetBoolean(3),subscribed=r.GetBoolean(4),
+                inviteOnly=r.GetBoolean(5),invited=r.GetBoolean(6)});
         }
         return Results.Ok(new {items, next=more?last:null});
     }
+
+    private static Task<IResult> CreatePublic(ChannelInput input,HttpContext ctx,NpgsqlDataSource db) =>
+        input.InviteOnly ? throw new ApiError(400,"USE_INVITE_ONLY_CHANNEL_ROUTE") : Create(input,ctx,db);
+    private static Task<IResult> CreateRestricted(ChannelInput input,HttpContext ctx,NpgsqlDataSource db) =>
+        Create(input with {InviteOnly=true},ctx,db);
 
     private static async Task<IResult> Create(ChannelInput input,HttpContext ctx,NpgsqlDataSource db)
     {
@@ -116,22 +150,22 @@ public static class PublicChannels
             await expire.ExecuteNonQueryAsync();
         await using(var removed=Sql.Cmd(c,"SELECT 1 FROM public_channel_removed WHERE owner_id=$1 AND id=$2",a.UserId,input.Id))
             if(await removed.ExecuteScalarAsync() is not null) throw new ApiError(409,"CHANNEL_REMOVED");
-        await using(var existing=Sql.Cmd(c,"SELECT owner_id,slug,title FROM public_channels WHERE id=$1",input.Id))
+        await using(var existing=Sql.Cmd(c,"SELECT owner_id,slug,title,invite_only FROM channel_catalog WHERE id=$1",input.Id))
         await using(var r=await existing.ExecuteReaderAsync())
         {
             if(await r.ReadAsync())
             {
-                if(r.GetGuid(0)!=a.UserId || r.GetString(1)!=input.Slug || r.GetString(2)!=title)
+                if(r.GetGuid(0)!=a.UserId || r.GetString(1)!=input.Slug || r.GetString(2)!=title || r.GetBoolean(3)!=input.InviteOnly)
                     throw new ApiError(409,"CHANNEL_CONFLICT");
-                return Results.Ok(new{id=input.Id});
+                return Results.Ok(new{id=input.Id,inviteOnly=input.InviteOnly});
             }
         }
-        if(await Count(c,"SELECT count(*) FROM public_channels WHERE owner_id=$1",a.UserId)>=8)
+        if(await Count(c,"SELECT count(*) FROM channel_catalog WHERE owner_id=$1",a.UserId)>=8)
             throw new ApiError(409,"CHANNEL_OWNERSHIP_QUOTA");
         await Charge(c,a.UserId,"create",10);
-        await using var insert=Sql.Cmd(c,"INSERT INTO public_channels(id,owner_id,slug,title) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",input.Id,a.UserId,input.Slug,title);
+        await using var insert=Sql.Cmd(c,"INSERT INTO channel_catalog(id,owner_id,slug,title,invite_only) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",input.Id,a.UserId,input.Slug,title,input.InviteOnly);
         if(await insert.ExecuteNonQueryAsync()!=1) throw new ApiError(409,"CHANNEL_CONFLICT");
-        await tx.CommitAsync();return Results.Created($"/v1/public-channels/{input.Id}",new{id=input.Id});
+        await tx.CommitAsync();return Results.Created($"/v1/public-channels/{input.Id}",new{id=input.Id,inviteOnly=input.InviteOnly});
     }
 
     private static async Task<IResult> Remove(Guid id,HttpContext ctx,NpgsqlDataSource db)
@@ -139,10 +173,10 @@ public static class PublicChannels
         var a=await Sql.Authenticate(ctx,db);
         await using var c=await db.OpenConnectionAsync(); await using var tx=await c.BeginTransactionAsync();
         await LockAccount(c,a);
-        if(await Owner(c,id,true)!=a.UserId) throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
+        if(!(await Access(c,id,a,true)).Owner) throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
         await using (var mark=Sql.Cmd(c,"INSERT INTO public_channel_removed(owner_id,id) VALUES($1,$2)",a.UserId,id))
             await mark.ExecuteNonQueryAsync();
-        await using var cmd=Sql.Cmd(c,"DELETE FROM public_channels WHERE id=$1",id);
+        await using var cmd=Sql.Cmd(c,"DELETE FROM channel_catalog WHERE id=$1",id);
         await cmd.ExecuteNonQueryAsync(); await tx.CommitAsync();return Results.NoContent();
     }
 
@@ -153,7 +187,8 @@ public static class PublicChannels
         var a=await Sql.Authenticate(ctx,db);
         await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
         await LockAccount(c,a);
-        if(await Owner(c,id,true)==a.UserId) throw new ApiError(409,"CHANNEL_OWNER_ALREADY_HAS_ACCESS");
+        var access=await Access(c,id,a,true);
+        if(access.Owner) throw new ApiError(409,"CHANNEL_OWNER_ALREADY_HAS_ACCESS");
         if(add)
         {
             await using var cmd=Sql.Cmd(c,"INSERT INTO public_channel_subscriptions(user_id,channel_id) VALUES($1,$2) ON CONFLICT DO NOTHING",a.UserId,id);
@@ -169,7 +204,85 @@ public static class PublicChannels
             await using var cmd=Sql.Cmd(c,"DELETE FROM public_channel_subscriptions WHERE user_id=$1 AND channel_id=$2",a.UserId,id);
             await cmd.ExecuteNonQueryAsync();
         }
+        if(access.Restricted)
+        {
+            await using var clear=Sql.Cmd(c,"DELETE FROM channel_invitations WHERE channel_id=$1 AND user_id=$2",id,a.UserId);
+            await clear.ExecuteNonQueryAsync();
+        }
         await tx.CommitAsync();return Results.NoContent();
+    }
+
+    private static async Task<IResult> Invite(Guid id,ChannelInvite input,HttpContext ctx,NpgsqlDataSource db)
+    {
+        var actor=await Sql.Authenticate(ctx,db);
+        var name=input.Username?.Trim().ToLowerInvariant();
+        if(name is null || !Slug.IsMatch(name)) throw new ApiError(400,"INVALID_USERNAME");
+        await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
+        await LockAccount(c,actor);
+        var access=await Access(c,id,actor,true);
+        if(!access.Owner) throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
+        if(!access.Restricted) throw new ApiError(409,"CHANNEL_PUBLIC");
+        await using (var expire=Sql.Cmd(c,"DELETE FROM channel_invitations WHERE channel_id=$1 AND expires_at<=now()",id))
+            await expire.ExecuteNonQueryAsync();
+        // Unknown usernames, existing members and repeated invitations have the same response.
+        // Charge all attempts to bound probing by owners, including unknown recipients.
+        await Charge(c,actor.UserId,"invite",120);
+        if(await Count(c,"SELECT count(*) FROM channel_invitations WHERE channel_id=$1",id)>=64)
+            throw new ApiError(409,"CHANNEL_INVITATION_QUOTA");
+        // Serialize inbound capacity across independent owners without locking the target account.
+        await using (var gate=Sql.Cmd(c,"SELECT pg_advisory_xact_lock(hashtextextended('channel-invite:' || $1, 0))",name))
+            await gate.ExecuteNonQueryAsync();
+        await using var insert=Sql.Cmd(c,"""
+            INSERT INTO channel_invitations(channel_id,user_id,expires_at)
+            SELECT $1,u.id,now()+interval '7 days' FROM users u
+            WHERE u.username=$2 AND u.verified AND u.id<>$3
+              AND (SELECT count(*) FROM channel_invitations pending WHERE pending.user_id=u.id AND pending.expires_at>now())<128
+              AND NOT EXISTS
+              (SELECT 1 FROM public_channel_subscriptions s WHERE s.channel_id=$1 AND s.user_id=u.id)
+            ON CONFLICT DO NOTHING
+            """,id,name,actor.UserId);
+        await insert.ExecuteNonQueryAsync();await tx.CommitAsync();return Results.NoContent();
+    }
+
+    private static async Task<IResult> RevokeAccess(Guid id,ChannelInvite input,HttpContext ctx,NpgsqlDataSource db)
+    {
+        var actor=await Sql.Authenticate(ctx,db);
+        var name=input.Username?.Trim().ToLowerInvariant();
+        if(name is null || !Slug.IsMatch(name)) throw new ApiError(400,"INVALID_USERNAME");
+        await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
+        await LockAccount(c,actor);
+        var access=await Access(c,id,actor,true);
+        if(!access.Owner) throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
+        if(!access.Restricted) throw new ApiError(409,"CHANNEL_PUBLIC");
+        await Charge(c,actor.UserId,"revoke",240);
+        await using(var invites=Sql.Cmd(c,"DELETE FROM channel_invitations i USING users u WHERE i.channel_id=$1 AND i.user_id=u.id AND u.username=$2",id,name))
+            await invites.ExecuteNonQueryAsync();
+        await using(var members=Sql.Cmd(c,"DELETE FROM public_channel_subscriptions s USING users u WHERE s.channel_id=$1 AND s.user_id=u.id AND u.username=$2",id,name))
+            await members.ExecuteNonQueryAsync();
+        await tx.CommitAsync();return Results.NoContent();
+    }
+
+    private static async Task<IResult> Edit(Guid id,long seq,PostEdit input,HttpContext ctx,NpgsqlDataSource db)
+    {
+        var actor=await Sql.Authenticate(ctx,db);
+        if(input.ExpectedRevision<1) throw new ApiError(400,"INVALID_CHANNEL_REVISION");
+        var body=Text(input.Body,2048,true);
+        await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
+        await LockAccount(c,actor);
+        if(!(await Access(c,id,actor,true)).Owner) throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
+        await using(var current=Sql.Cmd(c,"SELECT body,revision FROM public_channel_posts WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq))
+        await using(var r=await current.ExecuteReaderAsync())
+        {
+            if(!await r.ReadAsync()) throw new ApiError(404,"CHANNEL_POST_NOT_FOUND");
+            var revision=r.GetInt32(1);
+            if(r.GetString(0)==body && (revision==input.ExpectedRevision || revision-1==input.ExpectedRevision))
+                return Results.Ok(new{seq,revision});
+            if(revision!=input.ExpectedRevision) throw new ApiError(409,"CHANNEL_POST_CHANGED");
+        }
+        await Charge(c,actor.UserId,"edit",240);
+        await using var update=Sql.Cmd(c,"UPDATE public_channel_posts SET body=$1,revision=revision+1 WHERE channel_id=$2 AND seq=$3 RETURNING revision",body,id,seq);
+        var next=(int)(await update.ExecuteScalarAsync())!;await tx.CommitAsync();
+        return Results.Ok(new{seq,revision=next});
     }
 
     private static async Task<IResult> Feed(Guid id,long? before,HttpContext ctx,NpgsqlDataSource db)
@@ -177,19 +290,16 @@ public static class PublicChannels
         var a=await Sql.Authenticate(ctx,db);
         if(before<=0)throw new ApiError(400,"INVALID_CHANNEL_CURSOR");
         await using var c=await db.OpenConnectionAsync();
-        var owner=await Owner(c,id);
-        if (owner!=a.UserId)
-        {
-            await using var check=Sql.Cmd(c,"SELECT 1 FROM public_channel_subscriptions WHERE user_id=$1 AND channel_id=$2",a.UserId,id);
-            if(await check.ExecuteScalarAsync() is null) throw new ApiError(403,"CHANNEL_SUBSCRIPTION_REQUIRED");
-        }
-        await using var cmd=Sql.Cmd(c,"SELECT seq,body,published_at FROM public_channel_posts WHERE channel_id=$1 AND body IS NOT NULL AND seq<$2 ORDER BY seq DESC LIMIT 9",id,before??long.MaxValue);
+        await using var tx=await c.BeginTransactionAsync();
+        var access=await Access(c,id,a);
+        if(!access.Owner && !access.Subscribed) throw new ApiError(403,"CHANNEL_SUBSCRIPTION_REQUIRED");
+        await using var cmd=Sql.Cmd(c,"SELECT seq,body,published_at,revision FROM public_channel_posts WHERE channel_id=$1 AND body IS NOT NULL AND seq<$2 ORDER BY seq DESC LIMIT 9",id,before??long.MaxValue);
         await using var r=await cmd.ExecuteReaderAsync();
         var items=new List<object>(); long? last=null; bool more=false;
         while(await r.ReadAsync())
         {
             if(items.Count==8){more=true;break;}
-            last=r.GetInt64(0);items.Add(new{seq=last,body=r.GetString(1),publishedAt=r.GetDateTime(2)});
+            last=r.GetInt64(0);items.Add(new{seq=last,body=r.GetString(1),publishedAt=r.GetDateTime(2),revision=r.GetInt32(3)});
         }
         return Results.Ok(new{items,next=more?last:null});
     }
@@ -201,7 +311,7 @@ public static class PublicChannels
         var body=Text(input.Body,2048,true);
         await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
         await LockAccount(c,a);
-        if(await Owner(c,id,true)!=a.UserId)throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
+        if(!(await Access(c,id,a,true)).Owner)throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
         await using(var expire=Sql.Cmd(c,"DELETE FROM public_channel_posts WHERE channel_id=$1 AND deleted_at < now()-interval '1 day'",id))
             await expire.ExecuteNonQueryAsync();
         await using(var old=Sql.Cmd(c,"SELECT seq,body FROM public_channel_posts WHERE channel_id=$1 AND request_id=$2",id,input.RequestId))
@@ -225,7 +335,7 @@ public static class PublicChannels
         var a=await Sql.Authenticate(ctx,db);
         await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
         await LockAccount(c,a);
-        if(await Owner(c,id,true)!=a.UserId)throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
+        if(!(await Access(c,id,a,true)).Owner)throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
         await using var cmd=Sql.Cmd(c,"UPDATE public_channel_posts SET body=NULL,deleted_at=now() WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq);
         await cmd.ExecuteNonQueryAsync();await tx.CommitAsync();return Results.NoContent();
     }

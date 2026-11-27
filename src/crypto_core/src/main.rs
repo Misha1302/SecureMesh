@@ -28,7 +28,9 @@ fn main() {
             .nth(1)
             .ok_or_else(|| anyhow::anyhow!("DB path required"))?;
         let mut input = String::new();
-        io::stdin().take(262145).read_to_string(&mut input)?;
+        io::stdin()
+            .take(securemesh_crypto::MAX_LOCAL_COMMAND_BYTES as u64 + 1)
+            .read_to_string(&mut input)?;
         securemesh_crypto::execute_json(&path, &input)
     })();
     match result {
@@ -58,11 +60,17 @@ fn serve() -> anyhow::Result<()> {
     io::stdout().flush()?;
     loop {
         let mut line = String::new();
-        let n = reader.by_ref().take(262145).read_line(&mut line)?;
+        let n = reader
+            .by_ref()
+            .take(securemesh_crypto::MAX_LOCAL_COMMAND_BYTES as u64 + 1)
+            .read_line(&mut line)?;
         if n == 0 {
             break;
         }
-        anyhow::ensure!(line.len() <= 262144, "input too large");
+        anyhow::ensure!(
+            line.len() <= securemesh_crypto::MAX_LOCAL_COMMAND_BYTES,
+            "input too large"
+        );
         match client.execute(line) {
             Ok(value) => println!("{value}"),
             Err(_) => println!("{{\"error\":\"CRYPTO_OR_STORE_REJECTED\"}}"),

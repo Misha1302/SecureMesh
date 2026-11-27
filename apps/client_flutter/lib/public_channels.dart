@@ -23,12 +23,15 @@ class _PublicChannelsState extends State<PublicChannels> {
   final search = TextEditingController(),
       slug = TextEditingController(),
       title = TextEditingController(),
-      post = TextEditingController();
+      post = TextEditingController(),
+      inviteName = TextEditingController();
   List<Map> rooms = [], posts = [];
   Map? room;
   String? directoryCursor, error;
   int? feedCursor;
   String activeQuery = '';
+  bool restricted = false;
+  String? inviteNote;
   bool mine = false, creating = false, busy = false;
   String? createId, creationKey, postId, postKey;
   String tr(String ru, String en) => widget.russian ? ru : en;
@@ -46,6 +49,7 @@ class _PublicChannelsState extends State<PublicChannels> {
     slug.dispose();
     title.dispose();
     post.dispose();
+    inviteName.dispose();
     super.dispose();
   }
 
@@ -63,6 +67,10 @@ class _PublicChannelsState extends State<PublicChannels> {
         ApiFailure(status: 429) => tr(
           'Слишком много действий. Повторите позже.',
           'Too many actions. Try again later.',
+        ),
+        ApiFailure(code: 'CHANNEL_POST_CHANGED') => tr(
+          'Публикацию уже изменили. Обновите список перед редактированием.',
+          'This post changed. Refresh the list before editing.',
         ),
         ApiFailure(status: 409) => tr(
           'Действие конфликтует с текущим состоянием или достигнут лимит. Для нового канала проверьте адрес.',
@@ -95,6 +103,7 @@ class _PublicChannelsState extends State<PublicChannels> {
     final params = {
       'q': q,
       'mine': '$mine',
+      'includeRestricted': 'true',
       if (more && directoryCursor != null) 'after': directoryCursor!,
     };
     final result = await widget.api(
@@ -118,6 +127,8 @@ class _PublicChannelsState extends State<PublicChannels> {
 
   Future<void> open(Map target) async {
     room = Map.of(target);
+    inviteName.clear();
+    inviteNote = null;
     posts = [];
     feedCursor = null;
     post.clear();
@@ -134,16 +145,19 @@ class _PublicChannelsState extends State<PublicChannels> {
       );
       return;
     }
-    final key = '$handle\n$name';
+    final key = '$handle\n$name\n$restricted';
     if (creationKey != key || createId == null) {
       createId = newUuid();
       creationKey = key;
     }
     final result = await widget.api(
-      path,
+      restricted ? '$path/invite-only' : path,
       data: {'id': createId, 'slug': handle, 'title': name},
     ) as Map;
     if (!mounted) return;
+    if (restricted && result['inviteOnly'] != true) {
+      throw StateError('Unknown channel visibility');
+    }
     creating = false;
     createId = null;
     slug.clear();
@@ -153,6 +167,7 @@ class _PublicChannelsState extends State<PublicChannels> {
       'slug': handle,
       'title': name,
       'owner': true,
+      'inviteOnly': restricted,
       'subscribed': false,
     });
   }
@@ -162,12 +177,102 @@ class _PublicChannelsState extends State<PublicChannels> {
     await widget.api('$roomPath/subscription', method: add ? 'PUT' : 'DELETE');
     if (!mounted) return;
     room!['subscribed'] = add;
+    room!['invited'] = false;
     if (add) {
       await feed();
     } else {
       posts = [];
       feedCursor = null;
+      if (room!['inviteOnly'] == true) await closeRoom();
     }
+  }
+
+  Future<void> invite() async {
+    final name = inviteName.text.trim().toLowerCase();
+    if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(name)) {
+      error = tr(
+        'Введите точное имя пользователя без @.',
+        'Enter the exact username without @.',
+      );
+      return;
+    }
+    await widget.api('$roomPath/invitations', data: {'username': name});
+    if (!mounted) return;
+    inviteName.clear();
+    inviteNote = tr(
+      'Если аккаунт существует, приглашение появится в его каналах.',
+      'If this account exists, the invitation will appear in its channels.',
+    );
+  }
+
+  Future<void> revoke() async {
+    final name = inviteName.text.trim().toLowerCase();
+    if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(name)) {
+      error = tr(
+        'Введите точное имя пользователя без @.',
+        'Enter the exact username without @.',
+      );
+      return;
+    }
+    if (!await confirm(
+          tr(
+            'Отозвать доступ к каналу для @$name?',
+            'Revoke channel access for @$name?',
+          ),
+          positive: tr('Отозвать', 'Revoke'),
+        ) ||
+        !mounted) {
+      return;
+    }
+    await widget.api('$roomPath/revoke-access', data: {'username': name});
+    if (!mounted) return;
+    inviteName.clear();
+    inviteNote = tr(
+      'Доступ по этому имени отозван.',
+      'Access for this username has been revoked.',
+    );
+  }
+
+  Future<void> decline() async {
+    await widget.api('$roomPath/subscription', method: 'DELETE');
+    if (mounted) await closeRoom();
+  }
+
+  Future<void> editPost(Map item) async {
+    var draft = item['body'] as String;
+    final body = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('Изменить публикацию', 'Edit post')),
+        content: TextFormField(
+          initialValue: draft,
+          onChanged: (v) => draft = v,
+          maxLength: 2048,
+          minLines: 1,
+          maxLines: 5,
+          decoration: InputDecoration(
+            labelText: tr('Текст публикации', 'Post text'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, draft.trim()),
+            child: Text(tr('Сохранить', 'Save')),
+          ),
+        ],
+      ),
+    );
+    if (body == null || body.isEmpty || !mounted) return;
+    await widget.api(
+      '$roomPath/posts/${item['seq']}',
+      method: 'PUT',
+      data: {'expectedRevision': item['revision'], 'body': body},
+    );
+    if (mounted) await feed();
   }
 
   Future<void> publish() async {
@@ -187,7 +292,7 @@ class _PublicChannelsState extends State<PublicChannels> {
     await feed();
   }
 
-  Future<bool> confirm(String question) async =>
+  Future<bool> confirm(String question, {String? positive}) async =>
       await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -199,7 +304,7 @@ class _PublicChannelsState extends State<PublicChannels> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: Text(tr('Удалить', 'Delete')),
+              child: Text(positive ?? tr('Удалить', 'Delete')),
             ),
           ],
         ),
@@ -265,18 +370,22 @@ class _PublicChannelsState extends State<PublicChannels> {
           ),
           Expanded(
             child: Text(
-              room?['title'] as String? ??
-                  tr('Публичные каналы', 'Public channels'),
+              room?['title'] as String? ?? tr('Каналы', 'Channels'),
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
         ],
       ),
       Text(
-        tr(
-          'Публикации видны серверу. Любой участник сервиса может найти канал и подписаться.',
-          'The server can read posts. Anyone with an account can find and subscribe to a channel.',
-        ),
+        room?['inviteOnly'] == true || (creating && restricted)
+            ? tr(
+                'Канал по приглашениям. Публикации видны серверу и подписчикам.',
+                'Invite-only channel. The server and subscribers can read posts.',
+              )
+            : tr(
+                'Публикации видны серверу. Публичные каналы доступны всем участникам.',
+                'The server can read posts. Public channels are open to all accounts.',
+              ),
       ),
       if (busy) const LinearProgressIndicator(),
       if (error != null) Semantics(liveRegion: true, child: Text(error!)),
@@ -298,6 +407,13 @@ class _PublicChannelsState extends State<PublicChannels> {
             labelText: tr('Адрес канала', 'Channel handle'),
             hintText: 'news_2026',
           ),
+        ),
+        SwitchListTile(
+          value: restricted,
+          onChanged: busy
+              ? null
+              : (value) => setState(() => restricted = value),
+          title: Text(tr('Только по приглашению', 'Invite only')),
         ),
         action('Создать канал', 'Create channel', create),
       ] else if (room == null) ...[
@@ -336,6 +452,7 @@ class _PublicChannelsState extends State<PublicChannels> {
                   ? null
                   : () => setState(() {
                       creating = true;
+                      restricted = false;
                       error = null;
                     }),
               child: Text(tr('Новый канал', 'New channel')),
@@ -347,7 +464,13 @@ class _PublicChannelsState extends State<PublicChannels> {
         for (final c in rooms)
           ListTile(
             title: Text(c['title'] as String),
-            subtitle: Text('@${c['slug']}'),
+            subtitle: Text(
+              c['invited'] == true
+                  ? '@${c['slug']} · ${tr('Приглашение', 'Invitation')}'
+                  : c['inviteOnly'] == true
+                  ? '@${c['slug']} · ${tr('По приглашению', 'Invite only')}'
+                  : '@${c['slug']}',
+            ),
             leading: const Icon(Icons.campaign_outlined),
             onTap: busy ? null : () => run(() => open(c)),
           ),
@@ -355,6 +478,25 @@ class _PublicChannelsState extends State<PublicChannels> {
           action('Ещё каналы', 'More channels', () => catalog(more: true)),
       ] else ...[
         Text('@${room!['slug']}'),
+        if (room!['owner'] == true && room!['inviteOnly'] == true) ...[
+          TextField(
+            controller: inviteName,
+            enabled: !busy,
+            maxLength: 32,
+            autocorrect: false,
+            decoration: InputDecoration(
+              labelText: tr('Точное имя пользователя', 'Exact username'),
+            ),
+          ),
+          Wrap(
+            children: [
+              action('Пригласить', 'Invite', invite),
+              action('Отозвать доступ', 'Revoke access', revoke),
+            ],
+          ),
+          if (inviteNote != null)
+            Semantics(liveRegion: true, child: Text(inviteNote!)),
+        ],
         if (room!['owner'] == true) ...[
           TextField(
             controller: post,
@@ -363,16 +505,28 @@ class _PublicChannelsState extends State<PublicChannels> {
             maxLines: 5,
             maxLength: 2048,
             decoration: InputDecoration(
-              labelText: tr('Публичная публикация', 'Public post'),
+              labelText: room!['inviteOnly'] == true
+                  ? tr('Публикация для подписчиков', 'Post for subscribers')
+                  : tr('Публичная публикация', 'Public post'),
             ),
           ),
           action('Опубликовать', 'Publish', publish),
         ] else
           action(
-            room!['subscribed'] == true ? 'Отписаться' : 'Подписаться',
-            room!['subscribed'] == true ? 'Unsubscribe' : 'Subscribe',
+            room!['subscribed'] == true
+                ? 'Отписаться'
+                : room!['invited'] == true
+                ? 'Принять приглашение'
+                : 'Подписаться',
+            room!['subscribed'] == true
+                ? 'Unsubscribe'
+                : room!['invited'] == true
+                ? 'Accept invitation'
+                : 'Subscribe',
             subscribe,
           ),
+        if (room!['invited'] == true)
+          action('Отклонить приглашение', 'Decline invitation', decline),
         if (room!['owner'] == true || room!['subscribed'] == true) ...[
           action('Обновить публикации', 'Refresh posts', feed),
           if (!busy && posts.isEmpty)
@@ -381,17 +535,34 @@ class _PublicChannelsState extends State<PublicChannels> {
             ListTile(
               title: SelectableText(p['body'] as String),
               subtitle: Text(
-                MaterialLocalizations.of(context).formatMediumDate(
-                  DateTime.parse(p['publishedAt'] as String).toLocal(),
-                ),
+                [
+                  MaterialLocalizations.of(context).formatMediumDate(
+                    DateTime.parse(p['publishedAt'] as String).toLocal(),
+                  ),
+                  if ((p['revision'] as int? ?? 1) > 1)
+                    tr('Изменено', 'Edited'),
+                ].join(' · '),
               ),
               trailing: room!['owner'] == true
-                  ? IconButton(
-                      tooltip: tr('Удалить публикацию', 'Delete post'),
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: busy
-                          ? null
-                          : () => run(() => removePost(p['seq'] as int)),
+                  ? PopupMenuButton<String>(
+                      enabled: !busy,
+                      tooltip: tr('Действия с публикацией', 'Post actions'),
+                      onSelected: (value) => run(
+                        () => value == 'edit'
+                            ? editPost(p)
+                            : removePost(p['seq'] as int),
+                      ),
+                      itemBuilder: (_) => [
+                        if (p['revision'] is int)
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text(tr('Изменить публикацию', 'Edit post')),
+                          ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Text(tr('Удалить публикацию', 'Delete post')),
+                        ),
+                      ],
                     )
                   : null,
             ),
