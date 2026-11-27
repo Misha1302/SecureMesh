@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:securemesh_client/message_markup.dart';
@@ -25,6 +26,39 @@ void main() {
     formatMessage(controller, MessageFormat.spoiler);
     expect(controller.text, List.filled(4000, 'x').join());
   });
+
+  testWidgets(
+    'desktop shortcut and toolbar format the selected composer text',
+    (tester) async {
+      final controller = TextEditingController(text: 'word');
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MessageComposer(
+              controller: controller,
+              tr: english,
+              onSubmitted: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byType(TextField));
+      controller.selection = const TextSelection(
+        baseOffset: 0,
+        extentOffset: 4,
+      );
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(controller.text, '**word**');
+      await tester.tap(find.byTooltip('Formatting'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Spoiler'));
+      await tester.pumpAndSettle();
+      expect(controller.text, '**||word||**');
+    },
+  );
 
   testWidgets('links are inspectable, spoilers hidden, HTML is literal text', (
     tester,
