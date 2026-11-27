@@ -1,0 +1,64 @@
+name: Android release-mode verification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/client_flutter/**'
+      - 'src/crypto_core/**'
+      - 'scripts/build-android-release.sh'
+      - '.github/workflows/android-candidate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package-and-launch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+      - run: cargo install cargo-ndk --locked --version 4.1.2
+      - name: Build APK using an ephemeral test certificate
+        shell: bash
+        run: |
+          export SECUREMESH_SIGNING_STORE="$RUNNER_TEMP/test.jks"
+          export SECUREMESH_KEY_ALIAS=ci-only
+          SECUREMESH_STORE_PASSWORD=$(openssl rand -hex 24)
+          export SECUREMESH_STORE_PASSWORD
+          export SECUREMESH_KEY_PASSWORD="$SECUREMESH_STORE_PASSWORD"
+          keytool -genkeypair -storetype JKS -keystore "$SECUREMESH_SIGNING_STORE" \
+            -storepass:env SECUREMESH_STORE_PASSWORD -keypass:env SECUREMESH_KEY_PASSWORD \
+            -alias "$SECUREMESH_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 1 \
+            -dname "CN=Ephemeral SecureMesh CI"
+          SECUREMESH_SIGNER_SHA256=$(keytool -exportcert -keystore "$SECUREMESH_SIGNING_STORE" \
+            -storepass:env SECUREMESH_STORE_PASSWORD -alias "$SECUREMESH_KEY_ALIAS" | sha256sum | cut -d' ' -f1)
+          export SECUREMESH_SIGNER_SHA256
+          scripts/build-android-release.sh
+      - name: Allow emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install APK and launch its main activity
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          script: |
+            set -e
+            adb install apps/client_flutter/build/app/outputs/flutter-apk/app-release.apk
+            adb shell am start -W -n com.example.securemesh_client/.MainActivity | tee "$RUNNER_TEMP/activity.txt"
+            grep -q 'Status: ok' "$RUNNER_TEMP/activity.txt"
+            sleep 3
+            adb shell pidof com.example.securemesh_client
