@@ -59,7 +59,7 @@ public final class BiometricFallbackInstrumentation extends Instrumentation {
             require(!first.exists(), "failed enrollment wrote a profile envelope");
             writeDummy(first);
             writeDummy(second);
-            expect(bridge, a, "status", "enrolled");
+            expect(bridge, a, "status", "recovery");
             expect(bridge, a, "unlock", "error:unavailable");
             expect(bridge, a, "forget", null);
             require(!first.exists() && second.exists(), "forget crossed profile boundaries");

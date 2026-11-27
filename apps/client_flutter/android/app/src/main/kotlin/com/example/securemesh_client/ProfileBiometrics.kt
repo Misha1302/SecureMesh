@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import io.flutter.plugin.common.MethodCall
@@ -56,7 +57,12 @@ internal class ProfileBiometrics(private val context: Context) {
             val available = context.getSystemService(BiometricManager::class.java).canAuthenticate(strong) ==
                 BiometricManager.BIOMETRIC_SUCCESS
             if (call.method == "status") {
-                result.success(if (enrolled) "enrolled" else if (available) "available" else "unavailable")
+                result.success(when {
+                    enrolled && (!available || !store.containsAlias(alias)) -> "recovery"
+                    enrolled -> "enrolled"
+                    available -> "available"
+                    else -> "unavailable"
+                })
                 return
             }
             val enabling = call.method == "enable"
@@ -98,7 +104,14 @@ internal class ProfileBiometrics(private val context: Context) {
                     require(stream.channel.size() in 29L..8192L)
                     stream.readBytes()
                 }
-                cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, encrypted, 0, 12))
+                try {
+                    cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, encrypted, 0, 12))
+                } catch (error: KeyPermanentlyInvalidatedException) {
+                    // Keep the envelope for explicit removal. The unusable alias
+                    // no longer qualifies as an enrolled unlock on the next status check.
+                    store.deleteEntry(alias)
+                    throw error
+                }
                 encrypted.copyOfRange(12, encrypted.size)
             }
             val stop = CancellationSignal()

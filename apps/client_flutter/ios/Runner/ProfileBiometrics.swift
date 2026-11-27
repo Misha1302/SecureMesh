@@ -129,8 +129,9 @@ final class ProfileBiometrics: NSObject {
     ctx.localizedFallbackTitle = ""
     ctx.touchIDAuthenticationAllowableReuseDuration = 0
     if call.method == "status" {
-      if location.enrolled { result("enrolled") }
-      else { result(ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) ? "available" : "unavailable") }
+      let available = ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+      if location.enrolled { result(available ? "enrolled" : "recovery") }
+      else { result(available ? "available" : "unavailable") }
       return
     }
     if call.method == "forget" {

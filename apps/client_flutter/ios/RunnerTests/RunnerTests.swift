@@ -54,6 +54,15 @@ final class RunnerTests: XCTestCase {
     XCTAssertTrue(answered)
     let location = try BiometricProfileLocation(path: file.path)
     XCTAssertFalse(location.enrolled)
+    try FileManager.default.createDirectory(at: location.envelope.deletingLastPathComponent(),
+                                           withIntermediateDirectories: true)
+    try Data(repeating: 0, count: 64).write(to: location.envelope)
+    defer { try? FileManager.default.removeItem(at: location.envelope) }
+    var status: String?
+    bridge.handle(FlutterMethodCall(methodName: "status", arguments: args)) { reply in
+      status = reply as? String
+    }
+    XCTAssertEqual(status, "recovery")
     XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
   }
 }

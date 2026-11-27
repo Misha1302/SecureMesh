@@ -52,6 +52,42 @@ void main() {
     path.dispose();
   });
 
+  testWidgets(
+    'unavailable enrollment offers manual recovery and scoped removal',
+    (tester) async {
+      final path = TextEditingController(text: '/private/a.db');
+      final actions = <BiometricAction>[];
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        profileBiometrics,
+        (_) async => 'recovery',
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(profileBiometrics, null),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ProfileBiometricActions(
+              path: path,
+              disabled: false,
+              russian: false,
+              perform: (action) async => actions.add(action),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 220));
+      expect(find.textContaining('store passphrase'), findsOneWidget);
+      expect(find.text('Unlock with biometrics'), findsNothing);
+      expect(find.text('Enable biometrics for this profile'), findsNothing);
+      await tester.tap(find.text('Forget biometric unlock'));
+      expect(actions, [BiometricAction.forget]);
+      await tester.pumpWidget(const SizedBox());
+      path.dispose();
+    },
+  );
+
   testWidgets('unavailable channel offers no biometric operations', (
     tester,
   ) async {

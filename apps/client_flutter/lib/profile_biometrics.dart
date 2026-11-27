@@ -74,30 +74,38 @@ class _ProfileBiometricActionsState extends State<ProfileBiometricActions> {
 
   @override
   Widget build(BuildContext context) {
-    if (status != 'enrolled' && status != 'available') {
+    final recovery = status == 'recovery';
+    if (!recovery && status != 'enrolled' && status != 'available') {
       return const SizedBox.shrink();
     }
     final enrolled = status == 'enrolled';
     return Column(
       children: [
-        OutlinedButton.icon(
-          onPressed: widget.disabled
-              ? null
-              : () => run(
-                  enrolled ? BiometricAction.unlock : BiometricAction.enable,
-                ),
-          icon: const Icon(Icons.fingerprint),
-          label: Text(
-            enrolled
-                ? (widget.russian
-                      ? 'Открыть с биометрией'
-                      : 'Unlock with biometrics')
-                : (widget.russian
-                      ? 'Включить биометрию для этого профиля'
-                      : 'Enable biometrics for this profile'),
+        if (recovery)
+          Text(
+            widget.russian
+                ? 'Биометрический вход недоступен. Откройте профиль паролем хранилища.'
+                : 'Biometric unlock is unavailable. Open your profile with its store passphrase.',
+          )
+        else
+          OutlinedButton.icon(
+            onPressed: widget.disabled
+                ? null
+                : () => run(
+                    enrolled ? BiometricAction.unlock : BiometricAction.enable,
+                  ),
+            icon: const Icon(Icons.fingerprint),
+            label: Text(
+              enrolled
+                  ? (widget.russian
+                        ? 'Открыть с биометрией'
+                        : 'Unlock with biometrics')
+                  : (widget.russian
+                        ? 'Включить биометрию для этого профиля'
+                        : 'Enable biometrics for this profile'),
+            ),
           ),
-        ),
-        if (enrolled)
+        if (enrolled || recovery)
           TextButton(
             onPressed: widget.disabled
                 ? null
