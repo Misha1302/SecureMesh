@@ -58,8 +58,7 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith((async () => {
     try {
-      const cache = await caches.open(cacheName);
-      const response = await cache.match(asset);
+      const response = await caches.match(asset, { cacheName });
       if (response) return response;
     } catch {
       // A disabled or evicted cache can still use the browser's network path.
