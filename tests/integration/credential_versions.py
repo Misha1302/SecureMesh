@@ -1,14 +1,16 @@
 """Exercise both password versions over the normal HTTPS API with real device proofs."""
 import json
 import subprocess
+import tempfile
 import urllib.parse
 import urllib.request
 import uuid
-
-import process_spike
+from pathlib import Path
 
 
 def verify(d, root, legacy):
+    import process_spike
+
     username = 'v2_' + uuid.uuid4().hex[:20]
     email = username + '@securemesh.test'
     name = 'Елена 👩‍🔬 李'
@@ -59,3 +61,17 @@ def verify(d, root, legacy):
     assert local('identity', cred).returncode != 0
     assert local('identity', master).returncode == 0
     return dict(username=username, password=master, credential=cred, session=session, device=device)
+
+
+def main():
+    import delivery as d
+    from private_blobs import database
+
+    with database() as db, tempfile.TemporaryDirectory(dir=d.ROOT / '.local') as work, d.Server(db):
+        root = Path(work)
+        verify(d, root, d.account(root))
+    print('PASS: v1 and v2 registration, signed login, version isolation and v2 local unlock.')
+
+
+if __name__ == '__main__':
+    main()

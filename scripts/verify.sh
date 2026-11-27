@@ -27,6 +27,8 @@ check crypto python3 tests/crypto/process_spike.py
 check device-roster python3 tests/crypto/device_roster.py
 check smoke python3 tests/integration/smoke.py
 check delivery .local/venv/bin/python tests/integration/delivery.py
+check credential-versions .local/venv/bin/python tests/integration/credential_versions.py
+check session-inactivity .local/venv/bin/python tests/integration/session_inactivity.py
 check epochs .local/venv/bin/python tests/integration/epochs.py
 check device-enrollment .local/venv/bin/python tests/integration/enrollment.py
 check linked-device .local/venv/bin/python tests/integration/linked_device.py
