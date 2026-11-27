@@ -12,8 +12,10 @@ import 'delivery_client.dart';
 import 'conversation_drafts.dart';
 import 'linux_notifications.dart';
 import 'message_markup.dart';
+import 'history_search.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
+import 'profile_biometrics.dart';
 import 'account_hub.dart';
 import 'display_name.dart';
 import 'device_tile.dart';
@@ -185,9 +187,15 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Future<void> unlock(BuildContext pageContext) async {
+  Future<void> unlock(
+    BuildContext pageContext, {
+    BiometricAction? biometric,
+  }) async {
     if (loading || store != null) return;
     NativeClient? opening;
+    final selectedPath = path.text.trim();
+    var secret = pass.text;
+    String? boundDevice;
     setState(() {
       loading = true;
       error = null;
@@ -195,14 +203,26 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     try {
       await closingStore;
       if (!mounted) return;
-      if (!File(path.text.trim()).existsSync()) {
+      if (!File(selectedPath).existsSync()) {
         throw StateError('PROFILE_FILE_MISSING');
       }
+      final args = {'path': selectedPath, 'russian': ru};
+      if (biometric == BiometricAction.forget) {
+        await profileBiometrics.invokeMethod<void>('forget', args);
+        return;
+      }
+      if (biometric == BiometricAction.unlock) {
+        final wrapped = await profileBiometrics.invokeMapMethod<String, String>(
+          'unlock',
+          args,
+        );
+        boundDevice = wrapped?['deviceId'];
+        secret = wrapped?['passphrase'] ?? '';
+        if (boundDevice == null || secret.isEmpty) throw CryptoFailure();
+      }
+      if (!mounted || selectedPath != path.text.trim()) return;
       await initializeNativeBridge();
-      opening = await NativeClient.open(
-        path: path.text.trim(),
-        passphrase: pass.text,
-      );
+      opening = await NativeClient.open(path: selectedPath, passphrase: secret);
       if (!mounted) {
         opening.dispose();
         opening = null;
@@ -212,8 +232,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         await opening.execute(request: jsonEncode({'op': 'onboarding_state'})),
       ) as Map;
       if (setup['stage'] == 'prepared' || setup['stage'] == 'authenticated') {
-        final originalPath = path.text.trim();
-        final secret = pass.text;
+        if (boundDevice != null) throw CryptoFailure();
+        final originalPath = selectedPath;
         opening.dispose();
         opening = null;
         pass.clear();
@@ -230,6 +250,28 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         await opening.execute(request: jsonEncode({'op': 'profile'})),
       ) as Map<String, dynamic>;
       if (!mounted) {
+        opening.dispose();
+        opening = null;
+        return;
+      }
+      if (boundDevice != null && saved['deviceId'] != boundDevice) {
+        throw CryptoFailure();
+      }
+      if (biometric == BiometricAction.enable) {
+        // The encrypted profile was successfully opened with the manually entered secret.
+        await profileBiometrics.invokeMethod<void>('enable', {
+          ...args,
+          'passphrase': secret,
+          'deviceId': saved['deviceId'] as String,
+        });
+      }
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      if (!mounted ||
+          selectedPath != path.text.trim() ||
+          (biometric != null &&
+              (lifecycle == AppLifecycleState.paused ||
+                  lifecycle == AppLifecycleState.hidden ||
+                  lifecycle == AppLifecycleState.detached))) {
         opening.dispose();
         opening = null;
         return;
@@ -296,10 +338,15 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       releaseLocalStore();
       store = null;
       profile = null;
-      error = tr(
-        'Не удалось открыть профиль. Проверьте путь и пароль.',
-        'Could not unlock this profile. Check the path and passphrase.',
-      );
+      error = biometric == null
+          ? tr(
+              'Не удалось открыть профиль. Проверьте путь и пароль.',
+              'Could not unlock this profile. Check the path and passphrase.',
+            )
+          : tr(
+              'Действие с биометрией не завершено. Введите пароль хранилища и нажмите «Открыть профиль».',
+              'Biometric action did not complete. Enter the store passphrase and choose Unlock profile.',
+            );
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -787,6 +834,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                                       crypto: crypto,
                                       api: (route, {data}) =>
                                           api(route, data: data),
+                                      channelApi: session!.request,
                                       saveProfile: persistProfile,
                                       openChat: (group, peer, name, key) async {
                                         final selected = {
@@ -927,6 +975,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 24),
               TextField(
+                enabled: !loading && !choosing,
                 controller: path,
                 decoration: InputDecoration(
                   labelText: tr('Файл профиля', 'Profile file'),
@@ -946,6 +995,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 16),
               TextField(
+                enabled: !loading && !choosing,
                 controller: pass,
                 obscureText: true,
                 enableSuggestions: false,
@@ -968,6 +1018,13 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                   ),
                 ),
               ),
+              if (Platform.isAndroid)
+                ProfileBiometricActions(
+                  path: path,
+                  disabled: loading || choosing,
+                  russian: ru,
+                  perform: (action) => unlock(context, biometric: action),
+                ),
               if (error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
@@ -1047,10 +1104,45 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                 )
               : tr('Приватный чат · OpenMLS', 'Private chat · OpenMLS'),
         ),
-        trailing: IconButton(
-          tooltip: tr('Проверить ключи', 'Verify keys'),
-          onPressed: () => verifyKeys(context),
-          icon: const Icon(Icons.key_outlined),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: tr('Поиск в переписке', 'Search conversation'),
+              icon: const Icon(Icons.search),
+              onPressed: () {
+                final group = profile!['group'] as String;
+                final view = chatView;
+                final peerName = profile!['peerName'] as String;
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => HistorySearch(
+                      tr: tr,
+                      peerName: peerName,
+                      search: (query) async {
+                        if (view != chatView || profile?['group'] != group) {
+                          throw CryptoFailure();
+                        }
+                        final result = await crypto('search_history', {
+                          'group': group,
+                          'query': query,
+                        });
+                        if (view != chatView || profile?['group'] != group) {
+                          throw CryptoFailure();
+                        }
+                        return result;
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+            IconButton(
+              tooltip: tr('Проверить ключи', 'Verify keys'),
+              onPressed: () => verifyKeys(context),
+              icon: const Icon(Icons.key_outlined),
+            ),
+          ],
         ),
       ),
       Padding(
@@ -1545,8 +1637,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       const SizedBox(height: 24),
       Text(
         tr(
-          'Локальная альфа без независимого аудита. Медиа, публичные каналы и звонки ещё не подключены.',
-          'Local alpha without an independent audit. Media, public channels and calls are not connected yet.',
+          'Локальная альфа без независимого аудита. Публичные каналы поддерживают текст. Медиа и звонки пока в разработке.',
+          'Local alpha without an independent audit. Public channels support text. Media and calls are in development.',
         ),
       ),
       const SizedBox(height: 24),

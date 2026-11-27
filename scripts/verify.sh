@@ -19,6 +19,7 @@ check crypto-build cargo build --locked --manifest-path src/crypto_core/Cargo.to
 check profile-schema cargo test --locked --manifest-path src/crypto_core/Cargo.toml --lib profile_schema
 check encrypted-drafts cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test conversation_drafts
 check encrypted-replies cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test message_replies
+check private-history-search cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test history_search
 check crypto python3 tests/crypto/process_spike.py
 check smoke python3 tests/integration/smoke.py
 check delivery .local/venv/bin/python tests/integration/delivery.py
@@ -27,6 +28,7 @@ check device-enrollment .local/venv/bin/python tests/integration/enrollment.py
 check enrollment-quota .local/venv/bin/python tests/integration/enrollment_quota.py
 check migrations .local/venv/bin/python tests/integration/migrations.py
 check mls-directory .local/venv/bin/python tests/integration/directory.py
+check public-channels .local/venv/bin/python tests/integration/public_channels.py
 check restore-v2 .local/venv/bin/python tests/integration/restore_v2.py
 check secrets python3 scripts/scan_secrets.py
 check pub-osv python3 tools/audit_pub_osv.py

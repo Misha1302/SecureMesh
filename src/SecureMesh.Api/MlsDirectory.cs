@@ -26,6 +26,11 @@ public static class MlsDirectory
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=ANY($1) ORDER BY id FOR UPDATE",new Guid[]{actor.UserId,recipient})) await cmd.ExecuteNonQueryAsync();
             await using(var old=Sql.Cmd(c,"SELECT 1 FROM chat_requests WHERE id=$1 AND sender_device=$2 AND recipient_user=$3",input.Id,actor.DeviceId,recipient))
                 if(await old.ExecuteScalarAsync() is not null) return Results.Ok(new{id=input.Id});
+            await using(var pair=Sql.Cmd(c,"""
+                SELECT count(*) FROM chat_requests q JOIN devices d ON d.id=q.sender_device
+                WHERE d.user_id=$1 AND q.recipient_user=$2 AND q.created_at>now()-interval '1 day'
+                """,actor.UserId,recipient))
+                if((long)(await pair.ExecuteScalarAsync())!>=5) throw new ApiError(429,"CONTACT_REQUEST_LIMIT");
             await using(var count=Sql.Cmd(c,"SELECT count(*) FROM chat_requests WHERE (sender_device=$1 OR recipient_user=$2) AND expires_at>now()",actor.DeviceId,recipient))
                 if((long)(await count.ExecuteScalarAsync())!>=100) throw new ApiError(429,"CHAT_REQUEST_LIMIT");
             await using(var cmd=Sql.Cmd(c,"INSERT INTO chat_requests(id,sender_device,recipient_user) VALUES($1,$2,$3)",input.Id,actor.DeviceId,recipient))
@@ -45,6 +50,19 @@ public static class MlsDirectory
             await using var r=await cmd.ExecuteReaderAsync();var rows=new List<object>();
             while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),username=r.GetString(1),senderDevice=r.GetGuid(2),senderKey=Convert.ToBase64String((byte[])r[3]),recipientDevice=r.IsDBNull(4)?(Guid?)null:r.GetGuid(4),recipientKey=r.IsDBNull(5)?null:Convert.ToBase64String((byte[])r[5]),accepted=!r.IsDBNull(4),outgoing=r.GetBoolean(6)});
             return Results.Ok(rows);
+        });
+        app.MapPost("/v1/chat-requests/{id:guid}/dismiss",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
+        {
+            var actor=await Sql.Authenticate(ctx,db);
+            await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
+            // Retain the request ID for retry deduplication. An accepted request may
+            // already have an MLS lease, so its identity binding must stay intact.
+            await using var cmd=Sql.Cmd(c,"""
+                UPDATE chat_requests SET expires_at=LEAST(expires_at,now())
+                WHERE id=$1 AND (recipient_user=$2 OR sender_device=$3) AND recipient_device IS NULL
+                """,id,actor.UserId,actor.DeviceId);
+            if(await cmd.ExecuteNonQueryAsync(ctx.RequestAborted)!=1) throw new ApiError(404,"PENDING_REQUEST_NOT_FOUND");
+            return Results.NoContent();
         });
         app.MapPost("/v1/chat-requests/{id:guid}/accept",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
         {

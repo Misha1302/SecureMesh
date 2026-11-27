@@ -24,8 +24,8 @@ def main():
             assert d.request('/v1/users/me',token=pending['accessToken'])['trustState']=='DEVICE_PENDING_TRUST'
             d.request('/v1/devices',token=pending['accessToken'],expected=403)
             result=command('psql','-U','securemesh','-d',database,'-Atc','SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId"')
-            assert result.strip().splitlines()==['202611180001_Foundation','202611180002_DeviceChallenges','202611180003_DeviceTrust','202611180004_MlsDirectory','202611180005_EnrollmentActivation','202611190006_EnrollmentIssuanceQuota','202611270007_DisplayName','202611270008_ProfilePhotos']
-            print('PASS: fresh owned PostgreSQL database; all eight EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused.')
+            assert result.strip().splitlines()==['202611180001_Foundation','202611180002_DeviceChallenges','202611180003_DeviceTrust','202611180004_MlsDirectory','202611180005_EnrollmentActivation','202611190006_EnrollmentIssuanceQuota','202611270007_DisplayName','202611270008_ProfilePhotos','202611270009_PublicChannels']
+            print('PASS: fresh owned PostgreSQL database; all nine EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused.')
     finally:
         command('dropdb','-U','securemesh',database)
 

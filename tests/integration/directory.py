@@ -11,6 +11,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 import delivery as d
+import contact_requests
 import display_names
 import profile_photos
 
@@ -55,12 +56,14 @@ def main():
         assert d.request('/v1/crypto/keypackages',dict(payload=kp),token=bt)['reference']==published['reference']
         pending=d.Device(root);ps=d.login(a['username'],a['password'],pending)
         d.request('/v1/crypto/keypackages',dict(payload=pending.call('keypackage')['keypackage']),token=ps['accessToken'],expected=403)
+        contact_requests.verify(d.request,at,bt,ot,b['username'])
         invitation=str(uuid.uuid4())
         d.request('/v1/chat-requests',dict(id=invitation,username=b['username']),token=at,expected=201)
         d.request(f'/v1/chat-requests/{invitation}',token=ot,expected=404)
         d.request(f'/v1/chat-requests/{invitation}/accept',{},token=ot,expected=404)
         d.request('/v1/crypto/keypackages/lease',dict(invitationId=invitation,requestId=str(uuid.uuid4())),token=at,expected=403)
         d.request(f'/v1/chat-requests/{invitation}/accept',{},token=bt,expected=204)
+        d.request(f'/v1/chat-requests/{invitation}/dismiss',{},token=at,expected=404)
         assert any(q['id']==invitation for q in d.request('/v1/chat-requests',token=bt))
         def lease(_):
             lid=str(uuid.uuid4());request=urllib.request.Request(d.BASE+'/v1/crypto/keypackages/lease',data=json.dumps(dict(invitationId=invitation,requestId=lid)).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+at})

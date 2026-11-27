@@ -7,6 +7,8 @@ on:
       - 'src/crypto_core/**'
       - 'scripts/build-android-release.sh'
       - '.github/workflows/android-candidate.yml'
+      - '.github/gradle/central-mirror.init.gradle'
+      - 'tests/android/**'
 
 permissions:
   contents: read
@@ -32,6 +34,8 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
       - run: cargo install cargo-ndk --locked --version 4.1.2
+      - name: Use the Google Cloud Maven Central mirror on the CI runner
+        run: install -Dm644 .github/gradle/central-mirror.init.gradle ~/.gradle/init.d/central-mirror.gradle
       - name: Build APK using an ephemeral test certificate
         shell: bash
         run: |
@@ -49,6 +53,7 @@ jobs:
             -storepass:env SECUREMESH_STORE_PASSWORD -alias "$SECUREMESH_KEY_ALIAS" | sha256sum | cut -d' ' -f1)
           export SECUREMESH_SIGNER_SHA256
           scripts/build-android-release.sh
+          (cd apps/client_flutter/android && ./gradlew :app:assembleReleaseAndroidTest)
       - name: Allow emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -66,6 +71,9 @@ jobs:
             grep -q 'Status: ok' "$RUNNER_TEMP/activity.txt"
             sleep 3
             adb shell pidof com.example.securemesh_client
+            adb install -t apps/client_flutter/build/app/outputs/apk/androidTest/release/app-release-androidTest.apk
+            adb shell am instrument -w com.example.securemesh_client.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/biometric-instrumentation.txt"
+            grep -Fq 'OK (1 test)' "$RUNNER_TEMP/biometric-instrumentation.txt"
       - name: Retain emulator-tested APK for laboratory use
         uses: actions/upload-artifact@v4
         with:

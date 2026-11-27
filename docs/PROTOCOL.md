@@ -48,3 +48,19 @@ send a copy of the quoted message or fetch it from the relay for preview.
 A trusted device can use `GET /v1/users/me/photo` and `PUT /v1/users/me/photo`. The JSON field `pixels` is either null (no photo, or remove on update) or base64 of exactly 6,912 bytes of 48 × 48 RGB pixels, top row first. The client previews the center crop and sends it only after the user chooses Save. The server stores one current thumbnail per account. These profile pixels are visible to the server and are separate from encrypted message content.
 
 The update returns a nullable UUID `photoVersion`. Existing two-party conversation listings expose `peerPhotoVersion`; an unchanged thumbnail retains its version on retry. The client fetches the pixels using `GET /v1/conversations/{group}/photo/{version}` after a version is first seen. This request checks the same device membership and Welcome visibility as the listing. Unrelated conversations and retired versions return 404. Identical pixel data on different accounts has independent version identifiers. An old client can ignore the optional field. Removing a photo prevents future downloads but cannot erase copies a peer already obtained. Usernames, identity keys, trust decisions, and message formats are independent of photos.
+
+### Public text channels
+
+Verified, trusted devices can browse the catalog. Public channel content is readable by the hosting server. Public channel storage, membership, routes, post identifiers and UI are separate from private MLS conversations. The member list and owner account UUID are not included in the catalog. Any eligible account can subscribe and read. Publishing and deleting require the owner account.
+
+| Route | Contract |
+|---|---|
+| GET /v1/public-channels | Search by ASCII handle prefix `q`. Set `mine=true` for owned/subscribed channels. Pass the response's optional `next` slug as `after` for the following 25-item page. |
+| POST /v1/public-channels | Send a client-generated UUID `id`, lowercase `slug` (3–32 ASCII letters, digits or underscores) and `title` (1–80 Unicode scalars). An identical retry returns the existing ID. |
+| PUT or DELETE /v1/public-channels/{id}/subscription | Subscribe or unsubscribe the authenticated account. Ownership already grants read access. |
+| POST /v1/public-channels/{id}/posts | Owner sends `requestId` (client UUID) and `body` (1–2,048 Unicode scalars). Reusing an ID with different text returns 409. |
+| GET /v1/public-channels/{id}/posts | Owner or subscriber reads up to eight newest posts. Pass the optional `next` sequence as `before` for strictly older posts. |
+| DELETE /v1/public-channels/{id}/posts/{seq} | Owner clears post content. The request identifier remains reserved for at least 24 hours to handle late retries. |
+| DELETE /v1/public-channels/{id} | Owner deletes the channel, posts and subscriptions. Its creator's request ID remains reserved for at least 24 hours. |
+
+Each account can own eight channels and subscribe to 128 others. Each channel holds up to 2,000 visible posts. The API accepts up to ten new channels, 120 new publications and 180 new subscriptions per account per hour. The PostgreSQL transaction combines state changes and quota accounting. Deletions prevent future retrieval from the service. Recipients may retain earlier copies. Public text channels currently lack media, additional administrators, moderation reports, push delivery and external share links.

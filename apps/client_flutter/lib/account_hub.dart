@@ -1,5 +1,6 @@
 import 'display_name.dart';
 import 'profile_photo.dart';
+import 'public_channels.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -23,9 +24,11 @@ class AccountHub extends StatefulWidget {
     required this.api,
     required this.saveProfile,
     required this.openChat,
+    this.channelApi,
     this.russian = true,
   });
   final Map<String, dynamic> profile;
+  final DisplayNameApi? channelApi;
   final LocalCrypto crypto;
   final HttpsRequest api;
   final Future<void> Function(Map<String, dynamic>) saveProfile;
@@ -45,6 +48,7 @@ class _AccountHubState extends State<AccountHub> {
   String? get error => actionError ?? refreshError;
   String chatQuery = '';
   bool archiveOpen = false;
+  bool channelsOpen = false;
   Set<String> ids(String field) =>
       (account[field] as List? ?? const []).whereType<String>().toSet();
 
@@ -176,6 +180,11 @@ class _AccountHubState extends State<AccountHub> {
                   'Получатель ещё не опубликовал ключевой пакет. Повторите чуть позже.',
                   'Your contact has not published a fresh key package. Retry shortly.',
                 )
+              : failure is ApiFailure && failure.code == 'CONTACT_REQUEST_LIMIT'
+              ? tr(
+                  'Достигнут суточный лимит запросов этому пользователю.',
+                  'Daily request limit for this contact reached.',
+                )
               : tr(
                   'Действие не завершено. Проверьте сеть и ключи, затем повторите.',
                   'The action did not complete. Check the connection and device keys, then retry.',
@@ -301,6 +310,7 @@ class _AccountHubState extends State<AccountHub> {
       'outgoingRequest': {'username': name, 'id': id},
     });
     await widget.api('/v1/chat-requests', data: {'id': id, 'username': name});
+    await save({...account}..remove('outgoingRequest'));
     username.clear();
   }
 
@@ -506,7 +516,16 @@ class _AccountHubState extends State<AccountHub> {
   }
 
   @override
-  Widget build(BuildContext context) => ListView(
+  Widget build(BuildContext context) =>
+      channelsOpen && trusted && widget.channelApi != null
+      ? PublicChannels(
+          api: widget.channelApi!,
+          russian: widget.russian,
+          close: () => setState(() => channelsOpen = false),
+        )
+      : _hub(context);
+
+  Widget _hub(BuildContext context) => ListView(
     padding: const EdgeInsets.all(24),
     children: [
       Text(
@@ -595,6 +614,13 @@ class _AccountHubState extends State<AccountHub> {
             ),
         ],
       ] else ...[
+        if (widget.channelApi != null)
+          ListTile(
+            leading: const Icon(Icons.campaign_outlined),
+            title: Text(tr('Публичные каналы', 'Public channels')),
+            onTap: () => setState(() => channelsOpen = true),
+          ),
+
         Text(
           tr('Чаты', 'Chats'),
           style: Theme.of(context).textTheme.titleLarge,
@@ -722,8 +748,8 @@ class _AccountHubState extends State<AccountHub> {
                         : tr('Ожидаем согласия', 'Waiting for acceptance'))
                   : tr('Входящий запрос', 'Incoming request'),
             ),
-            trailing: r['outgoing'] == true
-                ? (r['accepted'] == true
+            trailing: r['accepted'] == true
+                ? (r['outgoing'] == true
                       ? TextButton(
                           onPressed: blocked
                               ? null
@@ -731,13 +757,32 @@ class _AccountHubState extends State<AccountHub> {
                           child: Text(tr('Создать чат', 'Create chat')),
                         )
                       : null)
-                : r['accepted'] == true
-                ? null
-                : TextButton(
-                    onPressed: blocked
-                        ? null
-                        : () => action(() => accept(r as Map)),
-                    child: Text(tr('Принять', 'Accept')),
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (r['outgoing'] != true)
+                        IconButton(
+                          tooltip: tr('Принять', 'Accept'),
+                          icon: const Icon(Icons.check),
+                          onPressed: blocked
+                              ? null
+                              : () => action(() => accept(r as Map)),
+                        ),
+                      IconButton(
+                        tooltip: r['outgoing'] == true
+                            ? tr('Отменить запрос', 'Cancel request')
+                            : tr('Отклонить запрос', 'Decline request'),
+                        icon: const Icon(Icons.close),
+                        onPressed: blocked
+                            ? null
+                            : () => action(() async {
+                                await widget.api(
+                                  '/v1/chat-requests/${r['id']}/dismiss',
+                                  data: {},
+                                );
+                              }),
+                      ),
+                    ],
                   ),
           ),
         for (final w in welcomes)

@@ -34,7 +34,7 @@ V3-32,FULL,P0,Real account create then delete: sessions private access and data 
 V3-33,CORE,P0,Property fuzz and contract test across Dart Rust .NET protobuf SQLCipher,Build and full stack,NOT_RUN,,,,,
 V3-34,FULL,P0,Real E2E all mandatory user journeys J-01..J-19 executed with production paths,Android iOS Linux Windows,NOT_RUN,,,,,
 V3-35,FULL,P0,Text ACK MLS control priority vs competing private media on 2G,Native transport and media,NOT_RUN,,,,,
-V3-36,CORE,P0,RustSec zero release-blocking advisories and platform package SBOM scans,Rust .NET Dart Android iOS,FAIL,reports/evidence/modernization-rustsec.json,,RustSec database c9f6c91,1,Four RustSec findings persist after the URL crate update.
+V3-36,CORE,P0,RustSec zero release-blocking advisories and platform package SBOM scans,Rust .NET Dart Android iOS,PARTIAL,reports/evidence/rustsec-remediation.json,,RustSec database c9f6c91,0,Historical 4 findings resolved in reports/evidence/rustsec-remediation.json; multi-platform package verification pending.
 V3-37,PRODUCTION,P0,Independent cryptographic mobile and infrastructure audits owner approval,External audit,BLOCKED,,,,,Independent audit missing.
 V3-38,CONDITIONAL,P2,If web enabled private chat has distinct audit; otherwise private web disabled,Web browser,PASS,reports/evidence/modernization-flutter-tests.txt,a45e2ad,"Linux, Flutter 3.50.0",0,Native-only private surface; compact browser explicitly gates private chat.
 V3-39,FULL,P0,Isolated PostgreSQL object encrypted backup restore and rollback tests,Backend and clients,NOT_RUN,,,,,Partial evidence in docs/SECUREMESH_MODERNIZATION_STATUS.md; full scenario pending.

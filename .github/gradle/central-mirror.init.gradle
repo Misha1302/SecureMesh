@@ -1,0 +1,26 @@
+// The public CI runners can share Maven Central rate limits. This includes the
+// separate Gradle build distributed inside the pinned Flutter SDK.
+def centralMirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+
+gradle.beforeSettings { settings ->
+    // Preserve Google and the plugin portal for modules that only exist there.
+    settings.pluginManagement.repositories {
+        google()
+        maven { url = centralMirror }
+        gradlePluginPortal()
+    }
+    settings.dependencyResolutionManagement.repositories {
+        google()
+        maven { url = centralMirror }
+    }
+}
+
+gradle.beforeProject { project ->
+    // Replace individual Central declarations without adding project-level
+    // repositories to builds using FAIL_ON_PROJECT_REPOS.
+    project.repositories.withType(MavenArtifactRepository).configureEach { repo ->
+        if (repo.url?.host in ['repo.maven.apache.org', 'repo1.maven.org']) {
+            repo.setUrl(centralMirror)
+        }
+    }
+}

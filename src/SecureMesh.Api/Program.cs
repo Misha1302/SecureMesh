@@ -45,6 +45,7 @@ app.Use(async(ctx,next)=>
 app.UseRateLimiter();
 app.MapIdentity();
 app.MapProfilePhotos();
+app.MapPublicChannels();
 app.MapDeviceTrust();
 app.MapMlsDirectory();
 Delivery.MapDelivery(app);

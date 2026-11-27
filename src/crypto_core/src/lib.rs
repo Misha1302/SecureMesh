@@ -3,6 +3,7 @@ mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be
 pub mod api;
 mod directory;
 mod enrollment;
+mod history_search;
 mod onboarding;
 
 mod profile_schema {
@@ -430,10 +431,14 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
         }
         "draft_get" => {
             let group = s(req, "group")?;
-            let draft = db.query_row(
-                "SELECT body,reply_ref FROM conversation_drafts WHERE group_id=?", [group],
-                |r| Ok((r.get::<_,String>(0)?, r.get::<_,Option<String>>(1)?)),
-            ).optional()?.unwrap_or_default();
+            let draft = db
+                .query_row(
+                    "SELECT body,reply_ref FROM conversation_drafts WHERE group_id=?",
+                    [group],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+                )
+                .optional()?
+                .unwrap_or_default();
             let mut result = json!({"text":draft.0});
             if let Some(reply) = draft.1 {
                 result["replyTo"] = serde_json::from_str(&reply)?;
@@ -682,6 +687,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             )?;
             Ok(json!({"saved":true}))
         }
+        "search_history" => history_search::search(db, s(req, "group")?, s(req, "query")?),
         "timeline" => {
             let gid = s(req, "group")?;
             let peer_seq = db
@@ -769,6 +775,11 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS peer_receipts(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS conversation_drafts(group_id TEXT PRIMARY KEY,body TEXT NOT NULL);")?;
+    // Each lookup walks the selected conversation in reverse insertion order.
+    db.execute_batch(
+        "CREATE INDEX IF NOT EXISTS authored_search_group ON authored(group_id);
+                      CREATE INDEX IF NOT EXISTS incoming_search_group ON incoming(group_id);",
+    )?;
     let migration = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let has_reply: bool = migration.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_drafts') WHERE name='reply_ref')",
@@ -782,7 +793,11 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
 }
 
 pub(crate) fn transact(db: &Connection, req: &Value) -> Result<String> {
-    db.execute_batch("BEGIN IMMEDIATE")?;
+    if req["op"].as_str() == Some("search_history") {
+        db.execute_batch("BEGIN DEFERRED")?;
+    } else {
+        db.execute_batch("BEGIN IMMEDIATE")?;
+    }
     let p = Provider {
         crypto: RustCrypto::default(),
         storage: SqliteStorageProvider::new(db),
