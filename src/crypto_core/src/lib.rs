@@ -80,9 +80,11 @@ fn load_group(p: &Provider, id: &str) -> Result<MlsGroup> {
 }
 fn pinned_key(db: &Connection, identity: &str) -> Result<Option<Vec<u8>>> {
     Ok(db
-        .query_row("SELECT public_key FROM pins WHERE identity=?", [identity], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT public_key FROM pins WHERE identity=?",
+            [identity],
+            |r| r.get(0),
+        )
         .optional()?)
 }
 
