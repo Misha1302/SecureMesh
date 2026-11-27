@@ -1,0 +1,53 @@
+UTC: 2026-11-19T08:28:09.169744+00:00
+Command: ['make', '-j1', 'gui-pending-smoke', 'gui-onboarding-recovery']
+.local/venv/bin/python tests/gui/native_v2.py --script tests/gui/v2_pending_scenario.json
+Owned native GUI ready.
+Existing verified account has its own trusted device; GUI will enroll an independent candidate.
+{"completed": ["prepare_pending"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["key", "fill"]}
+{"completed": ["key", "fill"]}
+PASS: real GUI password login creates independent PENDING_TRUST device; server denies private conversations.
+{"completed": ["click", "wait", "verify_pending", "capture"]}
+PASS: GUI created a real signed pending enrollment request; no approval or history access implied.
+{"completed": ["click", "wait", "verify_enrollment_request", "capture"]}
+{"completed": ["resize", "wait", "capture"]}
+.local/venv/bin/python tests/gui/onboarding_resume.py --script tests/gui/v2_resume_scenario.json
+Resume GUI ready.
+{"completed": ["resize", "click", "wait", "capture"]}
+Prepared real accepted login in encrypted journal: prepared
+Owned GUI restarted with no profile environment pointer.
+{"completed": ["prepare_draft", "restart_gui", "click", "wait", "capture"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+{"completed": ["click", "key", "fill"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+{"completed": ["click", "fill"]}
+PASS: actual native GUI completed the same device/profile; pending access stayed gated; no credential/token logs.
+{"completed": ["click", "wait", "verify_resume", "capture"]}
+Prepared real accepted login in encrypted journal: authenticated
+Owned GUI restarted with no profile environment pointer.
+{"completed": ["prepare_draft", "restart_gui", "click", "wait"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+PASS: actual native GUI completed the same device/profile; pending access stayed gated; no credential/token logs.
+{"completed": ["click", "wait", "verify_resume", "capture"]}
+Prepared real accepted login in encrypted journal: expired
+Owned GUI restarted with no profile environment pointer.
+{"completed": ["prepare_draft", "restart_gui", "click", "wait"]}
+{"completed": ["click", "wait"]}
+{"completed": ["click", "fill"]}
+{"completed": ["click", "wait", "verify_journal"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+{"completed": ["click", "fill"]}
+{"completed": ["resize", "wait", "capture"]}
+{"completed": ["click", "wait", "verify_journal", "capture"]}
+{"completed": ["resize", "click", "wait"]}
+PASS: actual native GUI completed the same device/profile; pending access stayed gated; no credential/token logs.
+{"completed": ["click", "wait", "verify_resume", "capture"]}
+
+Exit code: 0

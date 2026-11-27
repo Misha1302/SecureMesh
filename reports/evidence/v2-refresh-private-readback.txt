@@ -1,0 +1,5 @@
+UTC: 2026-11-19T08:27:35.729382+00:00
+Command: ['timeout', '30s', 'env', 'GODEBUG=http2client=0,netdns=cgo', 'gh', 'repo', 'view', 'Misha1302/SecureMesh', '--json', 'nameWithOwner,visibility,defaultBranchRef']
+{"defaultBranchRef":{"name":"main"},"nameWithOwner":"Misha1302/SecureMesh","visibility":"PRIVATE"}
+
+Exit code: 0

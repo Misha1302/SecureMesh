@@ -1,0 +1,6 @@
+UTC: 2026-11-19T08:27:57.512698+00:00
+Command: ['.local/venv/bin/python', '-']
+PASS: actual make demo process validates real KeyPackage, routes signed Welcome, commits encrypted message and original recipient decrypts via TLS/PG; no test Server cwd assumption.
+Owned make-demo fixture stopped; volumes retained.
+
+Exit code: 0

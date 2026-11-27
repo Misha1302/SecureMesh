@@ -1,0 +1,9 @@
+UTC: 2026-11-19T07:48:47.077888+00:00
+Command: ['env', 'FLUTTER_SUPPRESS_ANALYTICS=true', 'PUB_CACHE=/home/micodiy/SecureMesh/.local/pub-cache', '.local/flutter/bin/flutter', 'analyze', '--no-pub', 'apps/client_flutter']
+Analyzing client_flutter...                                     
+
+   info • Statements in an if should be enclosed in a block. Try wrapping the statement in a block • apps/client_flutter/tool/session_recovery.dart:47:7 • curly_braces_in_flow_control_structures
+
+1 issue found. (ran in 6.3s)
+
+Exit code: 1
