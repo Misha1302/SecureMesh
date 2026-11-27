@@ -90,4 +90,5 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn(buildR
 dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("com.google.errorprone:error_prone_annotations:2.36.0")
 }
