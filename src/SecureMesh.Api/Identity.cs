@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text;
@@ -24,7 +25,7 @@ public static class Identity
             var secret = Passwords.Input(version, input.Password, input.Credential) ?? throw new ApiError(400, "INVALID_REGISTRATION");
             var display = version == 2 ? DisplayNames.Normalize(input.DisplayName) : "";
             var username = input.Username.ToLowerInvariant();
-            if (!Regex.IsMatch(username, "^[a-z0-9_]{3,32}$") || input.Email.Length > 254 || secret.Length < 12 || (version == 2 && display.Length == 0) || !MailAddress.TryCreate(input.Email, out var mail) || mail.Address != input.Email)
+            if (!Regex.IsMatch(username, "^[a-z0-9_]{3,32}$") || input.Email.Length > 254 || (version == 1 && new StringInfo(secret).LengthInTextElements < 16) || (version == 2 && display.Length == 0) || !MailAddress.TryCreate(input.Email, out var mail) || mail.Address != input.Email)
                 throw new ApiError(400, "INVALID_REGISTRATION");
             var phc = Passwords.Marker(version) + await Passwords.Hash(secret);
             var token = Sql.Token(); var user = Guid.NewGuid();
