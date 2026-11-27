@@ -54,9 +54,11 @@ class _AccountHubState extends State<AccountHub> {
   List<dynamic> visibleChats() {
     final pinned = ids('pinnedChats');
     final archived = ids('archivedChats');
-    final matches = chats.where((chat) =>
-        archived.contains(chat['id']) == archiveOpen &&
-        (chat['peerName'] as String).toLowerCase().contains(chatQuery));
+    final matches = chats.where(
+      (chat) =>
+          archived.contains(chat['id']) == archiveOpen &&
+          (chat['peerName'] as String).toLowerCase().contains(chatQuery),
+    );
     return [
       ...matches.where((c) => pinned.contains(c['id'])),
       ...matches.where((c) => !pinned.contains(c['id'])),
@@ -524,10 +526,14 @@ class _AccountHubState extends State<AccountHub> {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              icon: Icon(archiveOpen ? Icons.arrow_back : Icons.archive_outlined),
-              label: Text(archiveOpen
-                  ? tr('Все чаты', 'All chats')
-                  : tr('Архив', 'Archive')),
+              icon: Icon(
+                archiveOpen ? Icons.arrow_back : Icons.archive_outlined,
+              ),
+              label: Text(
+                archiveOpen
+                    ? tr('Все чаты', 'All chats')
+                    : tr('Архив', 'Archive'),
+              ),
               onPressed: () => setState(() => archiveOpen = !archiveOpen),
             ),
           ),
@@ -538,20 +544,34 @@ class _AccountHubState extends State<AccountHub> {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: CircleAvatar(
-              child: Text((c['peerName'] as String).isEmpty
-                  ? '?'
-                  : (c['peerName'] as String).characters.first.toUpperCase()),
+              child: Text(
+                (c['peerName'] as String).isEmpty
+                    ? '?'
+                    : (c['peerName'] as String).characters.first.toUpperCase(),
+              ),
             ),
             trailing: PopupMenuButton<String>(
               enabled: !blocked,
               tooltip: tr('Действия с чатом', 'Chat actions'),
-              onSelected: (field) => action(() => toggleChat(field, c['id'] as String)),
+              onSelected: (field) =>
+                  action(() => toggleChat(field, c['id'] as String)),
               itemBuilder: (_) => [
-                PopupMenuItem(value: 'pinnedChats', child: Text(
-                  ids('pinnedChats').contains(c['id'])
-                    ? tr('Открепить', 'Unpin') : tr('Закрепить', 'Pin'))),
-                PopupMenuItem(value: 'archivedChats', child: Text(
-                  archiveOpen ? tr('Из архива', 'Unarchive') : tr('В архив', 'Archive chat'))),
+                PopupMenuItem(
+                  value: 'pinnedChats',
+                  child: Text(
+                    ids('pinnedChats').contains(c['id'])
+                        ? tr('Открепить', 'Unpin')
+                        : tr('Закрепить', 'Pin'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'archivedChats',
+                  child: Text(
+                    archiveOpen
+                        ? tr('Из архива', 'Unarchive')
+                        : tr('В архив', 'Archive chat'),
+                  ),
+                ),
               ],
             ),
             title: Text(c['peerName'] as String),
