@@ -11,6 +11,23 @@ import 'voice_wave.dart';
 
 typedef VoiceLabel = String Function(String, String);
 
+/// Kept only while the owning profile is unlocked.
+class VoicePlaybackPositions {
+  final _positions = <(String, String), Duration>{};
+
+  Duration read(String conversation, String attachment) =>
+      _positions[(conversation, attachment)] ?? Duration.zero;
+
+  void save(String conversation, String attachment, Duration position) {
+    final key = (conversation, attachment);
+    if (position == Duration.zero) {
+      _positions.remove(key);
+    } else {
+      _positions[key] = position;
+    }
+  }
+}
+
 // The Linux and Darwin audioplayers byte source writes an unmanaged cached
 // copy. Use a private scratch directory with explicit teardown on those hosts.
 Future<Directory>? _scratch;
@@ -36,9 +53,19 @@ Future<Directory> _voiceScratch() async {
 }
 
 class VoicePlayer extends StatefulWidget {
-  const VoicePlayer(this.bytes, this.tr, {super.key});
+  const VoicePlayer(
+    this.bytes,
+    this.tr, {
+    super.key,
+    this.resumeAt = Duration.zero,
+    this.onPosition,
+    this.makePlayer = AudioPlayer.new,
+  });
   final Uint8List bytes;
   final VoiceLabel tr;
+  final Duration resumeAt;
+  final ValueChanged<Duration>? onPosition;
+  final AudioPlayer Function() makePlayer;
   @override
   State<VoicePlayer> createState() => _VoicePlayerState();
 }
@@ -49,8 +76,8 @@ class _VoicePlayerState extends State<VoicePlayer> {
   late final List<double> peaks;
   double rate = 1;
   bool rateUnavailable = false;
-  Duration position = Duration.zero;
-  bool playing = false, busy = false, failed = false;
+  late Duration position;
+  bool playing = false, busy = false, failed = false, scrubbing = false;
   final subscriptions = <StreamSubscription<dynamic>>[];
   Directory? scratch;
   RandomAccessFile? lease;
@@ -61,15 +88,26 @@ class _VoicePlayerState extends State<VoicePlayer> {
     super.initState();
     duration = voiceDuration(widget.bytes);
     peaks = voicePeaks(widget.bytes);
+    position = clamp(widget.resumeAt);
+  }
+
+  Duration clamp(Duration value) =>
+      value.isNegative ? Duration.zero : (value > duration ? duration : value);
+
+  void rememberPosition(Duration value) {
+    position = clamp(value);
+    widget.onPosition?.call(position);
   }
 
   Future<void> prepare() async {
     if (player != null) return;
-    final current = AudioPlayer();
+    final current = widget.makePlayer();
     player = current;
     subscriptions.add(
       current.onPositionChanged.listen((d) {
-        if (mounted) setState(() => position = d);
+        if (mounted && playing && !busy && !scrubbing) {
+          setState(() => rememberPosition(d));
+        }
       }),
     );
     subscriptions.add(
@@ -77,7 +115,7 @@ class _VoicePlayerState extends State<VoicePlayer> {
         if (mounted) {
           setState(() {
             playing = state == PlayerState.playing;
-            if (state == PlayerState.completed) position = Duration.zero;
+            if (state == PlayerState.completed) rememberPosition(Duration.zero);
           });
         }
       }),
@@ -96,6 +134,8 @@ class _VoicePlayerState extends State<VoicePlayer> {
     } else {
       await current.setSourceBytes(widget.bytes, mimeType: 'audio/wav');
     }
+    final resumeAt = clamp(widget.resumeAt);
+    if (mounted && resumeAt != Duration.zero) await current.seek(resumeAt);
   }
 
   Future<void> run(Future<void> Function(AudioPlayer) op) async {
@@ -180,8 +220,15 @@ class _VoicePlayerState extends State<VoicePlayer> {
                     : (v) => setState(
                         () => position = Duration(milliseconds: v.round()),
                       ),
-                onChangeEnd: (v) =>
-                    run((p) => p.seek(Duration(milliseconds: v.round()))),
+                onChangeStart: (_) => scrubbing = true,
+                onChangeEnd: (v) {
+                  scrubbing = false;
+                  final target = Duration(milliseconds: v.round());
+                  run((p) async {
+                    await p.seek(target);
+                    if (mounted) setState(() => rememberPosition(target));
+                  });
+                },
               ),
             ),
             Text(

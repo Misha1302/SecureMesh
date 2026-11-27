@@ -132,6 +132,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   final composer = TextEditingController();
   ConversationDrafts? drafts;
   PrivateAttachments? attachments;
+  VoicePlaybackPositions? voicePlaybackPositions;
   ({String id, Uint8List bytes})? inlineMedia;
   int mediaView = 0;
   void closeInlineMedia() {
@@ -272,6 +273,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     directCall = null;
     attachments?.dispose();
     attachments = null;
+    voicePlaybackPositions = null;
     final current = store;
     final pending = drafts?.close();
     drafts = null;
@@ -454,6 +456,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       profile = saved;
       final unlocked = opening;
       store = unlocked;
+      voicePlaybackPositions = VoicePlaybackPositions();
       opening = null;
       drafts = ConversationDrafts(
         composer,
@@ -1889,6 +1892,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     final name = attachmentName(meta['name'] as String);
     final current = attachments;
     final enabled = current != null && !current.busy;
+    final voicePositions = voicePlaybackPositions;
+    final group = profile?['group'] as String?;
+    final voiceBlob = meta['blobId'] as String?;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1993,7 +1999,18 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         if (inlineMedia case (id: final playing, bytes: final bytes)
             when playing == id)
           if (meta['media'] == 'voice')
-            VoicePlayer(bytes, tr, key: ValueKey(id))
+            VoicePlayer(
+              bytes,
+              tr,
+              key: ValueKey((group, voiceBlob)),
+              resumeAt: group == null || voiceBlob == null
+                  ? Duration.zero
+                  : voicePositions?.read(group, voiceBlob) ?? Duration.zero,
+              onPosition: group == null || voiceBlob == null
+                  ? null
+                  : (position) =>
+                        voicePositions?.save(group, voiceBlob, position),
+            )
           else if (supportsVideoMessages && meta['media'] == 'video')
             VideoMessageDialog(
               key: ValueKey(id),

@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:record/record.dart';
@@ -40,7 +43,98 @@ class Mic extends Fake implements AudioRecorder {
   }
 }
 
+class _Player extends Fake implements AudioPlayer {
+  final positions = StreamController<Duration>.broadcast();
+  final states = StreamController<PlayerState>.broadcast();
+  final calls = <Object>[];
+
+  @override
+  Stream<Duration> get onPositionChanged => positions.stream;
+  @override
+  Stream<PlayerState> get onPlayerStateChanged => states.stream;
+  @override
+  Future<void> setReleaseMode(ReleaseMode mode) async {}
+  @override
+  Future<void> setSourceDeviceFile(String path, {String? mimeType}) async {}
+  @override
+  Future<void> setSourceBytes(Uint8List bytes, {String? mimeType}) async {}
+  @override
+  Future<void> seek(Duration position) async => calls.add(position);
+  @override
+  Future<void> resume() async {
+    calls.add('play');
+    states.add(PlayerState.playing);
+  }
+
+  @override
+  Future<void> dispose() async {
+    await positions.close();
+    await states.close();
+  }
+}
+
 void main() {
+  testWidgets('voice playback resumes after unmount within the same profile', (
+    tester,
+  ) async {
+    final cache = Directory.systemTemp.createTempSync('mesh-voice-test-');
+    addTearDown(() => cache.deleteSync(recursive: true));
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (_) async => cache.path);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final samples = VoiceSamples()..add(Uint8List(voiceRate * 2 * 10));
+    final clip = samples.finish();
+    final memory = VoicePlaybackPositions();
+    late _Player player;
+    Future<void> show(VoicePlaybackPositions memory, String chat) =>
+        tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: VoicePlayer(
+                clip,
+                (_, en) => en,
+                resumeAt: memory.read(chat, 'clip'),
+                onPosition: (value) => memory.save(chat, 'clip', value),
+                makePlayer: () => player = _Player(),
+              ),
+            ),
+          ),
+        );
+    Future<void> play() async {
+      await tester.runAsync(() => tester.tap(find.byTooltip('Play')));
+      for (var attempt = 0; attempt < 100; attempt++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+        if (find.byTooltip('Pause').evaluate().isNotEmpty) return;
+      }
+      fail('Voice player did not start');
+    }
+
+    await show(memory, 'chat-a');
+    await play();
+    const saved = Duration(milliseconds: 3250);
+    player.positions.add(saved);
+    await tester.pump();
+    expect(memory.read('chat-a', 'clip'), saved);
+    expect(memory.read('chat-b', 'clip'), Duration.zero);
+    expect(VoicePlaybackPositions().read('chat-a', 'clip'), Duration.zero);
+
+    await tester.pumpWidget(const SizedBox());
+    await show(memory, 'chat-a');
+    expect(tester.widget<Slider>(find.byType(Slider)).value, 3250);
+    await play();
+    expect(player.calls, [saved, 'play']);
+
+    player.states.add(PlayerState.completed);
+    player.positions.add(const Duration(seconds: 10));
+    await tester.pump();
+    expect(memory.read('chat-a', 'clip'), Duration.zero);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test(
     'voice samples saturate at 30 seconds and enforce the WAV structure',
     () {
