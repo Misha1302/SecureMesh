@@ -52,13 +52,13 @@ class Desktop:
         self.process.terminate()
         self.process.wait(timeout=10)
 
-    def words(self):
+    def words(self, layout=11):
         if self.process.poll() is not None:
             raise RuntimeError('Linux packaged client exited')
         frame = run('import', '-window', self.window, 'png:-', capture_output=True).stdout
         large = run('convert', 'png:-', '-resize', '200%', 'png:-', input=frame,
                     capture_output=True).stdout
-        raw = run('tesseract', 'stdin', 'stdout', '--psm', '11', 'tsv', input=large,
+        raw = run('tesseract', 'stdin', 'stdout', '--psm', str(layout), 'tsv', input=large,
                   capture_output=True).stdout.decode()
         return [(r['text'].strip().casefold(), (int(r['left']) + int(r['width']) // 2) // 2,
                  (int(r['top']) + int(r['height']) // 2) // 2)
@@ -67,9 +67,12 @@ class Desktop:
     def word(self, expected, timeout=35):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
-            for text, x, y in self.words():
-                if text.strip('.,:;/|') == expected.casefold():
-                    return x, y
+            # Sparse segmentation can omit the label of an outlined text field.
+            # The block pass locates it on the same rendered Linux window.
+            for layout in (11, 6):
+                for text, x, y in self.words(layout):
+                    if text.strip('.,:;/|') == expected.casefold():
+                        return x, y
             time.sleep(.25)
         raise RuntimeError(f'Linux window did not display {expected}')
 
@@ -138,7 +141,7 @@ class Desktop:
             raise RuntimeError('Could not locate the desktop Attach file action')
         self.chooser_path(path)
         self.word('this')
-        self.word('Caption')
+        self.word(path.name)
         self.key('ctrl+Return')
 
     def screenshot(self, output):
