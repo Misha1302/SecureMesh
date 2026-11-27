@@ -39,7 +39,7 @@ def setup_android(store):
     adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
     tap(text_node('Открыть сохранённый профиль', 'Open a saved profile'))
     # A single local SQLCipher profile is discovered without entering an OS path.
-    text_node('Профиль на этом устройстве', 'On-device profile')
+    text_node(Path(PROFILE).stem)
     type_field(wait_node('store passphrase', lambda n: n.get('class') == 'android.widget.EditText'
                          and n.get('password') == 'true'), store.password)
     tap(text_node('Открыть профиль', 'Unlock profile'))
