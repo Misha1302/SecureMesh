@@ -6,6 +6,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import ssl
+from subprocess import run
 from threading import Thread
 from time import monotonic, sleep
 from urllib.error import HTTPError
@@ -33,14 +34,31 @@ class FixtureHandler(SimpleHTTPRequestHandler):
         pass
 
 
+class SafariWebDriverError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(f"Safari WebDriver {code}: {message}")
+        self.code = code
+
+
 class SafariSession:
     def __init__(self, endpoint, simulator):
         self.endpoint = endpoint
-        session = self.command("/session", {"capabilities": {"alwaysMatch": {
+        capabilities = {"capabilities": {"alwaysMatch": {
             "browserName": "safari", "platformName": "iOS",
             "safari:useSimulator": True, "safari:deviceType": "iPhone",
             "safari:deviceUDID": simulator, "acceptInsecureCerts": False,
-        }}})
+        }}}
+        try:
+            session = self.command("/session", capabilities)
+        except SafariWebDriverError as error:
+            if error.code != "session not created" or "waiting for its RWIApplication to appear" not in str(error):
+                raise
+            # A booted simulator can still miss Safari's remote inspector
+            # handshake. Reload Safari once, before any test page is opened.
+            print(f"{error}; relaunching Mobile Safari for one session retry", flush=True)
+            run(["xcrun", "simctl", "launch", "--terminate-running-process",
+                 simulator, "com.apple.mobilesafari"], check=True, timeout=60)
+            session = self.command("/session", capabilities)
         self.identifier = session["sessionId"]
 
     def command(self, path, body=None, method=None):
@@ -51,7 +69,7 @@ class SafariSession:
                 return json.load(response)["value"]
         except HTTPError as error:
             value = json.load(error)["value"]
-            raise RuntimeError(f"Safari WebDriver {value['error']}: {value.get('message', '')}") from error
+            raise SafariWebDriverError(value["error"], value.get("message", "")) from error
 
     def navigate(self, url):
         self.command(f"/session/{self.identifier}/url", {"url": url})
