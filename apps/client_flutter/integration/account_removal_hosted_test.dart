@@ -44,11 +44,12 @@ void main() {
     await hit(find.text('Unlock profile'));
     await hit(find.byIcon(Icons.settings_outlined));
     await hit(find.text('Advanced'));
-    await Navigator.of(tester.element(find.text('Delete lab account')))
-        .maybePop();
+    final deleteAccount = find.text('Delete lab account');
+    await until(deleteAccount);
+    await Navigator.of(tester.element(deleteAccount)).maybePop();
     await tester.pump();
     await hit(find.text('Advanced'));
-    await hit(find.text('Delete lab account'));
+    await hit(deleteAccount);
     final submit = find.widgetWithText(FilledButton, 'Delete account');
     expect(tester.widget<FilledButton>(submit).onPressed, isNull);
     await tester.enterText(

@@ -10,6 +10,7 @@ from pathlib import Path
 
 def verify(d, root, legacy):
     import process_spike
+    from directory import establish
 
     username = 'v2_' + uuid.uuid4().hex[:20]
     email = username + '@securemesh.test'
@@ -63,12 +64,7 @@ def verify(d, root, legacy):
     # pending, then deliver that immutable row with the new session.
     peer = legacy['device']
     device.pin(peer); peer.pin(device)
-    group = str(uuid.uuid4())
-    device.call('create', group=group)
-    joined = device.call('add', group=group, keypackage=peer.call('keypackage')['keypackage'])
-    peer.call('join', group=group, welcome=joined['welcome'])
-    d.request('/v1/conversations', dict(id=group, deviceIds=[device.identity, peer.identity],
-        initialEpoch=joined['epoch']), token=session['accessToken'], expected=201)
+    group = establish(dict(username=username, device=device, session=session), legacy)
     queued = device.call('queue', group=group, id=str(uuid.uuid4()), text='Queued before reauthentication')
     d.request('/v1/auth/logout', {}, token=session['accessToken'], expected=204)
     d.request('/v1/users/me', token=session['accessToken'], expected=401)
