@@ -149,6 +149,8 @@ def run(origin):
               const corrupted = (record.ciphertext[0] === "A" ? "B" : "A") + record.ciphertext.slice(1);
               await reject(() => vault.importVault(password, JSON.stringify({ ...record, ciphertext: corrupted })), "authentication");
               await reject(() => vault.importVault(password, backup, () => false), "format");
+              const archive = await vault.readBackup(password, backup, (state) => Array.isArray(state.messages));
+              if (archive.messages[0] !== "private transcript") throw new Error("lost archive data");
               if (await vault.hasVault()) throw new Error("invalid backup created local profile");
               const handle = await vault.importVault(password, backup, (state) => Array.isArray(state.messages));
               if (handle.state.messages[0] !== "private transcript") throw new Error("lost restored data");

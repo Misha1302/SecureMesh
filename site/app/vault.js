@@ -257,7 +257,7 @@ export async function exportBackup(password, state) {
   return JSON.stringify(record);
 }
 
-export async function importVault(password, backup, validateState) {
+export async function readBackup(password, backup, validateState) {
   if (typeof backup !== "string") {
     throw new VaultError("format", "The encrypted backup must be JSON text");
   }
@@ -274,6 +274,11 @@ export async function importVault(password, backup, validateState) {
   if (validateState && validateState(state) !== true) {
     throw new VaultError("format", "The encrypted backup contains unsupported profile data");
   }
+  return state;
+}
+
+export async function importVault(password, backup, validateState) {
+  const state = await readBackup(password, backup, validateState);
   return createVault(password, state);
 }
 
