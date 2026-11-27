@@ -7,9 +7,12 @@ class HistorySearch extends StatefulWidget {
     super.key,
     required this.tr,
     required this.search,
+    this.searchDay,
     required this.peerName,
   });
 
+  final Future<Map<String, dynamic>> Function(String query, DateTime day)?
+  searchDay;
   final TranslateMarkup tr;
   final String peerName;
   final Future<Map<String, dynamic>> Function(String query) search;
@@ -20,6 +23,7 @@ class HistorySearch extends StatefulWidget {
 
 class _HistorySearchState extends State<HistorySearch> {
   final query = TextEditingController();
+  DateTime? day;
   int revision = 0;
   bool loading = false, failed = false, more = false;
   List<dynamic>? messages;
@@ -38,7 +42,7 @@ class _HistorySearchState extends State<HistorySearch> {
 
   Future<void> submit() async {
     final text = query.text.trim();
-    if (loading || text.isEmpty) return;
+    if (loading || (text.isEmpty && day == null)) return;
     final current = ++revision;
     setState(() {
       loading = true;
@@ -46,7 +50,9 @@ class _HistorySearchState extends State<HistorySearch> {
       messages = null;
     });
     try {
-      final result = await widget.search(text);
+      final result = day == null
+          ? await widget.search(text)
+          : await widget.searchDay!(text, day!);
       if (!mounted || current != revision) return;
       setState(() {
         messages = result['messages'] as List<dynamic>;
@@ -69,6 +75,26 @@ class _HistorySearchState extends State<HistorySearch> {
     return Scaffold(
       appBar: AppBar(
         title: Text(tr('Поиск в переписке', 'Search conversation')),
+        actions: [
+          if (widget.searchDay != null)
+            IconButton(
+              icon: const Icon(Icons.calendar_month_outlined),
+              tooltip: tr('Поиск по дате', 'Search by date'),
+              onPressed: () async {
+                final today = DateTime.now();
+                final chosen = await showDatePicker(
+                  context: context,
+                  firstDate: DateTime(1970),
+                  lastDate: today,
+                  initialDate: day ?? today,
+                );
+                if (chosen == null || !mounted) return;
+                day = chosen;
+                reset();
+                await submit();
+              },
+            ),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -87,7 +113,8 @@ class _HistorySearchState extends State<HistorySearch> {
                   counterText: '',
                   suffixIcon: IconButton(
                     tooltip: tr('Найти', 'Search'),
-                    onPressed: loading || query.text.trim().isEmpty
+                    onPressed:
+                        loading || (query.text.trim().isEmpty && day == null)
                         ? null
                         : submit,
                     icon: const Icon(Icons.search),
@@ -95,6 +122,17 @@ class _HistorySearchState extends State<HistorySearch> {
                 ),
               ),
             ),
+            if (day != null)
+              InputChip(
+                label: Text(
+                  MaterialLocalizations.of(context).formatMediumDate(day!),
+                ),
+                onDeleted: () {
+                  day = null;
+                  reset();
+                  if (query.text.trim().isNotEmpty) submit();
+                },
+              ),
             if (loading) const LinearProgressIndicator(),
             if (failed)
               Text(

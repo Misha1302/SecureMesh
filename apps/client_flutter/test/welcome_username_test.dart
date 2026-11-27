@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:securemesh_client/account_hub.dart';
@@ -5,6 +7,7 @@ import 'package:securemesh_client/account_hub.dart';
 void main() {
   for (final matchingKey in [true, false]) {
     testWidgets('Welcome matches invite key: $matchingKey', (tester) async {
+      final key = base64Encode(List.filled(32, 17));
       String? openedName;
       final calls = <String>[];
       await tester.pumpWidget(
@@ -23,7 +26,7 @@ void main() {
                       'id': 'invite',
                       'username': 'alice',
                       'senderDevice': 'device',
-                      'senderKey': matchingKey ? 'key' : 'other',
+                      'senderKey': matchingKey ? key : 'other',
                       'accepted': true,
                       'outgoing': false,
                     },
@@ -35,7 +38,7 @@ void main() {
                       'group': 'chat',
                       'invitation': 'invite',
                       'sender': 'device',
-                      'senderKey': 'key',
+                      'senderKey': key,
                     },
                   ];
                 }
@@ -67,7 +70,10 @@ void main() {
         await tester.pumpWidget(const SizedBox());
         return;
       }
-      await tester.tap(find.text('I compared these keys'));
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Contact’s device code'),
+        key,
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Confirm'));
       await tester.pumpAndSettle();

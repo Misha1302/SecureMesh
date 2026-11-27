@@ -8,11 +8,13 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val biometrics by lazy { ProfileBiometrics(this) }
+    private val notifications by lazy { MessageNotifications(this) }
     private val exportRequest = 47291
     private var pending: Pair<ByteArray, MethodChannel.Result>? = null
 
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
+        MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/message_notifications").setMethodCallHandler(notifications::handle)
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/profile_biometrics")
             .setMethodCallHandler(biometrics::handle)
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/attachment-export")
@@ -68,6 +70,11 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == MessageNotifications.permissionRequest) notifications.permissionReturned()
+    }
+
     override fun onDestroy() {
         pending?.let { (bytes, result) ->
             bytes.fill(0)
@@ -88,6 +95,8 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler(null)
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/attachment-export")
             .setMethodCallHandler(null)
+        notifications.detach()
+        MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/message_notifications").setMethodCallHandler(null)
         super.cleanUpFlutterEngine(engine)
     }
 }

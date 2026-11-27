@@ -12,22 +12,30 @@ import 'local_client.dart';
 import 'session.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
+import 'conversation_composer.dart';
+import 'conversation_timeline.dart';
 import 'attachment_transfer.dart';
 import 'voice_note.dart';
 import 'private_call.dart';
 import 'voice_wave.dart';
 import 'video_message.dart';
 import 'linux_notifications.dart';
+import 'android_notifications.dart';
 import 'message_markup.dart';
 import 'history_search.dart';
+import 'earlier_history.dart';
+import 'saved_messages.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
 import 'profile_biometrics.dart';
 import 'account_removal.dart';
 import 'account_hub.dart';
+import 'identity_comparison.dart';
+import 'messenger_theme.dart';
 import 'linked_roster.dart';
 import 'display_name.dart';
 import 'device_tile.dart';
+import 'settings_hierarchy.dart';
 import 'profile_photo.dart';
 import 'transport.dart';
 
@@ -46,10 +54,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   bool? notificationBackend;
   bool changingNotifications = false;
   bool notificationSaveFailed = false;
+  final androidNotifications = const AndroidNotifications();
   late final desktopNotifications = LinuxNotifications(
+    bridge: Platform.isAndroid ? androidNotifications : null,
     allowed: () {
       final lifecycle = WidgetsBinding.instance.lifecycleState;
-      return Platform.isLinux &&
+      return (Platform.isLinux || Platform.isAndroid) &&
           mounted &&
           store != null &&
           profile?['desktopNotifications'] == true &&
@@ -70,6 +80,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(restoreAppearance());
     if (supportsVideoMessages) {
       unawaited(
         VideoScratch.root().then<void>((_) {}).catchError((Object _) {}),
@@ -82,6 +93,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      closeInlineMedia();
       if (directCall?.active == true) unawaited(directCall!.end());
     }
     if ((state == AppLifecycleState.hidden ||
@@ -103,6 +115,13 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   final composer = TextEditingController();
   ConversationDrafts? drafts;
   PrivateAttachments? attachments;
+  ({String id, Uint8List bytes})? inlineMedia;
+  int mediaView = 0;
+  void closeInlineMedia() {
+    mediaView++;
+    if (inlineMedia != null && mounted) setState(() => inlineMedia = null);
+  }
+
   bool draftLoadFailed = false;
   int chatView = 0;
   Future<void> closingStore = Future.value();
@@ -110,7 +129,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   bool showLocalUnlock = (Platform.environment['SECUREMESH_PROFILE'] ?? '')
       .trim()
       .isNotEmpty;
-  bool sending = false, unread = false;
+  bool sending = false;
   int generation = 0;
   String connectionState = "offline";
   String? sendError, deviceError;
@@ -125,6 +144,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   NativeDelivery? delivery;
   Map<String, dynamic>? profile;
   List<dynamic> messages = [];
+  Map<String, dynamic>? olderHistory, pinnedMessage;
   List<dynamic> devices = [];
   Timer? timer;
   bool busy = false,
@@ -205,6 +225,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   }
 
   Future<void> restoreDraft(String? group) async {
+    closeInlineMedia();
     final active = drafts;
     if (active == null) return;
     if (directCall != null && directCall!.group != group) {
@@ -238,7 +259,6 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       setState(() {
         messages = [];
         draftLoadFailed = false;
-        unread = false;
         sendError = null;
       });
     }
@@ -403,9 +423,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         onCallSignal: (group) {
           unawaited(bindCall(group)?.poll());
         },
-        onIncomingText: Platform.isLinux ? desktopNotifications.incoming : null,
+        onIncomingText: (Platform.isLinux || Platform.isAndroid)
+            ? desktopNotifications.incoming
+            : null,
       );
-      if (Platform.isLinux && saved['desktopNotifications'] == true) {
+      if ((Platform.isLinux || Platform.isAndroid) &&
+          saved['desktopNotifications'] == true) {
         unawaited(desktopNotifications.probe());
       }
       pass.clear();
@@ -460,12 +483,37 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     ),
   );
 
-  Future<void> chooseProfile(BuildContext pageContext) async {
+  int profileSelection = 0;
+  void backToWelcome() {
+    profileSelection++;
+    setState(() {
+      pass.clear();
+      error = null;
+      choosing = false;
+      showLocalUnlock = false;
+    });
+  }
+
+  Future<void> openSavedProfile(BuildContext context) async {
+    setState(() {
+      showLocalUnlock = true;
+      error = null;
+    });
+    if (path.text.isEmpty) await chooseProfile(context, autoSelectOne: true);
+  }
+
+  Future<void> chooseProfile(
+    BuildContext pageContext, {
+    bool autoSelectOne = false,
+  }) async {
     if (loading || choosing) return;
+    final selection = ++profileSelection;
     setState(() => choosing = true);
     try {
       final files = await localProfiles();
-      if (!mounted || !pageContext.mounted) return;
+      if (!mounted || selection != profileSelection || !pageContext.mounted) {
+        return;
+      }
       if (files.isEmpty) {
         setState(
           () => error = tr(
@@ -473,6 +521,14 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             'There are no saved profiles yet. Create an account or sign in.',
           ),
         );
+        return;
+      }
+      if (autoSelectOne && files.length == 1) {
+        setState(() {
+          path.text = files.single.path;
+          pass.clear();
+          error = null;
+        });
         return;
       }
       final selected = await showDialog<String>(
@@ -501,7 +557,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           ],
         ),
       );
-      if (mounted && selected != null) {
+      if (mounted && selection == profileSelection && selected != null) {
         setState(() {
           path.text = selected;
           pass.clear();
@@ -509,7 +565,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         });
       }
     } catch (_) {
-      if (mounted) {
+      if (mounted && selection == profileSelection) {
         setState(
           () => error = tr(
             'Не удалось прочитать список профилей. Проверьте доступ к папке или укажите файл вручную.',
@@ -518,7 +574,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         );
       }
     } finally {
-      if (mounted) setState(() => choosing = false);
+      if (mounted && selection == profileSelection) {
+        setState(() => choosing = false);
+      }
     }
   }
 
@@ -535,8 +593,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         !chatScroll.hasClients ||
         chatScroll.position.extentAfter < 96;
     final previous = messages.isEmpty ? null : messages.last["id"];
-    final result = await crypto('timeline', {'group': group});
+    final result = await crypto('timeline', {'group': group, 'limit': 64});
     if (mounted && epoch == generation && view == chatView) {
+      pinnedMessage = result['pinned'] as Map<String, dynamic>?;
+      olderHistory = result['older'] as Map<String, dynamic>?;
+      unseenId = result['unseenThrough'] as String?;
+      unseenGroup = group as String;
       setState(() => messages = result['messages'] as List<dynamic>);
       final changed = messages.isNotEmpty && messages.last['id'] != previous;
       if (changed) {
@@ -549,8 +611,6 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           }
           if (nearEnd) {
             chatScroll.jumpTo(chatScroll.position.maxScrollExtent);
-          } else {
-            setState(() => unread = true);
           }
         });
       }
@@ -560,13 +620,17 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   Future<void> persistProfile(
     Map<String, dynamic> value, {
     bool sessionOnly = false,
+    Set<String>? removedFields,
     bool? notificationPreference,
     bool? backgroundLockPreference,
   }) {
     final epoch = generation;
     final write = profileWrites.then((_) async {
       if (epoch != generation || profile == null) throw CryptoFailure();
-      final updated = sessionOnly
+      final updated = removedFields != null
+          ? ({...profile!, ...value}
+              ..removeWhere((key, _) => removedFields.contains(key)))
+          : sessionOnly
           ? {...profile!, ...value}
           : {
               ...value,
@@ -603,9 +667,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
 
   List<String> get deliveryGroups {
     final active = profile?['group'];
-    if (active is String) return [active];
     final verified = profile?['verifiedChats'];
     return {
+      if (active is String) active,
       if (verified is Map) ...verified.keys.whereType<String>(),
       if (profile?['lastDeliveryGroup'] case final String previous) previous,
     }.toList();
@@ -680,7 +744,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     try {
       final progress = await delivery!.tick(
         groups.first,
-        listedGroups: profile?['group'] == null ? groups : const [],
+        listedGroups: groups.length > 1 ? groups : const [],
       );
       if (!mounted || epoch != generation) return;
       nextDelay = progress.delay;
@@ -811,6 +875,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   }
 
   void lock() {
+    closeInlineMedia();
     generation++;
     declinedRoster.clear();
     navigator.currentState?.popUntil((route) => route.isFirst);
@@ -842,87 +907,220 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       lite = false;
       busy = false;
       sending = false;
-      unread = false;
       failures = 0;
       connectionState = "offline";
     });
   }
 
   Future<void> verifyKeys(BuildContext context) async {
-    final me = await crypto('identity');
-    if (!context.mounted) return;
-    bool confirming = false;
-    String? verifyError;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, update) => AlertDialog(
-          title: Text(tr('Сравните ключи устройства', 'Compare device keys')),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  tr(
-                    'Сравните эти значения с собеседником по независимому каналу.',
-                    'Compare these values with your contact through an independent channel.',
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(tr('Ваш ключ', 'Your key')),
-                SelectableText(me['public_key'] as String),
-                const SizedBox(height: 16),
-                Text(tr('Ключ собеседника', 'Contact key')),
-                SelectableText(profile!['peerKey'] as String),
-                if (verifyError != null)
-                  Text(
-                    verifyError!,
-                    style: TextStyle(color: Theme.of(ctx).colorScheme.error),
-                  ),
-              ],
+    final selected = profile;
+    final group = selected?['group'];
+    final peer = selected?['peerDevice'];
+    final key = selected?['peerKey'];
+    if (group is! String || peer is! String || key is! String) return;
+    final view = chatView;
+    final epoch = generation;
+    bool current() =>
+        mounted &&
+        generation == epoch &&
+        chatView == view &&
+        profile?['peerDevice'] == peer &&
+        profile?['peerKey'] == key &&
+        profile?['group'] == group;
+    try {
+      final me = await crypto('identity');
+      if (!context.mounted || !current()) return;
+      if (!await compareDeviceKey(
+            context,
+            me['public_key'] as String,
+            key,
+            tr,
+          ) ||
+          !current()) {
+        return;
+      }
+      await crypto('pin', {
+        'identity': peer,
+        'public_key': key,
+        'confirmed': true,
+      });
+      if (!current()) return;
+      await persistProfile({...profile!, 'trustConfirmed': true});
+      if (current()) setState(() {});
+    } catch (_) {
+      if (context.mounted && current()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              tr(
+                'Не удалось подтвердить ключ. Попробуйте ещё раз.',
+                'Key verification failed. Try again.',
+              ),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: confirming ? null : () => Navigator.pop(ctx),
-              child: Text(tr('Позже', 'Later')),
+        );
+      }
+    }
+  }
+
+  String? unseenId, unseenGroup;
+  bool markingSeen = false;
+
+  void markConversationSeen(BuildContext context) {
+    final id = unseenId;
+    final group = unseenGroup;
+    if (markingSeen ||
+        id == null ||
+        group == null ||
+        profile?['group'] != group ||
+        tab != 0 ||
+        !callsForeground ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        !chatScroll.hasClients ||
+        chatScroll.position.extentAfter > 2) {
+      return;
+    }
+    markingSeen = true;
+    unawaited(
+      crypto('conversation_seen', {'group': group, 'id': id})
+          .then((_) {
+            if (unseenGroup == group && unseenId == id) unseenId = null;
+          })
+          .catchError((_) {})
+          .whenComplete(() => markingSeen = false),
+    );
+  }
+
+  Future<void> leaveConversation() async {
+    if (busy || sending || profile?['group'] == null) return;
+    timer?.cancel();
+    await persistProfile(
+      {
+        ...profile!,
+        if (profile!['trustConfirmed'] == true)
+          'lastDeliveryGroup': profile!['group'],
+      }..remove('group'),
+    );
+    if (mounted) {
+      setState(() => messages = []);
+      unawaited(pump());
+    }
+  }
+
+  Widget directory() => AccountHub(
+    russian: ru,
+    profile: profile!,
+    crypto: crypto,
+    api: (route, {data}) => api(route, data: data),
+    channelApi: session!.request,
+    mediaAttachments: (group) {
+      final activeSession = session!;
+      final activeGeneration = generation;
+      Future<Map<String, dynamic>> command(
+        String op,
+        Map<String, dynamic> args,
+      ) {
+        if (activeGeneration != generation ||
+            !identical(activeSession, session)) {
+          throw CryptoFailure();
+        }
+        return crypto(op, args);
+      }
+
+      return PrivateAttachments(
+        group,
+        command,
+        SessionBlobs(activeSession, group, command),
+        () {},
+      );
+    },
+    saveProfile: persistProfile,
+    saveChanges: (changes, removed) =>
+        persistProfile(changes, removedFields: removed),
+    openChat: (group, peer, name, key) async {
+      if (profile?['group'] == group &&
+          profile?['peerDevice'] == peer &&
+          profile?['peerKey'] == key &&
+          profile?['trustConfirmed'] == true) {
+        return;
+      }
+      if (sending || attachments?.busy == true || directCall?.active == true) {
+        throw StateError('Conversation operation in progress');
+      }
+      await persistProfile({
+        ...profile!,
+        'group': group,
+        'peerDevice': peer,
+        'peerName': name,
+        'peerKey': key,
+        'trustConfirmed': true,
+        'verifiedChats': {
+          ...?profile!['verifiedChats'] as Map?,
+          group: {'device': peer, 'key': key, 'name': name},
+        },
+      });
+      await reload();
+      if (mounted) setState(() {});
+      unawaited(pump());
+    },
+  );
+
+  Future<void> setChatStyle(String key, Object value) async {
+    final epoch = generation;
+    try {
+      await persistProfile({key: value}, removedFields: {});
+      if (mounted && generation == epoch) setState(() {});
+    } catch (_) {
+      if (mounted && generation == epoch) {
+        setState(() => appearanceSaveFailed = true);
+      }
+    }
+  }
+
+  Widget conversationPane(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (context.mounted) markConversationSeen(context);
+    });
+    final scheme = Theme.of(context).colorScheme;
+    final background = switch (profile?['chatBackground']) {
+      'blue' => Color.alphaBlend(
+        scheme.primary.withValues(alpha: .085),
+        scheme.surface,
+      ),
+      'mint' => Color.alphaBlend(
+        const Color(0xff439779).withValues(alpha: .13),
+        scheme.surface,
+      ),
+      _ => scheme.surface,
+    };
+    final factor = switch (profile?['chatTextSize']) {
+      'larger' => 1.15,
+      'largest' => 1.3,
+      _ => 1.0,
+    };
+    return NotificationListener<ScrollEndNotification>(
+      onNotification: (_) {
+        markConversationSeen(context);
+        return false;
+      },
+      child: ColoredBox(
+        color: background,
+        child: MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: ChatTextScaler(
+              MediaQuery.textScalerOf(context),
+              factor,
             ),
-            FilledButton(
-              onPressed: confirming
-                  ? null
-                  : () async {
-                      update(() => confirming = true);
-                      try {
-                        await crypto('pin', {
-                          'identity': profile!['peerDevice'],
-                          'public_key': profile!['peerKey'],
-                          'confirmed': true,
-                        });
-                        final verified = {...profile!, 'trustConfirmed': true};
-                        await persistProfile(verified);
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) setState(() {});
-                      } catch (_) {
-                        if (ctx.mounted) {
-                          update(
-                            () => verifyError = tr(
-                              'Не удалось закрепить ключ. Подтверждение не сохранено.',
-                              'Could not pin this key. Verification was not saved.',
-                            ),
-                          );
-                        }
-                      } finally {
-                        if (ctx.mounted) update(() => confirming = false);
-                      }
-                    },
-              child: Text(tr('Ключи совпадают', 'Keys match')),
-            ),
-          ],
+          ),
+          child: Builder(builder: chat),
         ),
       ),
     );
+  }
+
+  void selectTab(int value) {
+    setState(() => tab = value);
+    if (value == 1) unawaited(loadDevices());
   }
 
   @override
@@ -931,135 +1129,133 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     title: 'SecureMesh',
     debugShowCheckedModeBanner: false,
     themeMode: theme,
-    theme: ThemeData(
-      useMaterial3: true,
-      materialTapTargetSize: MaterialTapTargetSize.padded,
-      visualDensity: VisualDensity.standard,
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3390EC)),
-    ),
-    darkTheme: ThemeData(
-      useMaterial3: true,
-      materialTapTargetSize: MaterialTapTargetSize.padded,
-      visualDensity: VisualDensity.standard,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF3390EC),
-        brightness: Brightness.dark,
-      ),
-    ),
+    theme: messengerTheme(Brightness.light),
+    darkTheme: messengerTheme(Brightness.dark),
     home: Builder(
-      builder: (ctx) => Scaffold(
-        appBar: AppBar(
-          title: const Text('SecureMesh'),
-          actions: [
-            if (store == null)
-              TextButton(
-                onPressed: loading ? null : () => setState(() => ru = !ru),
-                child: const Text('RU / EN'),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.only(right: 16),
-                child: Center(
-                  child: Text(tr('Локальная альфа', 'Local alpha')),
-                ),
-              ),
-          ],
-        ),
-        body: SafeArea(
-          child: store == null
-              ? (showLocalUnlock ? unlockScreen(ctx) : welcomeScreen(ctx))
-              : LayoutBuilder(
-                  builder: (context, size) => Row(
-                    children: [
-                      if (size.maxWidth >= 760)
-                        NavigationRail(
-                          selectedIndex: tab,
-                          onDestinationSelected: (v) {
-                            setState(() => tab = v);
-                            if (v == 1) unawaited(loadDevices());
-                          },
-                          labelType: NavigationRailLabelType.all,
-                          destinations: [
-                            NavigationRailDestination(
-                              icon: const Icon(Icons.chat_bubble_outline),
-                              label: Text(tr('Чат', 'Chat')),
-                            ),
-                            NavigationRailDestination(
-                              icon: const Icon(Icons.settings_outlined),
-                              label: Text(tr('Настройки', 'Settings')),
-                            ),
-                          ],
+      builder: (ctx) {
+        final width = MediaQuery.sizeOf(ctx).width;
+        final inChat = store != null && profile?['group'] != null && tab == 0;
+        final wide = width >= 980;
+        final rail = width >= 760 && store != null;
+        final compactChat = inChat && !rail;
+        return PopScope(
+          canPop:
+              !compactChat && tab == 0 && (store != null || !showLocalUnlock),
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            if (compactChat) {
+              unawaited(leaveConversation());
+            } else if (tab != 0) {
+              if (settingsNavigation.currentState?.backToMenu() == true) return;
+              selectTab(0);
+            } else if (store == null) {
+              backToWelcome();
+            }
+          },
+          child: Scaffold(
+            appBar: compactChat
+                ? null
+                : AppBar(
+                    title: const Text('SecureMesh'),
+                    actions: [
+                      if (store == null)
+                        TextButton(
+                          onPressed: loading
+                              ? null
+                              : () => changeAppearance(russian: !ru),
+                          child: const Text('RU / EN'),
+                        )
+                      else
+                        Padding(
+                          padding: const EdgeInsets.only(right: 16),
+                          child: Center(
+                            child: Text(tr('Локальная альфа', 'Local alpha')),
+                          ),
                         ),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            if (directCall case final PrivateCall current)
-                              CallPanel(current, tr),
-                            Expanded(
-                              child: tab == 0
-                                  ? (profile?['group'] == null
-                                        ? AccountHub(
-                                            russian: ru,
-                                            profile: profile!,
-                                            crypto: crypto,
-                                            api: (route, {data}) =>
-                                                api(route, data: data),
-                                            channelApi: session!.request,
-                                            saveProfile: persistProfile,
-                                            openChat: (group, peer, name, key) async {
-                                              final selected = {
-                                                ...profile!,
-                                                'group': group,
-                                                'peerDevice': peer,
-                                                'peerName': name,
-                                                'peerKey': key,
-                                                'trustConfirmed': true,
-                                                'verifiedChats': {
-                                                  ...?profile!['verifiedChats']
-                                                      as Map?,
-                                                  group: {
-                                                    'device': peer,
-                                                    'key': key,
-                                                    'name': name,
-                                                  },
-                                                },
-                                              };
-                                              await persistProfile(selected);
-                                              await reload();
-                                              if (mounted) setState(() {});
-                                              unawaited(pump());
-                                            },
-                                          )
-                                        : chat(ctx))
-                                  : settings(ctx),
-                            ),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
-                ),
-        ),
-        bottomNavigationBar: store != null && MediaQuery.sizeOf(ctx).width < 760
-            ? NavigationBar(
-                selectedIndex: tab,
-                onDestinationSelected: (v) {
-                  setState(() => tab = v);
-                  if (v == 1) unawaited(loadDevices());
-                },
-                destinations: [
-                  NavigationDestination(
-                    icon: const Icon(Icons.chat_bubble_outline),
-                    label: tr('Чат', 'Chat'),
-                  ),
-                  NavigationDestination(
-                    icon: const Icon(Icons.settings_outlined),
-                    label: tr('Настройки', 'Settings'),
-                  ),
-                ],
-              )
-            : null,
-      ),
+            body: SafeArea(
+              child: store == null
+                  ? (showLocalUnlock ? unlockScreen(ctx) : welcomeScreen(ctx))
+                  : Row(
+                      children: [
+                        if (rail)
+                          NavigationRail(
+                            selectedIndex: tab,
+                            onDestinationSelected: selectTab,
+                            labelType: NavigationRailLabelType.all,
+                            destinations: [
+                              NavigationRailDestination(
+                                icon: const Icon(Icons.forum_outlined),
+                                label: Text(tr('Чаты', 'Chats')),
+                              ),
+                              NavigationRailDestination(
+                                icon: const Icon(Icons.settings_outlined),
+                                label: Text(tr('Настройки', 'Settings')),
+                              ),
+                            ],
+                          ),
+                        Expanded(
+                          child: Column(
+                            children: [
+                              if (directCall case final PrivateCall current)
+                                CallPanel(current, tr),
+                              Expanded(
+                                child: tab == 1
+                                    ? settings(ctx)
+                                    : wide
+                                    ? Row(
+                                        children: [
+                                          SizedBox(
+                                            width: (width * .31)
+                                                .clamp(310.0, 410.0)
+                                                .toDouble(),
+                                            child: directory(),
+                                          ),
+                                          const VerticalDivider(width: 1),
+                                          Expanded(
+                                            child: inChat
+                                                ? conversationPane(ctx)
+                                                : Center(
+                                                    child: Text(
+                                                      tr(
+                                                        'Выберите переписку',
+                                                        'Select a conversation',
+                                                      ),
+                                                    ),
+                                                  ),
+                                          ),
+                                        ],
+                                      )
+                                    : inChat
+                                    ? conversationPane(ctx)
+                                    : directory(),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+            bottomNavigationBar: store != null && !rail && !compactChat
+                ? NavigationBar(
+                    selectedIndex: tab,
+                    onDestinationSelected: selectTab,
+                    destinations: [
+                      NavigationDestination(
+                        icon: const Icon(Icons.forum_outlined),
+                        label: tr('Чаты', 'Chats'),
+                      ),
+                      NavigationDestination(
+                        icon: const Icon(Icons.settings_outlined),
+                        label: tr('Настройки', 'Settings'),
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+        );
+      },
     ),
   );
   Widget welcomeScreen(BuildContext context) => Center(
@@ -1070,9 +1266,34 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Icon(
+                    Icons.forum_rounded,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    size: 34,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
             Text(
               tr('Добро пожаловать в SecureMesh', 'Welcome to SecureMesh'),
               style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              tr(
+                'Личные сообщения защищены сквозным шифрованием.',
+                'Personal messages use end-to-end encryption.',
+              ),
             ),
             const SizedBox(height: 24),
             FilledButton(
@@ -1085,8 +1306,15 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                 tr('Войти на этом устройстве', 'Sign in on this device'),
               ),
             ),
+            TextButton.icon(
+              icon: const Icon(Icons.add_to_home_screen_outlined),
+              label: Text(
+                tr('Подключить новое устройство', 'Link a new device'),
+              ),
+              onPressed: () => showAccount(context, signIn: true),
+            ),
             TextButton(
-              onPressed: () => setState(() => showLocalUnlock = true),
+              onPressed: () => openSavedProfile(context),
               child: Text(
                 tr('Открыть сохранённый профиль', 'Open a saved profile'),
               ),
@@ -1147,24 +1375,32 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                 ),
               ),
               const SizedBox(height: 24),
-              TextField(
-                enabled: !loading && !choosing,
-                controller: path,
-                decoration: InputDecoration(
-                  labelText: tr('Файл профиля', 'Profile file'),
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    tooltip: tr(
-                      'Выбрать сохранённый профиль',
-                      'Choose a saved profile',
-                    ),
-                    onPressed: loading || choosing
-                        ? null
-                        : () => chooseProfile(context),
-                    icon: const Icon(Icons.folder_open),
-                  ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.account_circle_outlined),
+                title: Text(
+                  path.text.isEmpty
+                      ? tr('Выбрать профиль', 'Choose a profile')
+                      : tr('Профиль на этом устройстве', 'On-device profile'),
                 ),
-                autocorrect: false,
+                trailing: const Icon(Icons.expand_more),
+                onTap: loading || choosing
+                    ? null
+                    : () => chooseProfile(context),
+              ),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: Text(tr('Открыть по пути к файлу', 'Open by file path')),
+                children: [
+                  TextField(
+                    controller: path,
+                    enabled: !loading && !choosing,
+                    autocorrect: false,
+                    decoration: InputDecoration(
+                      labelText: tr('Файл профиля', 'Profile file'),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
               TextField(
@@ -1210,13 +1446,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                 ),
               const SizedBox(height: 24),
               TextButton(
-                onPressed: loading || choosing
-                    ? null
-                    : () => setState(() {
-                        pass.clear();
-                        error = null;
-                        showLocalUnlock = false;
-                      }),
+                onPressed: loading ? null : backToWelcome,
                 child: Text(tr('К выбору способа входа', 'Back to welcome')),
               ),
             ],
@@ -1261,19 +1491,28 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> recordVoice(BuildContext context) async {
+  final microphoneButtonKey = GlobalKey();
+
+  Future<void> recordVoice(
+    BuildContext context, [
+    ValueNotifier<VoiceHold>? hold,
+  ]) async {
     final current = attachments;
     if (current == null || current.busy || profile?['trustConfirmed'] != true) {
       return;
     }
-    await current.stageMedia(
-      'voice',
-      'voice-note.wav',
-      () => showDialog<Uint8List>(
-        context: context,
-        builder: (_) => VoiceDialog(tr),
-      ),
-    );
+    await current.stageMedia('voice', 'voice-note.wav', () async {
+      final clip = hold == null
+          ? await showDialog<Uint8List>(
+              context: context,
+              builder: (_) => VoiceDialog(tr),
+            )
+          : await showHeldVoice(context, tr, hold);
+      return identical(attachments, current) &&
+              profile?['trustConfirmed'] == true
+          ? clip
+          : null;
+    });
     if (identical(current, attachments) && online && !lite) {
       unawaited(current.resume(explicit: false, weak: false));
     }
@@ -1323,43 +1562,47 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                   ? () => current.download(id, meta, exportAttachment)
                   : null,
             ),
-            if (meta['media'] == 'voice')
+            if (meta['media'] == 'voice' ||
+                (supportsVideoMessages && meta['media'] == 'video'))
               TextButton.icon(
-                icon: const Icon(Icons.play_circle_outline),
-                label: Text(tr('Прослушать', 'Listen')),
-                onPressed: enabled
-                    ? () => current.download(id, meta, (_, bytes) async {
-                        voiceDuration(bytes);
-                        if (!context.mounted ||
-                            !identical(current, attachments)) {
-                          return false;
-                        }
-                        await showDialog<void>(
-                          context: context,
-                          builder: (_) => VoiceDialog(tr, received: bytes),
+                icon: Icon(
+                  inlineMedia?.id == id
+                      ? Icons.close
+                      : Icons.play_circle_outline,
+                ),
+                label: Text(
+                  inlineMedia?.id == id
+                      ? tr('Закрыть', 'Close')
+                      : meta['media'] == 'voice'
+                      ? tr('Прослушать', 'Listen')
+                      : tr('Смотреть видео', 'Play video'),
+                ),
+                onPressed: inlineMedia?.id == id
+                    ? closeInlineMedia
+                    : !enabled
+                    ? null
+                    : () {
+                        closeInlineMedia();
+                        final request = mediaView;
+                        unawaited(
+                          current.download(id, meta, (_, bytes) async {
+                            if (meta['media'] == 'voice') {
+                              voiceDuration(bytes);
+                            } else if (!isLocalVideo(bytes)) {
+                              throw const FormatException();
+                            }
+                            if (context.mounted &&
+                                identical(current, attachments) &&
+                                request == mediaView &&
+                                callsForeground) {
+                              setState(
+                                () => inlineMedia = (id: id, bytes: bytes),
+                              );
+                            }
+                            return false;
+                          }),
                         );
-                        return false;
-                      })
-                    : null,
-              ),
-            if (supportsVideoMessages && meta['media'] == 'video')
-              TextButton.icon(
-                icon: const Icon(Icons.play_circle_outline),
-                label: Text(tr('Смотреть видео', 'Play video')),
-                onPressed: enabled
-                    ? () => current.download(id, meta, (name, bytes) async {
-                        if (!context.mounted ||
-                            !identical(attachments, current)) {
-                          return false;
-                        }
-                        await showDialog<void>(
-                          context: context,
-                          builder: (_) =>
-                              VideoMessageDialog(tr: tr, received: bytes),
-                        );
-                        return false;
-                      })
-                    : null,
+                      },
               ),
             if (meta['media'] == 'photo')
               TextButton.icon(
@@ -1402,6 +1645,18 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ),
           ],
         ),
+        if (inlineMedia case (id: final playing, bytes: final bytes)
+            when playing == id)
+          if (meta['media'] == 'voice')
+            VoicePlayer(bytes, tr, key: ValueKey(id))
+          else if (supportsVideoMessages && meta['media'] == 'video')
+            VideoMessageDialog(
+              key: ValueKey(id),
+              tr: tr,
+              received: bytes,
+              inline: true,
+              onClose: closeInlineMedia,
+            ),
       ],
     );
   }
@@ -1499,21 +1754,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             profile?['trustConfirmed'] == true &&
             directCall?.active != true,
         tr: tr,
-        onBack: busy || sending
-            ? null
-            : () async {
-                timer?.cancel();
-                final updated = {
-                  ...profile!,
-                  if (profile!['trustConfirmed'] == true)
-                    'lastDeliveryGroup': profile!['group'],
-                }..remove('group');
-                await persistProfile(updated);
-                if (mounted) {
-                  setState(() => messages = []);
-                  unawaited(pump());
-                }
-              },
+        onBack: busy || sending ? null : leaveConversation,
         onCall: (video) async {
           final group = profile!['group'] as String;
           final name = profile!['peerName'] as String;
@@ -1529,23 +1770,78 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           final group = profile!['group'] as String;
           final view = chatView;
           final peerName = profile!['peerName'] as String;
+          Future<Map<String, dynamic>> searchMessages(
+            String query, [
+            DateTime? day,
+          ]) async {
+            if (view != chatView || profile?['group'] != group) {
+              throw CryptoFailure();
+            }
+            final result = await crypto('search_history', {
+              'group': group,
+              'query': query,
+              if (day != null) ...{
+                'fromMs': day.millisecondsSinceEpoch,
+                'untilMs': DateTime(
+                  day.year,
+                  day.month,
+                  day.day + 1,
+                ).millisecondsSinceEpoch,
+              },
+            });
+            if (view != chatView || profile?['group'] != group) {
+              throw CryptoFailure();
+            }
+            return result;
+          }
+
           Navigator.of(context).push<void>(
             MaterialPageRoute(
               builder: (_) => HistorySearch(
                 tr: tr,
                 peerName: peerName,
-                search: (query) async {
-                  if (view != chatView || profile?['group'] != group) {
-                    throw CryptoFailure();
-                  }
-                  final result = await crypto('search_history', {
-                    'group': group,
-                    'query': query,
+                search: (query) => searchMessages(query),
+                searchDay: (query, day) => searchMessages(query, day),
+              ),
+            ),
+          );
+        },
+        onSaved: () {
+          final epoch = generation;
+          final ownProfile = profile!;
+          Future<Map<String, dynamic>> local(
+            String op,
+            Map<String, dynamic> args,
+          ) async {
+            if (epoch != generation) throw CryptoFailure();
+            final result = await crypto(op, args);
+            if (epoch != generation) throw CryptoFailure();
+            return result;
+          }
+
+          Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => SavedMessages(
+                tr: tr,
+                read: (before) => local('favorites_list', {'before': ?before}),
+                remove: (entry) async {
+                  await local('favorites_set', {
+                    'group': entry['group'],
+                    'saved': false,
+                    'items': [
+                      {'id': entry['id'], 'own': entry['own']},
+                    ],
                   });
-                  if (view != chatView || profile?['group'] != group) {
-                    throw CryptoFailure();
+                },
+                peerName: (group) {
+                  if (group == ownProfile['group']) {
+                    return ownProfile['peerName'] as String;
                   }
-                  return result;
+                  final known = ownProfile['verifiedChats'] as Map?;
+                  final entry = known?[group];
+                  return entry is Map && entry['name'] is String
+                      ? entry['name'] as String
+                      : tr('Личный чат', 'Private chat');
                 },
               ),
             ),
@@ -1630,120 +1926,80 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                   ),
                 ),
               )
-            : ListView.builder(
-                controller: chatScroll,
-                padding: const EdgeInsets.all(24),
-                itemCount: messages.length,
-                itemBuilder: (ctx, i) {
-                  final m = messages[i];
-                  final own = m['own'] == true;
-                  return Semantics(
-                    label: own
-                        ? tr("Ваше сообщение", "Your message")
-                        : tr("Сообщение собеседника", "Message from contact"),
-                    child: Align(
-                      alignment: own
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 560),
-                        child: Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          decoration: BoxDecoration(
-                            color: own
-                                ? Theme.of(ctx).colorScheme.primaryContainer
-                                : Theme.of(ctx)
-                                      .colorScheme
-                                      .surfaceContainerHigh,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (m['replyTo'] case {
-                                'id': String id,
-                                'sender': String sender,
-                              })
-                                Text(
-                                  tr('В ответ на: ', 'In reply to: ') +
-                                      replyPreview(id, sender),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(ctx).textTheme.labelMedium,
-                                ),
-                              if (m['attachment']
-                                  case final Map<String, dynamic> attachment)
-                                attachmentMessage(
-                                  ctx,
-                                  m['id'] as String,
-                                  attachment,
-                                )
-                              else
-                                MessageMarkup(m['text'] as String, tr: tr),
-                              IconButton(
-                                tooltip: tr('Ответить', 'Reply'),
-                                icon: const Icon(Icons.reply),
-                                onPressed:
-                                    sending ||
-                                        drafts?.readyFor(
-                                              profile?['group'] as String?,
-                                            ) !=
-                                            true
-                                    ? null
-                                    : () => setState(
-                                        () => drafts!.setReply((
-                                          id: m['id'] as String,
-                                          sender: m['sender'] as String,
-                                        )),
-                                      ),
-                              ),
-                              Text(
-                                m['status'] == 'queued'
-                                    ? tr(
-                                        'В очереди на устройстве',
-                                        'Queued on this device',
-                                      )
-                                    : m['status'] == 'delivered'
-                                    ? tr(
-                                        'Доставлено по данным сервера',
-                                        'Delivery reported by server',
-                                      )
-                                    : own
-                                    ? tr(
-                                        'Сохранено на сервере',
-                                        'Saved on server',
-                                      )
-                                    : tr(
-                                        'Сохранено на устройстве',
-                                        'Saved on device',
-                                      ),
-                                style: Theme.of(ctx).textTheme.labelSmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
+            : ConversationTimeline(
+                key: ValueKey(profile!['group']),
+                messages: messages,
+                scroll: chatScroll,
+                replyPreview: replyPreview,
+                pin: pinnedMessage?['group'] == profile?['group']
+                    ? pinnedMessage
+                    : null,
+                onPin: (item, pinned) async {
+                  final group = profile!['group'];
+                  await crypto('pin_message_local', {
+                    'group': group,
+                    'id': item['id'],
+                    'own': item['own'],
+                    'pinned': pinned,
+                  });
+                  if (mounted && profile?['group'] == group) await reload();
                 },
+                onSave: (rows) async {
+                  final group = profile!['group'];
+                  await crypto('favorites_set', {
+                    'group': group,
+                    'saved': true,
+                    'items': [
+                      for (final m in rows) {'id': m['id'], 'own': m['own']},
+                    ],
+                  });
+                },
+                onOlder: olderHistory?['group'] == profile?['group']
+                    ? () {
+                        final group = profile!['group'] as String;
+                        final epoch = generation;
+                        final view = chatView;
+                        final cursor = olderHistory!;
+                        final peer = profile!['peerName'] as String;
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            builder: (_) => EarlierHistory(
+                              initial: cursor,
+                              peer: peer,
+                              tr: tr,
+                              read: (cursor) async {
+                                if (generation != epoch ||
+                                    view != chatView ||
+                                    profile?['group'] != group) {
+                                  throw CryptoFailure();
+                                }
+                                final result = await crypto('history_page', {
+                                  'group': group,
+                                  'cursor': cursor,
+                                });
+                                if (generation != epoch ||
+                                    view != chatView ||
+                                    profile?['group'] != group) {
+                                  throw CryptoFailure();
+                                }
+                                return result;
+                              },
+                            ),
+                          ),
+                        );
+                      }
+                    : null,
+                attachment: attachmentMessage,
+                onReply:
+                    !sending &&
+                        drafts?.readyFor(profile?['group'] as String?) == true
+                    ? (id, sender) => setState(
+                        () => drafts!.setReply((id: id, sender: sender)),
+                      )
+                    : null,
+                tr: tr,
               ),
       ),
-      if (unread)
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            onPressed: () {
-              chatScroll.jumpTo(chatScroll.position.maxScrollExtent);
-              setState(() => unread = false);
-            },
-            icon: const Icon(Icons.arrow_downward),
-            label: Text(tr('Новые сообщения', 'New messages')),
-          ),
-        ),
       if (attachments case final PrivateAttachments current)
         attachmentStatus(current),
       if (selectedReply != null)
@@ -1775,81 +2031,45 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             ),
           ),
         ),
-      Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (supportsVideoMessages)
-              IconButton(
-                tooltip: tr('Записать видеосообщение', 'Record video message'),
-                icon: const Icon(Icons.videocam_outlined),
-                onPressed:
-                    attachments == null ||
-                        attachments!.busy ||
-                        profile?['trustConfirmed'] != true
-                    ? null
-                    : () => captureVideo(context),
+      ConversationComposer(
+        editor: draftLoadFailed
+            ? TextButton(
+                onPressed: () => restoreDraft(profile?['group'] as String?),
+                child: Text(
+                  tr('Повторить загрузку черновика', 'Retry loading draft'),
+                ),
+              )
+            : drafts?.readyFor(profile?['group'] as String?) != true
+            ? const LinearProgressIndicator()
+            : MessageComposer(
+                controller: composer,
+                tr: tr,
+                onSubmitted: (_) => send(),
               ),
-            IconButton(
-              tooltip: tr(
-                'Прикрепить файл (до 4 МиБ)',
-                'Attach file (up to 4 MiB)',
-              ),
-              icon: const Icon(Icons.attach_file),
-              onPressed:
-                  attachments == null ||
-                      attachments!.busy ||
-                      profile?['trustConfirmed'] != true
-                  ? null
-                  : () => chooseAttachment(context),
-            ),
-            IconButton(
-              tooltip: tr(
-                'Записать голосовое сообщение',
-                'Record a voice note',
-              ),
-              icon: const Icon(Icons.mic_none),
-              onPressed:
-                  attachments == null ||
-                      attachments!.busy ||
-                      profile?['trustConfirmed'] != true
-                  ? null
-                  : () => recordVoice(context),
-            ),
-            Expanded(
-              child: draftLoadFailed
-                  ? TextButton(
-                      onPressed: () =>
-                          restoreDraft(profile?['group'] as String?),
-                      child: Text(
-                        tr(
-                          'Повторить загрузку черновика',
-                          'Retry loading draft',
-                        ),
-                      ),
-                    )
-                  : drafts?.readyFor(profile?['group'] as String?) != true
-                  ? const LinearProgressIndicator()
-                  : MessageComposer(
-                      controller: composer,
-                      tr: tr,
-                      onSubmitted: (_) => send(),
-                    ),
-            ),
-            const SizedBox(width: 12),
-            IconButton.filled(
-              onPressed:
-                  profile!['trustConfirmed'] == true &&
-                      drafts?.readyFor(profile?['group'] as String?) == true &&
-                      !sending
-                  ? send
-                  : null,
-              tooltip: tr('Поставить сообщение в очередь', 'Queue message'),
-              icon: const Icon(Icons.arrow_upward),
-            ),
-          ],
-        ),
+        tr: tr,
+        videoSupported: supportsVideoMessages,
+        onVideo:
+            attachments?.busy == false && profile?['trustConfirmed'] == true
+            ? () => captureVideo(context)
+            : null,
+        onFile: attachments?.busy == false && profile?['trustConfirmed'] == true
+            ? () => chooseAttachment(context)
+            : null,
+        microphoneKey: microphoneButtonKey,
+        onVoiceHold:
+            attachments?.busy == false && profile?['trustConfirmed'] == true
+            ? (hold) => recordVoice(context, hold)
+            : null,
+        onVoice:
+            attachments?.busy == false && profile?['trustConfirmed'] == true
+            ? () => recordVoice(context)
+            : null,
+        onSend:
+            profile!['trustConfirmed'] == true &&
+                drafts?.readyFor(profile?['group'] as String?) == true &&
+                !sending
+            ? send
+            : null,
       ),
     ],
   );
@@ -1957,6 +2177,15 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       notificationSaveFailed = false;
     });
     try {
+      if (Platform.isAndroid &&
+          enabled &&
+          !await androidNotifications.requestPermission()) {
+        if (mounted && generation == epoch) {
+          setState(() => notificationBackend = false);
+        }
+        return;
+      }
+      if (!mounted || generation != epoch) return;
       await persistProfile(
         {},
         sessionOnly: true,
@@ -2038,166 +2267,289 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     );
   }
 
-  Widget settings(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(24),
-    children: [
-      Text(
-        tr('Настройки', 'Settings'),
-        style: Theme.of(context).textTheme.headlineMedium,
-      ),
-      const SizedBox(height: 24),
-      if (profile?['trustState'] == 'DEVICE_TRUSTED')
+  final settingsNavigation = GlobalKey<SettingsHierarchyState>();
+  final appearancePreferences = AppearancePreferences();
+  Future<void> appearanceWrites = Future.value();
+  bool languageChanged = false, themeChanged = false;
+  bool appearanceSaveFailed = false;
+
+  Future<void> restoreAppearance() async {
+    try {
+      final (mode, russian) = await appearancePreferences.read();
+      if (!mounted) return;
+      setState(() {
+        if (!themeChanged && mode != null) theme = mode;
+        if (!languageChanged && russian != null) ru = russian;
+      });
+    } catch (_) {
+      // Platform storage may be unavailable on first startup.
+    }
+  }
+
+  Future<void> changeAppearance({bool? russian, ThemeMode? mode}) {
+    setState(() {
+      if (russian != null) {
+        ru = russian;
+        languageChanged = true;
+      }
+      if (mode != null) {
+        theme = mode;
+        themeChanged = true;
+      }
+      appearanceSaveFailed = false;
+    });
+    appearanceWrites = appearanceWrites.then((_) async {
+      try {
+        if (russian != null) await appearancePreferences.saveLanguage(russian);
+        if (mode != null) await appearancePreferences.saveTheme(mode);
+      } catch (_) {
+        if (mounted) setState(() => appearanceSaveFailed = true);
+      }
+    });
+    return appearanceWrites;
+  }
+
+  Widget settings(BuildContext context) {
+    final ownerSession = session!;
+    final trusted = profile?['trustState'] == 'DEVICE_TRUSTED';
+    final modeLabels = {
+      ThemeMode.system: tr('Системная', 'System'),
+      ThemeMode.light: tr('Светлая', 'Light'),
+      ThemeMode.dark: tr('Тёмная', 'Dark'),
+    };
+    ListTile choice(String label, bool selected, VoidCallback select) =>
         ListTile(
-          leading: const Icon(Icons.badge_outlined),
-          title: Text(tr('Отображаемое имя', 'Display name')),
-          subtitle: Text('@${profile?['username'] ?? ''}'),
-          onTap: () {
-            final ownerSession = session!;
-            showDialog<void>(
+          title: Text(label),
+          selected: selected,
+          trailing: selected ? const Icon(Icons.check) : null,
+          onTap: select,
+        );
+    final saveError = ListTile(
+      title: Text(
+        tr(
+          'Выбор действует до выхода. Нажмите ещё раз, чтобы сохранить.',
+          'This choice applies until you exit. Select it again to save.',
+        ),
+      ),
+    );
+    return SettingsHierarchy(
+      key: settingsNavigation,
+      russian: ru,
+      sections: [
+        for (final section in SettingsSection.values)
+          if ((section != SettingsSection.profile || trusted) &&
+              (section != SettingsSection.notifications ||
+                  Platform.isLinux ||
+                  Platform.isAndroid))
+            section,
+      ],
+      summary: (section) => switch (section) {
+        SettingsSection.profile => '@${profile?['username'] ?? ''}',
+        SettingsSection.appearance => modeLabels[theme],
+        SettingsSection.language => ru ? 'Русский' : 'English',
+        _ => null,
+      },
+      content: (section) => switch (section) {
+        SettingsSection.profile => [
+          ListTile(
+            leading: const Icon(Icons.badge_outlined),
+            title: Text(tr('Отображаемое имя', 'Display name')),
+            onTap: () => showDialog<void>(
               context: context,
               builder: (_) =>
                   DisplayNameEditor(api: ownerSession.request, russian: ru),
-            );
-          },
-        ),
-      SwitchListTile(
-        title: Text(
-          tr(
-            'Блокировать при скрытии приложения',
-            'Lock when the app is hidden',
+            ),
           ),
-        ),
-        subtitle: Text(
-          backgroundLockSaveFailed
-              ? tr(
-                  'Не удалось сохранить настройку.',
-                  'Could not save this setting.',
-                )
-              : tr(
-                  'Для возврата понадобится пароль локального профиля. Обмен продолжится после разблокировки.',
-                  'Use your local profile passphrase to return. Delivery resumes after unlocking.',
-                ),
-        ),
-        value: profile?['lockWhenHidden'] == true,
-        onChanged: savingBackgroundLock ? null : setBackgroundLock,
-      ),
-      if (profile?['trustState'] == 'DEVICE_TRUSTED')
-        ListTile(
-          leading: const Icon(Icons.account_circle_outlined),
-          title: Text(tr('Фото профиля', 'Profile photo')),
-          onTap: () {
-            final ownerSession = session!;
-            showDialog<void>(
+          ListTile(
+            leading: const Icon(Icons.account_circle_outlined),
+            title: Text(tr('Фото профиля', 'Profile photo')),
+            onTap: () => showDialog<void>(
               context: context,
               builder: (_) =>
                   ProfilePhotoEditor(api: ownerSession.request, russian: ru),
-            );
-          },
-        ),
-      if (Platform.isLinux)
-        SwitchListTile(
-          title: Text(tr('Уведомления о сообщениях', 'Message notifications')),
-          subtitle: Text(
-            notificationSaveFailed
-                ? tr(
-                    'Не удалось сохранить настройку. Повторите попытку.',
-                    'Could not save this setting. Try again.',
-                  )
-                : notificationBackend == false &&
-                      profile?['desktopNotifications'] == true
-                ? tr(
-                    'Сервис уведомлений рабочего стола недоступен.',
-                    'Desktop notification service is unavailable.',
-                  )
-                : tr(
-                    'Пока окно в фоне и профиль открыт. Имя и текст скрыты.',
-                    'While the profile is unlocked and the window is in the background. Names and message text stay hidden.',
+            ),
+          ),
+        ],
+        SettingsSection.notifications => [
+          SwitchListTile(
+            title: Text(
+              tr('Уведомления о сообщениях', 'Message notifications'),
+            ),
+            subtitle: Text(
+              notificationSaveFailed
+                  ? tr(
+                      'Не удалось сохранить настройку. Повторите попытку.',
+                      'Could not save this setting. Try again.',
+                    )
+                  : notificationBackend == false
+                  ? tr(
+                      'Системные уведомления недоступны.',
+                      'System notifications are unavailable.',
+                    )
+                  : tr(
+                      'Пока окно в фоне и профиль открыт. Имя и текст скрыты.',
+                      'While the profile is unlocked and the window is in the background. Names and message text stay hidden.',
+                    ),
+            ),
+            value: profile?['desktopNotifications'] == true,
+            onChanged: changingNotifications ? null : setNotifications,
+          ),
+          if (Platform.isAndroid)
+            ListTile(
+              leading: const Icon(Icons.notifications_active_outlined),
+              title: Text(
+                tr(
+                  'Звук и разрешения в Android',
+                  'Android sound and permissions',
+                ),
+              ),
+              onTap: () async {
+                try {
+                  await androidNotifications.systemSettings();
+                } catch (_) {
+                  if (mounted) setState(() => notificationSaveFailed = true);
+                }
+              },
+            ),
+        ],
+        SettingsSection.privacy => [
+          SwitchListTile(
+            title: Text(
+              tr(
+                'Блокировать при скрытии приложения',
+                'Lock when the app is hidden',
+              ),
+            ),
+            subtitle: Text(
+              backgroundLockSaveFailed
+                  ? tr(
+                      'Не удалось сохранить настройку.',
+                      'Could not save this setting.',
+                    )
+                  : tr(
+                      'Обмен продолжится после разблокировки профиля.',
+                      'Delivery resumes after you unlock your profile.',
+                    ),
+            ),
+            value: profile?['lockWhenHidden'] == true,
+            onChanged: savingBackgroundLock ? null : setBackgroundLock,
+          ),
+          ListTile(
+            leading: const Icon(Icons.lock_outline),
+            title: Text(tr('Заблокировать профиль', 'Lock profile')),
+            onTap: lock,
+          ),
+        ],
+        SettingsSection.devices => [
+          if (deviceError != null)
+            ListTile(
+              title: Text(deviceError!),
+              trailing: TextButton(
+                onPressed: loadDevices,
+                child: Text(tr('Повторить', 'Retry')),
+              ),
+            ),
+          if (deviceError == null && devices.isEmpty)
+            ListTile(
+              title: Text(tr('Загрузка устройств…', 'Loading devices…')),
+            ),
+          for (final d in devices)
+            DeviceTile(
+              key: ValueKey(d['id']),
+              device: d as Map,
+              current: d['id'] == profile!['deviceId'],
+              russian: ru,
+              onRevoke: revokingDevice
+                  ? null
+                  : () => revokeDevice(d['id'] as String),
+            ),
+        ],
+        SettingsSection.storage => [
+          ProfileStorageSize(path: path.text.trim(), russian: ru),
+        ],
+        SettingsSection.appearance => [
+          for (final entry in modeLabels.entries)
+            choice(
+              entry.value,
+              theme == entry.key,
+              () => changeAppearance(mode: entry.key),
+            ),
+          ListTile(
+            title: Text(tr('Размер текста в чате', 'Chat text size')),
+            subtitle: Wrap(
+              spacing: 8,
+              children: [
+                for (final opt in [
+                  ('system', tr('Системный', 'System size')),
+                  ('larger', '115%'),
+                  ('largest', '130%'),
+                ])
+                  ChoiceChip(
+                    label: Text(opt.$2),
+                    selected: (profile?['chatTextSize'] ?? 'system') == opt.$1,
+                    onSelected: (_) => setChatStyle('chatTextSize', opt.$1),
                   ),
+              ],
+            ),
           ),
-          value: profile?['desktopNotifications'] == true,
-          onChanged: changingNotifications ? null : setNotifications,
-        ),
-      if (profile?['trustState'] == 'DEVICE_TRUSTED' &&
-          (labRemovalAvailable || profile?['labAccountRemoval'] == true))
-        ListTile(
-          leading: const Icon(Icons.delete_outline),
-          title: Text(tr('Удалить тестовый аккаунт', 'Delete lab account')),
-          onTap: () => removeLabAccount(context),
-        ),
-      SwitchListTile(
-        title: const Text('Русский / English'),
-        value: ru,
-        onChanged: (v) => setState(() => ru = v),
-      ),
-      ListTile(
-        title: Text(tr('Тема', 'Theme')),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: DropdownButton<ThemeMode>(
-            isExpanded: true,
-            value: theme,
-            items: [
-              DropdownMenuItem(
-                value: ThemeMode.system,
-                child: Text(tr('Системная', 'System')),
-              ),
-              DropdownMenuItem(
-                value: ThemeMode.light,
-                child: Text(tr('Светлая', 'Light')),
-              ),
-              DropdownMenuItem(
-                value: ThemeMode.dark,
-                child: Text(tr('Тёмная', 'Dark')),
-              ),
-            ],
-            onChanged: (v) => setState(() => theme = v!),
+          ListTile(
+            title: Text(tr('Фон переписки', 'Chat background')),
+            subtitle: Wrap(
+              spacing: 8,
+              children: [
+                for (final opt in [
+                  ('default', tr('Обычный', 'Default')),
+                  ('blue', tr('Голубой', 'Blue')),
+                  ('mint', tr('Мятный', 'Mint')),
+                ])
+                  ChoiceChip(
+                    label: Text(opt.$2),
+                    selected:
+                        (profile?['chatBackground'] ?? 'default') == opt.$1,
+                    onSelected: (_) => setChatStyle('chatBackground', opt.$1),
+                  ),
+              ],
+            ),
           ),
-        ),
-      ),
-      const SizedBox(height: 24),
-      Text(
-        tr('Устройства аккаунта', 'Account devices'),
-        style: Theme.of(context).textTheme.titleLarge,
-      ),
-      if (deviceError != null)
-        ListTile(
-          title: Text(deviceError!),
-          trailing: TextButton(
-            onPressed: loadDevices,
-            child: Text(tr('Повторить', 'Retry')),
+          if (appearanceSaveFailed) saveError,
+        ],
+        SettingsSection.language => [
+          choice('Русский', ru, () => changeAppearance(russian: true)),
+          choice('English', !ru, () => changeAppearance(russian: false)),
+          if (appearanceSaveFailed) saveError,
+        ],
+        SettingsSection.advanced => [
+          ListTile(
+            title: const Text('SecureMesh'),
+            subtitle: Text(
+              tr(
+                'Экспериментальная версия. Независимый аудит безопасности ещё не завершён.',
+                'Experimental release. The independent security audit is pending.',
+              ),
+            ),
           ),
-        ),
-      for (final d in devices)
-        DeviceTile(
-          key: ValueKey(d['id']),
-          device: d as Map,
-          current: d['id'] == profile!['deviceId'],
-          russian: ru,
-          onRevoke: revokingDevice
-              ? null
-              : () => revokeDevice(d['id'] as String),
-        ),
-      const SizedBox(height: 24),
-      Text(
-        tr(
-          'Локальная альфа без независимого аудита. Публичные каналы поддерживают текст. Медиа и звонки пока в разработке.',
-          'Local alpha without an independent audit. Public channels support text. Media and calls are in development.',
-        ),
-      ),
-      const SizedBox(height: 24),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: OutlinedButton.icon(
-          onPressed: lock,
-          icon: const Icon(Icons.lock_outline),
-          label: Text(tr('Заблокировать профиль', 'Lock profile')),
-        ),
-      ),
-    ],
-  );
+          ListTile(
+            leading: const Icon(Icons.description_outlined),
+            title: Text(tr('Лицензии', 'Licenses')),
+            onTap: () => showLicensePage(
+              context: context,
+              applicationName: 'SecureMesh',
+            ),
+          ),
+          if (trusted &&
+              (labRemovalAvailable || profile?['labAccountRemoval'] == true))
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: Text(tr('Удалить тестовый аккаунт', 'Delete lab account')),
+              onTap: () => removeLabAccount(context),
+            ),
+        ],
+      },
+    );
+  }
 }
 
-enum _ChatAction { audio, video, search, verify }
+enum _ChatAction { audio, video, search, verify, saved }
 
 class ConversationHeader extends StatelessWidget {
   const ConversationHeader({
@@ -2210,12 +2562,13 @@ class ConversationHeader extends StatelessWidget {
     required this.onCall,
     required this.onSearch,
     required this.onVerify,
+    this.onSaved,
   });
 
   final String peerName;
   final bool verified, canCall;
   final String Function(String, String) tr;
-  final VoidCallback? onBack;
+  final VoidCallback? onBack, onSaved;
   final ValueChanged<bool> onCall;
   final VoidCallback onSearch, onVerify;
 
@@ -2228,6 +2581,7 @@ class ConversationHeader extends StatelessWidget {
     final video = tr('Видеозвонок', 'Video call');
     final search = tr('Поиск в переписке', 'Search conversation');
     final verify = tr('Проверить ключи', 'Verify keys');
+    final saved = tr('Избранное', 'Saved messages');
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 480;
@@ -2259,6 +2613,11 @@ class ConversationHeader extends StatelessWidget {
                   tooltip: tr('Действия чата', 'Chat actions'),
                   icon: const Icon(Icons.more_vert),
                   itemBuilder: (_) => [
+                    if (onSaved != null)
+                      PopupMenuItem(
+                        value: _ChatAction.saved,
+                        child: Text(saved),
+                      ),
                     PopupMenuItem(
                       value: _ChatAction.search,
                       child: Text(search),
@@ -2280,6 +2639,8 @@ class ConversationHeader extends StatelessWidget {
                   ],
                   onSelected: (action) {
                     switch (action) {
+                      case _ChatAction.saved:
+                        onSaved?.call();
                       case _ChatAction.search:
                         onSearch();
                       case _ChatAction.audio:
@@ -2304,6 +2665,12 @@ class ConversationHeader extends StatelessWidget {
                       ],
                       onSelected: onCall,
                     ),
+                    if (onSaved != null)
+                      IconButton(
+                        tooltip: saved,
+                        onPressed: onSaved,
+                        icon: const Icon(Icons.bookmark_outline),
+                      ),
                     IconButton(
                       tooltip: search,
                       icon: const Icon(Icons.search),

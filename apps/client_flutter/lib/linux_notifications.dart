@@ -1,6 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
+abstract interface class NativeNotificationBridge {
+  Future<bool> available();
+  Future<bool> show(bool russian);
+  Future<void> clear();
+}
+
 /// Only the committed MLS application event can trigger a desktop notification.
 bool isNewIncomingText(Map<String, dynamic> result, dynamic envelopeKind) {
   final event = result['event'];
@@ -16,11 +22,13 @@ bool isNewIncomingText(Map<String, dynamic> result, dynamic envelopeKind) {
 /// No caller may provide text, sender names, identifiers or notification actions.
 class LinuxNotifications {
   LinuxNotifications({
+    this.bridge,
     required this.allowed,
     required this.russian,
     required this.availability,
   });
 
+  final NativeNotificationBridge? bridge;
   final bool Function() allowed, russian;
   final void Function(bool) availability;
   Timer? _pending;
@@ -47,8 +55,10 @@ class LinuxNotifications {
     final generation = _generation;
     var available = false;
     try {
-      available = (await _call('GetCapabilities', [])).exitCode == 0;
-    } on ProcessException {
+      available = bridge != null
+          ? await bridge!.available()
+          : (await _call('GetCapabilities', [])).exitCode == 0;
+    } on Exception {
       available = false;
     }
     if (generation == _generation) availability(available);
@@ -72,21 +82,25 @@ class LinuxNotifications {
     final generation = _generation;
     var available = false;
     try {
-      final result = await _call('Notify', [
-        'SecureMesh',
-        '0',
-        '',
-        'SecureMesh',
-        russian() ? 'Новое сообщение' : 'New message',
-        '[]',
-        '{}',
-        '5000',
-      ]);
-      available = result.exitCode == 0;
+      if (bridge != null) {
+        available = await bridge!.show(russian());
+      } else {
+        final result = await _call('Notify', [
+          'SecureMesh',
+          '0',
+          '',
+          'SecureMesh',
+          russian() ? 'Новое сообщение' : 'New message',
+          '[]',
+          '{}',
+          '5000',
+        ]);
+        available = result.exitCode == 0;
+      }
       if (available && generation == _generation) {
         _visible = Stopwatch()..start();
       }
-    } on ProcessException {
+    } on Exception {
       available = false;
     } finally {
       _sending = false;
@@ -95,6 +109,7 @@ class LinuxNotifications {
   }
 
   void cancel() {
+    unawaited(bridge?.clear().catchError((_) {}));
     _generation++;
     _pending?.cancel();
     _pending = null;

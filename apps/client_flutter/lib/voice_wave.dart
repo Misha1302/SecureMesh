@@ -9,10 +9,33 @@ const _maxData = voiceRate * 2 * voiceSeconds;
 
 class VoiceSamples {
   final _bytes = BytesBuilder();
+  final peaks = <double>[];
+  int _lowByte = 0, _peak = 0;
+  int _samplesInBin = 0;
+  bool _needsHighByte = false;
+
   int get seconds => _bytes.length ~/ (voiceRate * 2);
   bool add(Uint8List chunk) {
     final left = _maxData - _bytes.length;
-    _bytes.add(Uint8List.sublistView(chunk, 0, math.min(left, chunk.length)));
+    final accepted = Uint8List.sublistView(
+      chunk,
+      0,
+      math.min(left, chunk.length),
+    );
+    _bytes.add(accepted);
+    for (final byte in accepted) {
+      if (_needsHighByte) {
+        final sample = (_lowByte | (byte << 8)).toSigned(16);
+        _peak = math.max(_peak, sample.abs());
+        if (++_samplesInBin == voiceRate ~/ 5) {
+          peaks.add(_peak / 32768);
+          _samplesInBin = _peak = 0;
+        }
+      } else {
+        _lowByte = byte;
+      }
+      _needsHighByte = !_needsHighByte;
+    }
     return _bytes.length == _maxData;
   }
 
@@ -62,4 +85,19 @@ Duration voiceDuration(Uint8List bytes) {
     throw const FormatException('INVALID_VOICE');
   }
   return Duration(microseconds: size * 1000000 ~/ (voiceRate * 2));
+}
+
+/// Peak absolute amplitude in equal time intervals of a validated mono clip.
+List<double> voicePeaks(Uint8List wav, {int bars = 36}) {
+  voiceDuration(wav);
+  final data = ByteData.sublistView(wav, 44);
+  final samples = data.lengthInBytes ~/ 2;
+  final count = bars.clamp(1, samples);
+  final peaks = List<double>.filled(count, 0);
+  for (var i = 0; i < samples; i++) {
+    final bin = i * count ~/ samples;
+    final amplitude = data.getInt16(i * 2, Endian.little).abs() / 32768;
+    peaks[bin] = math.max(peaks[bin], amplitude);
+  }
+  return peaks;
 }

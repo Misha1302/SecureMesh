@@ -102,8 +102,12 @@ class VideoMessageDialog extends StatefulWidget {
     super.key,
     required this.tr,
     this.received,
+    this.inline = false,
+    this.onClose,
     this.listCameras = availableCameras,
-  });
+  }) : assert(!inline || (received != null && onClose != null));
+  final bool inline;
+  final VoidCallback? onClose;
   final Future<List<CameraDescription>> Function() listCameras;
   final String Function(String, String) tr;
   final Uint8List? received;
@@ -114,6 +118,10 @@ class VideoMessageDialog extends StatefulWidget {
 class _VideoMessageDialogState extends State<VideoMessageDialog>
     with WidgetsBindingObserver {
   CameraController? camera;
+  List<CameraDescription> cameras = const [];
+  final elapsed = Stopwatch();
+  bool paused = false, pauseUnavailable = false;
+  Route<void>? fullscreen;
   VideoPlayerController? player;
   Directory? folder;
   File get file => File('${folder!.path}/clip.mp4');
@@ -130,14 +138,16 @@ class _VideoMessageDialogState extends State<VideoMessageDialog>
     WidgetsBinding.instance.addObserver(this);
     pending = run(() async {
       final received = widget.received;
-      final cameras = received == null
+      if (received != null && !isLocalVideo(received)) {
+        throw const FormatException();
+      }
+      cameras = received == null
           ? await widget.listCameras()
           : const <CameraDescription>[];
       if (closed) return;
       folder = await (await VideoScratch.root()).createTemp('clip-');
       if (closed) return;
       if (received != null) {
-        if (!isLocalVideo(received)) throw const FormatException();
         await file.writeAsBytes(received, flush: true);
         await preview();
         return;
@@ -181,11 +191,52 @@ class _VideoMessageDialogState extends State<VideoMessageDialog>
       ),
     );
     recording = true;
-    if (!closed) timer = Timer(videoRecordLimit, () => perform(stop));
+    elapsed
+      ..reset()
+      ..start();
+    if (!closed) {
+      timer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+        if (!mounted || closed || !recording) return;
+        if (elapsed.elapsed >= videoRecordLimit && !busy) {
+          perform(stop);
+        } else if (!paused) {
+          setState(() {});
+        }
+      });
+    }
+  }
+
+  Future<void> togglePause() async {
+    try {
+      if (paused) {
+        await CameraPlatform.instance.resumeVideoRecording(camera!.cameraId);
+      } else {
+        await CameraPlatform.instance.pauseVideoRecording(camera!.cameraId);
+      }
+      if (closed) return;
+      paused = !paused;
+      if (paused) {
+        elapsed.stop();
+      } else {
+        elapsed.start();
+      }
+    } catch (_) {
+      pauseUnavailable = true;
+    }
+  }
+
+  Future<void> switchCamera() async {
+    final current = camera!.description;
+    final next = cameras.firstWhere(
+      (c) => c.lensDirection != current.lensDirection,
+      orElse: () => cameras[(cameras.indexOf(current) + 1) % cameras.length],
+    );
+    await camera!.setDescription(next);
   }
 
   Future<void> stop() async {
     timer?.cancel();
+    elapsed.stop();
     final result = await CameraPlatform.instance.stopVideoRecording(
       camera!.cameraId,
     );
@@ -215,10 +266,17 @@ class _VideoMessageDialogState extends State<VideoMessageDialog>
   }
 
   void dismiss([Uint8List? result]) {
-    if (!mounted || closed || ModalRoute.of(context)?.isCurrent != true) return;
+    if (!mounted || closed) return;
+    final route = fullscreen;
+    if (route?.isActive == true) route!.navigator!.removeRoute(route);
+    if (!widget.inline && ModalRoute.of(context)?.isCurrent != true) return;
     closed = true;
     timer?.cancel();
-    Navigator.pop(context, result);
+    if (widget.inline) {
+      widget.onClose!();
+    } else {
+      Navigator.pop(context, result);
+    }
   }
 
   @override
@@ -232,6 +290,12 @@ class _VideoMessageDialogState extends State<VideoMessageDialog>
   @override
   void dispose() {
     closed = true;
+    final route = fullscreen;
+    if (route != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (route.isActive) route.navigator!.removeRoute(route);
+      });
+    }
     WidgetsBinding.instance.removeObserver(this);
     timer?.cancel();
     unawaited(
@@ -263,6 +327,55 @@ class _VideoMessageDialogState extends State<VideoMessageDialog>
     super.dispose();
   }
 
+  void openFullscreen(VideoPlayerController playback) {
+    if (fullscreen != null || closed) return;
+    final route = MaterialPageRoute<void>(
+      builder: (ctx) => Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          title: Text(widget.tr('Видеосообщение', 'Video message')),
+        ),
+        bottomNavigationBar: SafeArea(
+          child: ValueListenableBuilder<VideoPlayerValue>(
+            valueListenable: playback,
+            builder: (context, v, _) => TextButton.icon(
+              onPressed: () => perform(() => togglePlayback(playback)),
+              icon: Icon(v.isPlaying ? Icons.pause : Icons.play_arrow),
+              label: Text(
+                v.isPlaying
+                    ? widget.tr('Пауза', 'Pause')
+                    : widget.tr('Смотреть', 'Play'),
+              ),
+            ),
+          ),
+        ),
+        body: SafeArea(
+          child: Center(
+            child: AspectRatio(
+              aspectRatio: playback.value.aspectRatio,
+              child: VideoPlayer(playback),
+            ),
+          ),
+        ),
+      ),
+    );
+    fullscreen = route;
+    unawaited(
+      Navigator.of(context).push(route).whenComplete(() => fullscreen = null),
+    );
+  }
+
+  Future<void> togglePlayback(VideoPlayerController playback) async {
+    if (playback.value.isPlaying) {
+      await playback.pause();
+      return;
+    }
+    if (playback.value.position >= playback.value.duration) {
+      await playback.seekTo(Duration.zero);
+    }
+    await playback.play();
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = widget.tr;
@@ -288,63 +401,160 @@ class _VideoMessageDialogState extends State<VideoMessageDialog>
         ),
       );
     }
+    final content = failed
+        ? Text(
+            tr(
+              'Видео недоступно. Проверьте разрешения камеры и микрофона или выберите другой файл.',
+              'Video unavailable. Check camera and microphone permissions or choose another file.',
+            ),
+          )
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 184),
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: ClipOval(child: surface),
+                      ),
+                      if (playback != null && playback.value.isInitialized)
+                        ValueListenableBuilder<VideoPlayerValue>(
+                          valueListenable: playback,
+                          builder: (_, value, _) => IgnorePointer(
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              value:
+                                  (value.position.inMilliseconds /
+                                          value.duration.inMilliseconds.clamp(
+                                            1,
+                                            14000,
+                                          ))
+                                      .clamp(0, 1),
+                              semanticsLabel: tr(
+                                'Позиция видео',
+                                'Video progress',
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (recording)
+                Text(
+                  '${elapsed.elapsed.inSeconds.clamp(0, 12)} / 12 ${tr('с', 's')}',
+                )
+              else if (widget.received == null && playback == null)
+                Text(tr('До 12 секунд · 4 МиБ', 'Up to 12 seconds · 4 MiB')),
+              if (cam != null &&
+                  cam.value.isInitialized &&
+                  !recording &&
+                  cameras.length > 1)
+                IconButton(
+                  tooltip: tr('Переключить камеру', 'Switch camera'),
+                  onPressed: busy ? null : () => perform(switchCamera),
+                  icon: const Icon(Icons.cameraswitch_outlined),
+                ),
+              if (recording && !pauseUnavailable)
+                TextButton.icon(
+                  onPressed: busy ? null : () => perform(togglePause),
+                  icon: Icon(paused ? Icons.videocam_outlined : Icons.pause),
+                  label: Text(
+                    paused
+                        ? tr('Продолжить запись', 'Resume recording')
+                        : tr('Пауза записи', 'Pause recording'),
+                  ),
+                ),
+              if (recording && pauseUnavailable)
+                Text(
+                  tr(
+                    'Пауза на этом устройстве недоступна.',
+                    'Recording pause is unavailable on this device.',
+                  ),
+                ),
+              if (playback != null && playback.value.isInitialized)
+                ValueListenableBuilder<VideoPlayerValue>(
+                  valueListenable: playback,
+                  builder: (_, v, _) => Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        '${v.position.inSeconds.clamp(0, v.duration.inSeconds)}/${v.duration.inSeconds} ${tr('с', 's')}',
+                      ),
+                      IconButton(
+                        tooltip: v.volume > 0
+                            ? tr('Без звука', 'Mute')
+                            : tr('Включить звук', 'Unmute'),
+                        icon: Icon(
+                          v.volume > 0
+                              ? Icons.volume_up_outlined
+                              : Icons.volume_off_outlined,
+                        ),
+                        onPressed: busy
+                            ? null
+                            : () => perform(
+                                () => playback.setVolume(v.volume > 0 ? 0 : 1),
+                              ),
+                      ),
+                      IconButton(
+                        tooltip: tr('Во весь экран', 'Fullscreen'),
+                        icon: const Icon(Icons.fullscreen),
+                        onPressed: busy ? null : () => openFullscreen(playback),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+    final actions = <Widget>[
+      TextButton(onPressed: dismiss, child: Text(tr('Закрыть', 'Close'))),
+      if (!failed && playback == null)
+        FilledButton(
+          onPressed: busy ? null : () => perform(recording ? stop : start),
+          child: Text(
+            recording ? tr('Стоп', 'Stop') : tr('Записать', 'Record'),
+          ),
+        ),
+      if (!failed && playback != null && playback.value.isInitialized)
+        ValueListenableBuilder<VideoPlayerValue>(
+          valueListenable: playback,
+          builder: (_, v, _) => TextButton(
+            onPressed: busy
+                ? null
+                : () => perform(() => togglePlayback(playback)),
+            child: Text(
+              v.isPlaying ? tr('Пауза', 'Pause') : tr('Смотреть', 'Play'),
+            ),
+          ),
+        ),
+      if (!failed && !busy && playback != null && widget.received == null)
+        FilledButton(
+          onPressed: () =>
+              perform(() async => dismiss(await file.readAsBytes())),
+          child: Text(tr('Отправить', 'Send')),
+        ),
+    ];
+    if (widget.inline) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          content,
+          Wrap(children: actions),
+        ],
+      );
+    }
     return AlertDialog(
       title: Text(tr('Видеосообщение', 'Video message')),
-      content: failed
-          ? Text(
-              tr(
-                'Видео недоступно. Проверьте разрешения камеры и микрофона или выберите другой файл.',
-                'Video unavailable. Check camera and microphone permissions or choose another file.',
-              ),
-            )
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox.square(
-                  dimension: 184,
-                  child: ClipOval(child: surface),
-                ),
-                if (widget.received == null)
-                  Text(tr('До 12 секунд · 4 МиБ', 'Up to 12 seconds · 4 MiB')),
-              ],
-            ),
-      actions: [
-        TextButton(onPressed: dismiss, child: Text(tr('Закрыть', 'Close'))),
-        if (!failed && playback == null)
-          FilledButton(
-            onPressed: busy ? null : () => perform(recording ? stop : start),
-            child: Text(
-              recording ? tr('Стоп', 'Stop') : tr('Записать', 'Record'),
-            ),
-          ),
-        if (!failed && playback != null && playback.value.isInitialized)
-          ValueListenableBuilder<VideoPlayerValue>(
-            valueListenable: playback,
-            builder: (_, v, _) => TextButton(
-              onPressed: busy
-                  ? null
-                  : () => perform(() async {
-                      if (v.isPlaying) {
-                        await playback.pause();
-                      } else {
-                        if (v.position >= v.duration) {
-                          await playback.seekTo(Duration.zero);
-                        }
-                        await playback.play();
-                      }
-                    }),
-              child: Text(
-                v.isPlaying ? tr('Пауза', 'Pause') : tr('Смотреть', 'Play'),
-              ),
-            ),
-          ),
-        if (!failed && !busy && playback != null && widget.received == null)
-          FilledButton(
-            onPressed: () =>
-                perform(() async => dismiss(await file.readAsBytes())),
-            child: Text(tr('Отправить', 'Send')),
-          ),
-      ],
+      scrollable: true,
+      content: content,
+      actions: actions,
     );
   }
 }

@@ -46,6 +46,9 @@ class VoicePlayer extends StatefulWidget {
 class _VoicePlayerState extends State<VoicePlayer> {
   AudioPlayer? player;
   late final Duration duration;
+  late final List<double> peaks;
+  double rate = 1;
+  bool rateUnavailable = false;
   Duration position = Duration.zero;
   bool playing = false, busy = false, failed = false;
   final subscriptions = <StreamSubscription<dynamic>>[];
@@ -57,6 +60,7 @@ class _VoicePlayerState extends State<VoicePlayer> {
   void initState() {
     super.initState();
     duration = voiceDuration(widget.bytes);
+    peaks = voicePeaks(widget.bytes);
   }
 
   Future<void> prepare() async {
@@ -143,6 +147,17 @@ class _VoicePlayerState extends State<VoicePlayer> {
           Text(
             widget.tr('Не удалось воспроизвести запись.', 'Playback failed.'),
           ),
+        SizedBox(
+          height: 28,
+          width: double.infinity,
+          child: CustomPaint(
+            painter: _WavePainter(
+              peaks,
+              position.inMicroseconds / duration.inMicroseconds,
+              Theme.of(context).colorScheme,
+            ),
+          ),
+        ),
         Row(
           children: [
             IconButton(
@@ -174,9 +189,119 @@ class _VoicePlayerState extends State<VoicePlayer> {
             ),
           ],
         ),
+        PopupMenuButton<double>(
+          tooltip: widget.tr('Скорость воспроизведения', 'Playback speed'),
+          enabled: !busy && !failed && !rateUnavailable,
+          initialValue: rate,
+          onSelected: (value) => run((p) async {
+            try {
+              await p.setPlaybackRate(value);
+              if (mounted) setState(() => rate = value);
+            } catch (_) {
+              if (mounted) setState(() => rateUnavailable = true);
+            }
+          }),
+          itemBuilder: (_) => [
+            for (final speed in [1.0, 1.5, 2.0])
+              PopupMenuItem(value: speed, child: Text('$speed×')),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              rateUnavailable
+                  ? widget.tr(
+                      'Смена скорости недоступна',
+                      'Speed control unavailable',
+                    )
+                  : '$rate×',
+            ),
+          ),
+        ),
       ],
     );
   }
+}
+
+class _WavePainter extends CustomPainter {
+  const _WavePainter(this.peaks, this.progress, this.colors);
+  final List<double> peaks;
+  final double progress;
+  final ColorScheme colors;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final step = size.width / peaks.length;
+    final paint = Paint()
+      ..strokeWidth = (step * .55).clamp(1.0, 4.0)
+      ..strokeCap = StrokeCap.round;
+    for (var i = 0; i < peaks.length; i++) {
+      paint.color = (i + .5) / peaks.length <= progress
+          ? colors.primary
+          : colors.outline;
+      final h = (peaks[i] * (size.height - 3)).clamp(1.0, size.height);
+      final x = step * (i + .5);
+      canvas.drawLine(
+        Offset(x, (size.height - h) / 2),
+        Offset(x, (size.height + h) / 2),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WavePainter old) =>
+      old.peaks != peaks || old.progress != progress || old.colors != colors;
+}
+
+enum VoiceHold { recording, locked, preview, cancelled }
+
+/// Overlay insertion keeps the initiating pointer in the composer's gesture
+/// arena. Pushing a Navigator route here would cancel the ongoing long press.
+Future<Uint8List?> showHeldVoice(
+  BuildContext context,
+  VoiceLabel tr,
+  ValueNotifier<VoiceHold> hold, {
+  AudioRecorder Function() makeRecorder = AudioRecorder.new,
+}) {
+  if (!context.mounted ||
+      hold.value == VoiceHold.cancelled ||
+      hold.value == VoiceHold.preview) {
+    return Future.value();
+  }
+  final result = Completer<Uint8List?>();
+  late final OverlayEntry overlay;
+  late final LocalHistoryEntry back;
+  void finish([Uint8List? clip]) {
+    if (result.isCompleted) return;
+    result.complete(clip);
+    back.remove();
+    overlay.remove();
+    overlay.dispose();
+  }
+
+  back = LocalHistoryEntry(onRemove: finish, impliesAppBarDismissal: false);
+  overlay = OverlayEntry(
+    builder: (_) => BlockSemantics(
+      child: Stack(
+        children: [
+          const ModalBarrier(dismissible: false, color: Colors.black54),
+          FocusScope(
+            autofocus: true,
+            child: SafeArea(
+              child: VoiceDialog(
+                tr,
+                hold: hold,
+                onFinish: finish,
+                makeRecorder: makeRecorder,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+  ModalRoute.of(context)!.addLocalHistoryEntry(back);
+  Overlay.of(context).insert(overlay);
+  return result.future;
 }
 
 class VoiceDialog extends StatefulWidget {
@@ -184,8 +309,12 @@ class VoiceDialog extends StatefulWidget {
     this.tr, {
     this.received,
     this.makeRecorder = AudioRecorder.new,
+    this.hold,
+    this.onFinish,
     super.key,
   });
+  final ValueNotifier<VoiceHold>? hold;
+  final void Function([Uint8List? clip])? onFinish;
   final AudioRecorder Function() makeRecorder;
   final VoiceLabel tr;
   final Uint8List? received;
@@ -201,6 +330,8 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
   Uint8List? clip;
   bool recording = false, busy = false, denied = false, error = false;
   int seconds = 0;
+  final activeTime = Stopwatch();
+  bool paused = false, pauseUnavailable = false;
   bool abandoned = false;
 
   @override
@@ -208,6 +339,46 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     clip = widget.received;
+    if (widget.hold != null) {
+      widget.hold!.addListener(holdChanged);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || abandoned) return;
+        final state = widget.hold!.value;
+        if (state == VoiceHold.cancelled || state == VoiceHold.preview) {
+          finish();
+          return;
+        }
+        unawaited(start());
+      });
+    }
+  }
+
+  void finish([Uint8List? value]) {
+    if (abandoned) return;
+    abandoned = true;
+    if (widget.onFinish != null) {
+      widget.onFinish!(value);
+    } else {
+      Navigator.pop(context, value);
+    }
+  }
+
+  void holdChanged() {
+    if (!mounted || abandoned) return;
+    switch (widget.hold!.value) {
+      case VoiceHold.cancelled:
+        finish();
+      case VoiceHold.preview:
+        if (recording) {
+          unawaited(stop());
+        } else if (clip == null && !denied && !error) {
+          finish();
+        }
+      case VoiceHold.locked:
+        setState(() {});
+      case VoiceHold.recording:
+        break;
+    }
   }
 
   Future<void> start() async {
@@ -235,13 +406,15 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
       if (!mounted || abandoned) return;
       setState(() {
         recording = true;
+        paused = pauseUnavailable = false;
         seconds = 0;
       });
       subscription = stream.listen(
         (bytes) {
-          if (!mounted || abandoned) return;
+          if (!mounted || abandoned || paused) return;
+          final previousBins = samples.peaks.length;
           final full = samples.add(bytes);
-          if (seconds != samples.seconds) {
+          if (previousBins != samples.peaks.length) {
             setState(() => seconds = samples.seconds);
           }
           if (full && recording) unawaited(stop());
@@ -253,13 +426,49 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
           if (recording) unawaited(stop());
         },
       );
-      limit = Timer(const Duration(seconds: voiceSeconds), () {
-        if (recording) unawaited(stop());
-      });
+      activeTime
+        ..reset()
+        ..start();
+      armLimit();
     } catch (_) {
       if (mounted) setState(() => error = true);
     } finally {
       if (mounted) setState(() => busy = false);
+    }
+  }
+
+  void armLimit() {
+    limit?.cancel();
+    limit = Timer(
+      const Duration(seconds: voiceSeconds) - activeTime.elapsed,
+      () {
+        if (mounted && recording && !abandoned) unawaited(stop());
+      },
+    );
+  }
+
+  Future<void> togglePause() async {
+    if (busy || !recording) return;
+    setState(() => busy = true);
+    try {
+      if (paused) {
+        await recorder!.resume();
+      } else {
+        await recorder!.pause();
+      }
+      if (!mounted || abandoned || !recording) return;
+      paused = !paused;
+      if (paused) {
+        activeTime.stop();
+        limit?.cancel();
+      } else {
+        activeTime.start();
+        armLimit();
+      }
+    } catch (_) {
+      if (mounted) pauseUnavailable = true;
+    } finally {
+      if (mounted && recording && !abandoned) setState(() => busy = false);
     }
   }
 
@@ -270,6 +479,7 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
       busy = true;
     });
     limit?.cancel();
+    activeTime.stop();
     try {
       await recorder?.stop();
       await subscription?.cancel();
@@ -288,14 +498,15 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
             state == AppLifecycleState.paused) &&
         mounted &&
         !abandoned &&
-        ModalRoute.of(context)?.isCurrent == true) {
-      abandoned = true;
-      Navigator.pop(context);
+        (widget.onFinish != null ||
+            ModalRoute.of(context)?.isCurrent == true)) {
+      finish();
     }
   }
 
   @override
   void dispose() {
+    widget.hold?.removeListener(holdChanged);
     abandoned = true;
     recording = false;
     limit?.cancel();
@@ -329,6 +540,11 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
                             'Микрофон недоступен. Проверьте устройство и повторите.',
                             'Microphone unavailable. Check the input device and retry.',
                           )
+                        : paused && recording
+                        ? tr(
+                            'Запись приостановлена · $seconds с',
+                            'Recording paused · $seconds s',
+                          )
                         : recording
                         ? tr(
                             'Запись · $seconds / 30 с',
@@ -339,6 +555,58 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
                             'Up to 30 seconds. You can listen before sending.',
                           ),
                   ),
+                  if (recording && widget.hold != null)
+                    Text(
+                      widget.hold!.value == VoiceHold.locked
+                          ? tr(
+                              'Запись закреплена. Нажмите «Остановить» для прослушивания.',
+                              'Hands-free recording. Stop to preview.',
+                            )
+                          : tr(
+                              'Влево — отменить, вверх — закрепить. Отпустите для прослушивания.',
+                              'Slide left to cancel or up to lock. Release to preview.',
+                            ),
+                    ),
+                  if (recording && samples.peaks.isNotEmpty)
+                    SizedBox(
+                      height: 28,
+                      width: double.infinity,
+                      child: CustomPaint(
+                        painter: _WavePainter(
+                          [
+                            ...List<double>.filled(
+                              (36 - samples.peaks.length).clamp(0, 36),
+                              0,
+                            ),
+                            ...samples.peaks.skip(
+                              (samples.peaks.length - 36).clamp(
+                                0,
+                                samples.peaks.length,
+                              ),
+                            ),
+                          ],
+                          1,
+                          Theme.of(context).colorScheme,
+                        ),
+                      ),
+                    ),
+                  if (recording && !pauseUnavailable)
+                    TextButton.icon(
+                      onPressed: busy ? null : togglePause,
+                      icon: Icon(paused ? Icons.mic : Icons.pause),
+                      label: Text(
+                        paused
+                            ? tr('Продолжить запись', 'Resume recording')
+                            : tr('Пауза записи', 'Pause recording'),
+                      ),
+                    ),
+                  if (recording && pauseUnavailable)
+                    Text(
+                      tr(
+                        'Пауза на этом устройстве недоступна.',
+                        'Recording pause is unavailable on this device.',
+                      ),
+                    ),
                   TextButton.icon(
                     onPressed: busy
                         ? null
@@ -357,17 +625,14 @@ class _VoiceDialogState extends State<VoiceDialog> with WidgetsBindingObserver {
       ),
       actions: [
         TextButton(
-          onPressed: () {
-            abandoned = true;
-            Navigator.pop(context);
-          },
+          onPressed: finish,
           child: Text(
             received ? tr('Закрыть', 'Close') : tr('Отмена', 'Cancel'),
           ),
         ),
         if (!received && clip != null)
           FilledButton(
-            onPressed: () => Navigator.pop(context, clip),
+            onPressed: () => finish(clip),
             child: Text(tr('Отправить', 'Send')),
           ),
       ],

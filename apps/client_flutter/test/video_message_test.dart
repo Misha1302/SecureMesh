@@ -33,6 +33,38 @@ void main() {
     clip[ref + 7] = 0;
     expect(isLocalVideo(clip), isFalse);
   });
+  testWidgets(
+    'inline video closes only the bubble and leaves its chat visible',
+    (tester) async {
+      bool open = true;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (_, update) => Column(
+                children: [
+                  const Text('Chat'),
+                  if (open)
+                    VideoMessageDialog(
+                      tr: (_, en) => en,
+                      received: Uint8List(1),
+                      inline: true,
+                      onClose: () => update(() => open = false),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(find.text('Chat'), findsOneWidget);
+      expect(find.byType(VideoMessageDialog), findsNothing);
+    },
+  );
   testWidgets('camera denial closes without sending or blocking the chat', (
     tester,
   ) async {
