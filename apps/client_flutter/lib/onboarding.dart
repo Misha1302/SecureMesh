@@ -137,8 +137,9 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       draft = state['draft'] as Map<String, dynamic>?;
       if (draft == null) throw StateError('DRAFT_MISSING');
       final version = draft!['credentialVersion'] ?? 1;
-      if (version != 1 && version != 2)
+      if (version != 1 && version != 2) {
         throw StateError('Unsupported credential version');
+      }
       legacy = version == 1;
       if (!legacy) password.text = widget.resumePassphrase!;
       endpoint.text = draft!['endpoint'] as String;
@@ -376,16 +377,18 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
             'Enter $min–$max characters.',
           );
         }
-        if (controller == displayName && peerDisplayName(v) == null)
+        if (controller == displayName && peerDisplayName(v) == null) {
           return tr(
             'Введите имя в одну строку.',
             'Enter your name on one line.',
           );
-        if (controller == localPassword && v == password.text)
+        }
+        if (controller == localPassword && v == password.text) {
           return tr(
             'Выберите отдельный пароль хранилища.',
             'Choose a separate local passphrase.',
           );
+        }
         if (controller == endpoint) {
           if (httpsServerOrigin(v) == null) {
             return tr(
