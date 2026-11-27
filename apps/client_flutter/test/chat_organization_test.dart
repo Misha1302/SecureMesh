@@ -55,6 +55,19 @@ void main() {
     }
 
     await open();
+    await choose('Bob', 'Chat folders');
+    await tester.enterText(
+      find.widgetWithText(TextField, 'New folder'),
+      'Друзья',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Друзья'));
+    await tester.pump();
+    expect(find.text('Alice'), findsNothing);
+    expect(find.text('Bob'), findsOneWidget);
+    await tester.tap(find.text('All'));
+    await tester.pump();
     await choose('Bob', 'Pin');
     expect(
       tester.getTopLeft(find.text('Bob')).dy,

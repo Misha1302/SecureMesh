@@ -233,7 +233,7 @@ class _DeviceNameState extends State<_DeviceNameDialog> {
       await widget.save(value);
       if (mounted) Navigator.pop(context);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           busy = false;
           error = tr(
@@ -241,6 +241,7 @@ class _DeviceNameState extends State<_DeviceNameDialog> {
             'Could not save device name.',
           );
         });
+      }
     }
   }
 

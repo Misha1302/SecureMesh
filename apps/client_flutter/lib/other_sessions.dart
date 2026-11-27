@@ -32,8 +32,9 @@ Future<int> revokeListedDevices(
     final list = await refresh();
     if (list != null) {
       for (final d in list) {
-        if (d['revoked'] == true && targets.contains(d['id']))
+        if (d['revoked'] == true && targets.contains(d['id'])) {
           confirmed.add(d['id'] as String);
+        }
       }
     }
   }

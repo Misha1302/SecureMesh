@@ -54,10 +54,11 @@ void main() {
     final uploads = PrivateAttachments(
       'group',
       (op, args) async {
-        if (op == 'attachment_pending')
+        if (op == 'attachment_pending') {
           return {
             'uploads': [...names],
           };
+        }
         names.add(args['name'] as String);
         captions.add(args['caption']);
         return {};

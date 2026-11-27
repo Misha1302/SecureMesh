@@ -1,3 +1,4 @@
+import 'chat_folders.dart';
 import 'display_name.dart';
 import 'identity_comparison.dart';
 import 'chat_preview.dart';
@@ -66,7 +67,20 @@ class _AccountHubState extends State<AccountHub> {
   String? get error => actionError ?? refreshError;
   String chatQuery = '';
   Map<String, ChatPreview> previews = {};
+  String? selectedFolder;
   bool archiveOpen = false;
+  ChatFolderMap get folders => readChatFolders(account['chatFolders']);
+
+  Future<void> chooseFolders(String id) async {
+    final value = await showDialog<ChatFolderMap>(
+      context: context,
+      builder: (_) => ChatFolderPicker(folders, id, tr),
+    );
+    if (!mounted || value == null) return;
+    await save({...account, 'chatFolders': value});
+    if (!value.containsKey(selectedFolder)) selectedFolder = null;
+  }
+
   bool composing = false;
   bool channelsOpen = false;
   Set<String> ids(String field) =>
@@ -81,9 +95,11 @@ class _AccountHubState extends State<AccountHub> {
   List<dynamic> visibleChats() {
     final pinned = ids('pinnedChats');
     final archived = ids('archivedChats');
+    final members = folders[selectedFolder]?.toSet();
     final matches = chats.where(
       (chat) =>
           archived.contains(chat['id']) == archiveOpen &&
+          (archiveOpen || members == null || members.contains(chat['id'])) &&
           ((chat['peerName'] as String).toLowerCase().contains(chatQuery) ||
               (peerDisplayName(chat['peerDisplayName']) ?? '')
                   .toLowerCase()
@@ -113,11 +129,13 @@ class _AccountHubState extends State<AccountHub> {
       return const [];
     }
     final live = chats.map((c) => c['id']).toSet();
+    final members = folders[selectedFolder]?.toSet();
     return saved.entries.where(
       (item) =>
           item.key is String &&
           item.value is Map &&
           !live.contains(item.key) &&
+          (archiveOpen || members == null || members.contains(item.key)) &&
           ids('archivedChats').contains(item.key) == archiveOpen &&
           (item.value['name']?.toString() ?? '').toLowerCase().contains(
             chatQuery,
@@ -1034,6 +1052,24 @@ class _AccountHubState extends State<AccountHub> {
                   .toLowerCase();
             }),
           ),
+          if (!archiveOpen && folders.isNotEmpty)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final folder in <String?>[null, ...folders.keys])
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(end: 6),
+                      child: ChoiceChip(
+                        label: Text(folder ?? tr('Все', 'All')),
+                        selected: selectedFolder == folder,
+                        onSelected: (_) =>
+                            setState(() => selectedFolder = folder),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           if (archiveOpen || ids('archivedChats').isNotEmpty)
             Align(
               alignment: Alignment.centerLeft,
@@ -1335,6 +1371,8 @@ class _AccountHubState extends State<AccountHub> {
       onSelected: (field) => action(
         () => field == 'rosterAdd' || field == 'rosterRemove'
             ? manageRoster(c, field == 'rosterAdd')
+            : field == 'folders'
+            ? chooseFolders(c['id'] as String)
             : toggleChat(field, c['id'] as String),
       ),
       itemBuilder: (_) => [
@@ -1353,6 +1391,10 @@ class _AccountHubState extends State<AccountHub> {
                 ? tr('Из архива', 'Unarchive')
                 : tr('В архив', 'Archive chat'),
           ),
+        ),
+        PopupMenuItem(
+          value: 'folders',
+          child: Text(tr('Папки чата', 'Chat folders')),
         ),
         const PopupMenuDivider(),
         PopupMenuItem(
