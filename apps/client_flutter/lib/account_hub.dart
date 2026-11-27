@@ -189,6 +189,7 @@ class _AccountHubState extends State<AccountHub> {
     String key, {
     String? group,
     String? name,
+    bool pinAfterConfirmation = true,
   }) async {
     final saved = (account['verifiedChats'] as Map?)?[group] as Map?;
     final pin = await widget.crypto('peer_key_status', {
@@ -262,11 +263,13 @@ class _AccountHubState extends State<AccountHub> {
       ),
     );
     if (answer != true) return false;
-    await widget.crypto('pin', {
-      'identity': peer,
-      'public_key': key,
-      'confirmed': true,
-    });
+    if (pinAfterConfirmation) {
+      await widget.crypto('pin', {
+        'identity': peer,
+        'public_key': key,
+        'confirmed': true,
+      });
+    }
     return true;
   }
 
@@ -410,7 +413,11 @@ class _AccountHubState extends State<AccountHub> {
     final parts = utf8
         .decode(base64Decode(request['payload'] as String))
         .split('\n');
-    if (parts.length != 8 || !await compare(parts[2], parts[3])) return;
+    // enrollment_approve verifies the signed request and commits the pin.
+    if (parts.length != 8 ||
+        !await compare(parts[2], parts[3], pinAfterConfirmation: false)) {
+      return;
+    }
     final signed = await widget.crypto('enrollment_approve', {
       'payload': request['payload'],
       'account': account['userId'],
