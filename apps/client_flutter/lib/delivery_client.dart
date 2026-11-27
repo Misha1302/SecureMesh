@@ -37,9 +37,11 @@ class NativeDelivery {
     required this.transport,
     this.onIncomingText,
     this.onCallSignal,
+    this.onRosterChange,
   });
   final void Function()? onIncomingText;
   final void Function(String group)? onCallSignal;
+  final Future<void> Function(String, Map)? onRosterChange;
   final CryptoCommand crypto;
   final MeshTransport transport;
   Future<void>? _receipt;
@@ -151,6 +153,22 @@ class NativeDelivery {
   }
 
   Future<void> _pullMessages(String group) async {
+    if (onRosterChange != null) {
+      final pending = (await crypto('roster_pending', {
+        'group': group,
+      }))['transition'];
+      if (pending is Map) {
+        final ack = await transport.https(
+          '/v1/roster/transitions',
+          data: Map<String, dynamic>.from(pending),
+        ) as Map;
+        await crypto('roster_saved', {
+          'group': group,
+          'id': pending['id'],
+          ...Map<String, dynamic>.from(ack),
+        });
+      }
+    }
     var cursor = (await crypto('cursor', {'group': group}))['cursor'] as String;
     for (var pages = 0; pages < 10 && !_closed; pages++) {
       Map<String, dynamic> page;
@@ -171,6 +189,30 @@ class NativeDelivery {
       for (var i = 0; i < messages.length; i++) {
         if (_closed) return;
         final message = messages[i] as Map;
+        if (onRosterChange != null &&
+            message['envelopeKind'] == 3 &&
+            message['senderDeviceId'] != transport.device) {
+          Map? change;
+          try {
+            change = await transport.https(
+              '/v1/conversations/$group/roster/${message['serverSequence']}',
+            ) as Map;
+          } on ApiFailure catch (failure) {
+            if (failure.status != 404) rethrow;
+          }
+          if (change != null) {
+            final t = change['transition'] as Map;
+            if (t['id'] != message['clientMessageId'] ||
+                t['seq'] != message['serverSequence'] ||
+                t['epoch'] != message['mlsEpoch'] ||
+                t['committer'] != message['senderDeviceId'] ||
+                t['commit'] != message['ciphertext']) {
+              throw StateError('ROSTER_ENVELOPE_MISMATCH');
+            }
+            await onRosterChange!(group, change);
+          }
+        }
+        if (_closed) return;
         final committed = await crypto('ingest', {
           'group': group,
           'id': message['clientMessageId'],

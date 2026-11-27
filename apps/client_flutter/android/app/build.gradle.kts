@@ -50,6 +50,7 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("distribution")
+            testProguardFile("instrumentation-rules.pro")
         }
     }
 }

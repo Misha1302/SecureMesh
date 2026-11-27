@@ -82,13 +82,13 @@ public static class ProfilePhotos
             var actor = await Sql.Authenticate(ctx, db);
             await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
             await using var cmd = Sql.Cmd(c, """
-                SELECT p.pixels FROM members own JOIN members peer ON own.conversation_id=peer.conversation_id
+                SELECT p.pixels FROM conversation_devices own JOIN members peer ON own.conversation_id=peer.conversation_id
                 JOIN devices d ON d.id=peer.device_id JOIN profile_photos p ON p.user_id=d.user_id
                 LEFT JOIN conversation_bootstraps b ON b.conversation_id=own.conversation_id
-                WHERE own.device_id=$1 AND own.conversation_id=$2 AND peer.device_id<>own.device_id
-                  AND p.version=$3 AND (b.conversation_id IS NULL OR b.sender_device=$1 OR b.received)
+                WHERE own.device_id=$1 AND own.conversation_id=$2 AND d.user_id<>$4
+                  AND p.version=$3 AND (b.conversation_id IS NULL OR b.sender_device=$1 OR b.received OR own.join_seq>0)
                   AND (SELECT count(*) FROM members WHERE conversation_id=$2)=2
-                """, actor.DeviceId, id, version);
+                """, actor.DeviceId, id, version, actor.UserId);
             var pixels = await cmd.ExecuteScalarAsync(ctx.RequestAborted) as byte[];
             if (pixels is null) throw new ApiError(404, "PHOTO_NOT_FOUND");
             return Results.Ok(new { pixels });

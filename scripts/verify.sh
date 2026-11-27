@@ -28,8 +28,10 @@ check smoke python3 tests/integration/smoke.py
 check delivery .local/venv/bin/python tests/integration/delivery.py
 check epochs .local/venv/bin/python tests/integration/epochs.py
 check device-enrollment .local/venv/bin/python tests/integration/enrollment.py
+check linked-device .local/venv/bin/python tests/integration/linked_device.py
 check enrollment-quota .local/venv/bin/python tests/integration/enrollment_quota.py
 check migrations .local/venv/bin/python tests/integration/migrations.py
+check account-removal .local/venv/bin/python tests/integration/account_removal.py
 check private-blobs .local/venv/bin/python tests/integration/private_blobs.py
 check mls-directory .local/venv/bin/python tests/integration/directory.py
 check public-channels .local/venv/bin/python tests/integration/public_channels.py

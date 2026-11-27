@@ -48,8 +48,8 @@ def login(username,password,device,expected=200):
     proof=device.call('sign',payload=challenge['payload'])['signature']
     return request('/v1/auth/login',dict(username=username,password=password,deviceId=device.identity,publicKey=device.public,challengeId=challenge['challengeId'],signature=proof),expected=expected)
 
-def account(root):
-    username='u_'+uuid.uuid4().hex[:20]; email=username+'@securemesh.test'; password=secrets.token_urlsafe(24)
+def account(root, domain="securemesh.test"):
+    username='u_'+uuid.uuid4().hex[:20]; email=username+'@'+domain; password=secrets.token_urlsafe(24)
     device=Device(root)
     request('/v1/auth/register',dict(username=username,email=email,password=password),expected=202)
     search='http://127.0.0.1:58028/api/v1/search?query='+urllib.parse.quote('to:'+email)

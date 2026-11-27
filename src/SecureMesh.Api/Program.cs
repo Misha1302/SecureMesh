@@ -49,6 +49,7 @@ app.MapProfilePhotos();
 app.MapPublicChannels();
 app.MapPrivateBlobs();
 app.MapDeviceTrust();
+app.MapRoster();
 app.MapMlsDirectory();
 Delivery.MapDelivery(app);
 app.MapStream();

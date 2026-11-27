@@ -32,11 +32,12 @@ class _AccountRemovalDialogState extends State<AccountRemovalDialog> {
       await widget.remove(password.text);
       if (mounted) Navigator.pop(context, true);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           working = false;
           failed = true;
         });
+      }
     }
   }
 

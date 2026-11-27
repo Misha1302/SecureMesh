@@ -32,5 +32,22 @@
     "private_blobs": 0
   },
   "private_blob_test": "Two Dart VMs with SQLCipher and TLS resumed at 32768. Original client decrypted 4 MiB after real PG restore.",
-  "installed_android_linux": "https://github.com/Misha1302/SecureMesh/actions/runs/45965981253/job/140402816829"
+  "installed_android_linux": "https://github.com/Misha1302/SecureMesh/actions/runs/45965981253/job/140402816829",
+  "combined_candidate": {
+    "source_commit_local": "0cdf9fa",
+    "flutter_tests_passed": 46,
+    "flutter_analyzer_issues": 0,
+    "cargo_tests_passed": 8,
+    "api_build": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "isolated_service_suites": {
+      "migrations": "PASS: fresh owned PostgreSQL database; all fourteen EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused.",
+      "restore_v2": "PASS: actual V2 schema with fourteen migrations, consented KeyPackage/Welcome DM and durable message/outbox restored into an isolated database; API login/session/DM listing and original SQLCipher/OpenMLS recipient decrypt/cursor/receipt work. Source DB remained available. Object/media restore not covered.",
+      "linked": "PASS HTTPS + PostgreSQL + three OpenMLS stores: authenticated enrollment, scoped package lease, signed transactional admission, immutable retry, history floor, Welcome ACK, future delivery, revoke and Remove.",
+      "account_removal": "PASS: actual native ClientApp Settings dialog, SQLCipher unlock and TLS account removal, profile file removed and prior session rejected."
+    },
+    "hardware_evidence": false
+  }
 }

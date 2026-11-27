@@ -25,6 +25,7 @@ import 'profile_files.dart';
 import 'profile_biometrics.dart';
 import 'account_removal.dart';
 import 'account_hub.dart';
+import 'linked_roster.dart';
 import 'display_name.dart';
 import 'device_tile.dart';
 import 'profile_photo.dart';
@@ -398,6 +399,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       delivery = NativeDelivery(
         crypto: crypto,
         transport: transport!,
+        onRosterChange: approveIncomingRoster,
         onCallSignal: (group) {
           unawaited(bindCall(group)?.poll());
         },
@@ -609,6 +611,65 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     }.toList();
   }
 
+  final declinedRoster = <String>{};
+
+  Future<void> approveIncomingRoster(String group, Map change) async {
+    final context = navigator.currentContext;
+    final epoch = generation;
+    final t = change['transition'] as Map;
+    if (context == null ||
+        !callsForeground ||
+        t['group'] != group ||
+        declinedRoster.contains(t['id'])) {
+      throw CryptoFailure();
+    }
+    final certificate = Map<String, dynamic>.from(
+      change['certificate'] as Map? ?? {},
+    );
+    final local = await crypto('roster_state', {'group': group});
+    String? key;
+    if (t['action'] == 'add') {
+      final parts = utf8
+          .decode(base64Decode(certificate['payload'] as String))
+          .split('\n');
+      if (parts.length != 8 || parts[2] != t['device']) throw CryptoFailure();
+      key = parts[3];
+    } else {
+      key =
+          (local['members'] as List)
+                  .where((m) => m['device'] == t['device'])
+                  .firstOrNull?['key']
+              as String?;
+    }
+    if (key == null ||
+        t['epoch'] != local['epoch'] ||
+        epoch != generation ||
+        !context.mounted) {
+      throw CryptoFailure();
+    }
+    final description =
+        "${t['action']} ${t['device']}\n$key\n${t['committer']}";
+    if (!await confirmRosterChange(
+          context,
+          group: group,
+          description: description,
+          tr: tr,
+        ) ||
+        epoch != generation) {
+      if (epoch == generation) declinedRoster.add(t['id'] as String);
+      throw CryptoFailure();
+    }
+    await crypto('roster_approve', {
+      'group': group,
+      'device': t['device'],
+      'epoch': t['epoch'],
+      'action': t['action'],
+      'approver': t['committer'],
+      ...certificate,
+      'confirmed': true,
+    });
+  }
+
   Future<void> pump() async {
     final groups = deliveryGroups;
     if (busy || store == null || !mounted || groups.isEmpty) return;
@@ -751,6 +812,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
 
   void lock() {
     generation++;
+    declinedRoster.clear();
     navigator.currentState?.popUntil((route) => route.isFirst);
     savingBackgroundLock = backgroundLockSaveFailed = false;
     desktopNotifications.cancel();
@@ -1555,7 +1617,10 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             ),
             IconButton(
               tooltip: tr('Повторить соединение', 'Reconnect'),
-              onPressed: () => unawaited(pump()),
+              onPressed: () {
+                declinedRoster.clear();
+                unawaited(pump());
+              },
               icon: const Icon(Icons.refresh),
             ),
           ],
@@ -1946,6 +2011,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     final device = profile?['deviceId'];
     final file = path.text.trim();
     if (owner == null || device is! String || file.isEmpty) return;
+    final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -1989,7 +2055,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       path.clear();
       showLocalUnlock = false;
     });
-    ScaffoldMessenger.of(this.context).showSnackBar(
+    messenger.showSnackBar(
       SnackBar(
         content: Text(
           localCleanupFailed

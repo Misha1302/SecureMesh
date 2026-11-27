@@ -1,6 +1,6 @@
 package com.example.securemesh_client
 
-import android.app.Activity
+import android.content.Context
 import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
@@ -21,7 +21,7 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 
 /** UI-thread operations. Only authenticated Cipher operations touch the SQLCipher passphrase. */
-internal class ProfileBiometrics(private val activity: Activity) {
+internal class ProfileBiometrics(private val context: Context) {
     private val store by lazy { KeyStore.getInstance("AndroidKeyStore").apply { load(null) } }
     private var cancelPending: (() -> Unit)? = null
 
@@ -40,11 +40,11 @@ internal class ProfileBiometrics(private val activity: Activity) {
         try {
             val path = File(requireNotNull(call.argument<String>("path"))).canonicalFile
             require(path.isFile && path.name.endsWith(".db"))
-            require(path.toPath().startsWith(activity.applicationInfo.dataDir.let { File(it).canonicalFile.toPath() }))
+            require(path.toPath().startsWith(context.applicationInfo.dataDir.let { File(it).canonicalFile.toPath() }))
             val id = MessageDigest.getInstance("SHA-256").digest(path.path.toByteArray())
                 .joinToString("") { "%02x".format(it) }
             val alias = "securemesh.profile.biometric.v1.$id"
-            val file = AtomicFile(File(activity.noBackupFilesDir, "unlock-v1-$id"))
+            val file = AtomicFile(File(context.noBackupFilesDir, "unlock-v1-$id"))
             val enrolled = file.baseFile.exists()
             if (call.method == "forget") {
                 if (store.containsAlias(alias)) store.deleteEntry(alias)
@@ -53,7 +53,7 @@ internal class ProfileBiometrics(private val activity: Activity) {
                 return
             }
             val strong = BiometricManager.Authenticators.BIOMETRIC_STRONG
-            val available = activity.getSystemService(BiometricManager::class.java).canAuthenticate(strong) ==
+            val available = context.getSystemService(BiometricManager::class.java).canAuthenticate(strong) ==
                 BiometricManager.BIOMETRIC_SUCCESS
             if (call.method == "status") {
                 result.success(if (enrolled) "enrolled" else if (available) "available" else "unavailable")
@@ -123,11 +123,11 @@ internal class ProfileBiometrics(private val activity: Activity) {
             cancelPending = { stop.cancel(); cancelled() }
             val ru = call.argument<Boolean>("russian") == true
             try {
-                BiometricPrompt.Builder(activity)
+                BiometricPrompt.Builder(context)
                     .setTitle(if (ru) "Биометрия SecureMesh" else "SecureMesh biometric unlock")
                     .setAllowedAuthenticators(strong)
-                    .setNegativeButton(if (ru) "Отмена" else "Cancel", activity.mainExecutor) { _, _ -> cancelled() }
-                    .build().authenticate(BiometricPrompt.CryptoObject(cipher), stop, activity.mainExecutor,
+                    .setNegativeButton(if (ru) "Отмена" else "Cancel", context.mainExecutor) { _, _ -> cancelled() }
+                    .build().authenticate(BiometricPrompt.CryptoObject(cipher), stop, context.mainExecutor,
                         object : BiometricPrompt.AuthenticationCallback() {
                             override fun onAuthenticationError(code: Int, message: CharSequence) = cancelled()
 

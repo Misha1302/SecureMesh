@@ -72,7 +72,8 @@ jobs:
             sleep 3
             adb shell pidof com.example.securemesh_client
             adb install -t apps/client_flutter/build/app/outputs/apk/androidTest/release/app-release-androidTest.apk
-            adb shell am instrument -w com.example.securemesh_client.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/biometric-instrumentation.txt"
+            adb shell am instrument -w -r -e class com.example.securemesh_client.BiometricUnavailableTest com.example.securemesh_client.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/biometric-instrumentation.txt"
+            adb logcat -b crash -d -t 250
             grep -Fq 'OK (1 test)' "$RUNNER_TEMP/biometric-instrumentation.txt"
       - name: Retain emulator-tested APK for laboratory use
         uses: actions/upload-artifact@v4

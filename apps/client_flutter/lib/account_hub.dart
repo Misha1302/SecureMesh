@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'local_client.dart';
+import 'linked_roster.dart';
 import 'transport.dart';
 
 typedef LocalCrypto = Future<Map<String, dynamic>> Function(
@@ -42,7 +43,7 @@ class _AccountHubState extends State<AccountHub> {
   late Map<String, dynamic> account;
   final username = TextEditingController(),
       enrollmentId = TextEditingController();
-  List<dynamic> requests = [], welcomes = [], chats = [];
+  List<dynamic> requests = [], welcomes = [], chats = [], rosterWelcomes = [];
   Map<String, dynamic>? certificate;
   String? actionError, refreshError;
   String? get error => actionError ?? refreshError;
@@ -176,10 +177,12 @@ class _AccountHubState extends State<AccountHub> {
         final incoming = await widget.api('/v1/chat-requests') as List;
         final pending = await widget.api('/v1/crypto/welcomes') as List;
         final existing = await widget.api('/v1/conversations') as List;
+        final linked = await widget.api('/v1/roster/welcomes') as List;
         if (mounted) {
           setState(() {
             requests = incoming;
             welcomes = pending;
+            rosterWelcomes = linked;
             chats = existing;
             directoryLoaded = true;
             trusted = true;
@@ -567,6 +570,203 @@ class _AccountHubState extends State<AccountHub> {
     });
   }
 
+  Future<void> publishLinkedPackage() async {
+    final package = await widget.crypto('keypackage');
+    await widget.api(
+      '/v1/crypto/keypackages',
+      data: {'payload': package['keypackage']},
+    );
+  }
+
+  Future<void> manageRoster(Map chat, bool adding) async {
+    final group = chat['id'] as String;
+    final state = await widget.crypto('roster_state', {'group': group});
+    final members = state['members'] as List;
+    if (adding && members.length != 2) {
+      throw StateError('ONLY_ONE_EXTRA_DEVICE_SUPPORTED');
+    }
+    final devices = await widget.api('/v1/devices') as List;
+    if (!mounted) return;
+    final input = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          adding
+              ? tr('Добавить устройство в чат', 'Add device to conversation')
+              : tr(
+                  'Удалить устройство из чата',
+                  'Remove device from conversation',
+                ),
+        ),
+        content: TextField(
+          controller: input,
+          decoration: InputDecoration(
+            labelText: adding
+                ? tr(
+                    'Номер подтверждённой заявки',
+                    'Approved enrollment identifier',
+                  )
+                : tr('ID отозванного устройства', 'Revoked device ID'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, input.text.trim()),
+            child: Text(tr('Далее', 'Next')),
+          ),
+        ],
+      ),
+    );
+    input.dispose();
+    if (value == null || !mounted) return;
+    uuidBytes(value);
+    final me = account['deviceId'] as String;
+    final epoch = state['epoch'];
+    final actionName = adding ? 'add' : 'remove';
+    Map<String, dynamic> cert = {};
+    String target = value;
+    String? key;
+    if (adding) {
+      final grant = await widget.api('/v1/devices/enrollment/$value') as Map;
+      final parts = utf8
+          .decode(base64Decode(grant['payload'] as String))
+          .split('\n');
+      if (parts.length != 8 ||
+          grant['approverId'] != me ||
+          grant['activationSignature'] is! String) {
+        throw StateError('ACTIVATED_ENROLLMENT_REQUIRED');
+      }
+      target = parts[2];
+      key = parts[3];
+      cert = {
+        'account': account['userId'],
+        'payload': grant['payload'],
+        'candidate_signature': grant['candidateSignature'],
+        'grant_signature': grant['grantSignature'],
+        'activation_signature': grant['activationSignature'],
+      };
+    }
+    final device = devices.where((item) => item['id'] == target).firstOrNull;
+    if (device == null || device['revoked'] == adding || target == me) {
+      throw StateError('DEVICE_NOT_ELIGIBLE');
+    }
+    if (!adding) {
+      key =
+          members.where((m) => m['device'] == target).firstOrNull?['key']
+              as String?;
+    }
+    if (key == null || key != device['publicKey']) {
+      throw StateError('DEVICE_KEY_MISMATCH');
+    }
+    if (!mounted ||
+        !await confirmRosterChange(
+          context,
+          group: group,
+          description: '$actionName $target\n$key',
+          tr: tr,
+        )) {
+      return;
+    }
+    final args = {
+      'group': group,
+      'epoch': epoch,
+      'device': target,
+      'approver': me,
+      'action': actionName,
+    };
+    final pending = (await widget.crypto('roster_pending', {
+      'group': group,
+    }))['transition'];
+    Map transition;
+    if (pending is Map) {
+      if (pending['device'] != target || pending['action'] != actionName) {
+        throw StateError('DIFFERENT_PENDING_TRANSITION');
+      }
+      transition = pending;
+    } else {
+      await widget.crypto('roster_approve', {
+        ...args,
+        ...cert,
+        'confirmed': true,
+      });
+      final id = newUuid();
+      final package = adding
+          ? await widget.api(
+              '/v1/conversations/$group/roster-packages/$target/$id',
+              data: {},
+            ) as Map
+          : <String, dynamic>{};
+      transition = await widget.crypto('roster_stage', {
+        ...args,
+        'id': id,
+        ...Map<String, dynamic>.from(package),
+      });
+    }
+    final ack = await widget.api(
+      '/v1/roster/transitions',
+      data: Map<String, dynamic>.from(transition),
+    ) as Map;
+    await widget.crypto('roster_saved', {
+      'group': group,
+      'id': transition['id'],
+      ...Map<String, dynamic>.from(ack),
+    });
+  }
+
+  Future<void> joinLinked(Map welcome) async {
+    final group = welcome['group'] as String;
+    final chat = chats.where((c) => c['id'] == group).firstOrNull;
+    if (chat == null) throw StateError('CHAT_NOT_AVAILABLE');
+    final peer = chat['peerDevice'] as String;
+    final key = chat['peerKey'] as String;
+    final approver = welcome['committer'] as String;
+    final own = account['deviceId'] as String;
+    final expected = [own, approver, peer];
+    if (expected.toSet().length != 3 || welcome['device'] != own) {
+      throw StateError('ROSTER_NOT_SUPPORTED');
+    }
+    if (!await compare(
+      peer,
+      key,
+      group: group,
+      name: chat['peerName'] as String,
+    )) {
+      return;
+    }
+    if (!mounted ||
+        !await confirmRosterChange(
+          context,
+          group: group,
+          description: '${expected.join('\n')}\n$peer: $key',
+          tr: tr,
+        )) {
+      return;
+    }
+    await widget.crypto('roster_join', {
+      'transition': welcome,
+      'expected_members': expected,
+      'confirmed': true,
+    });
+    // Persist the verified chat before acknowledging its Welcome. Retry is idempotent.
+    await save({
+      ...account,
+      'verifiedChats': {
+        ...?account['verifiedChats'] as Map?,
+        group: {'device': peer, 'key': key, 'name': chat['peerName']},
+      },
+    });
+    await widget.api(
+      '/v1/acks',
+      data: {'conversationId': group, 'sequence': welcome['seq']},
+    );
+    await widget.openChat(group, peer, chat['peerName'] as String, key);
+  }
+
   @override
   Widget build(BuildContext context) =>
       channelsOpen && trusted && widget.channelApi != null
@@ -666,6 +866,31 @@ class _AccountHubState extends State<AccountHub> {
             ),
         ],
       ] else ...[
+        if (account['enrollmentVerified'] == true) ...[
+          SelectableText(account['enrollmentId'] as String? ?? ''),
+          TextButton(
+            onPressed: blocked ? null : () => action(publishLinkedPackage),
+            child: Text(
+              tr(
+                'Опубликовать пакет для чата',
+                'Publish linked-device key package',
+              ),
+            ),
+          ),
+        ],
+        for (final welcome in rosterWelcomes)
+          ListTile(
+            title: Text(
+              tr(
+                'Приглашение для связанного устройства',
+                'Linked-device conversation invitation',
+              ),
+            ),
+            subtitle: SelectableText(welcome['group'] as String),
+            onTap: blocked
+                ? null
+                : () => action(() => joinLinked(welcome as Map)),
+          ),
         if (widget.channelApi != null)
           ListTile(
             leading: const Icon(Icons.campaign_outlined),
@@ -745,9 +970,27 @@ class _AccountHubState extends State<AccountHub> {
             trailing: PopupMenuButton<String>(
               enabled: !blocked,
               tooltip: tr('Действия с чатом', 'Chat actions'),
-              onSelected: (field) =>
-                  action(() => toggleChat(field, c['id'] as String)),
+              onSelected: (field) => action(
+                () => field == 'rosterAdd' || field == 'rosterRemove'
+                    ? manageRoster(c as Map, field == 'rosterAdd')
+                    : toggleChat(field, c['id'] as String),
+              ),
               itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'rosterAdd',
+                  child: Text(
+                    tr('Добавить связанное устройство', 'Add linked device'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'rosterRemove',
+                  child: Text(
+                    tr(
+                      'Удалить отозванное устройство',
+                      'Remove revoked device',
+                    ),
+                  ),
+                ),
                 PopupMenuItem(
                   value: 'pinnedChats',
                   child: Text(
@@ -775,6 +1018,13 @@ class _AccountHubState extends State<AccountHub> {
             onTap: blocked
                 ? null
                 : () => action(() async {
+                    if (rosterWelcomes.any((w) => w['group'] == c['id'])) {
+                      await joinLinked(
+                        rosterWelcomes.firstWhere((w) => w['group'] == c['id'])
+                            as Map,
+                      );
+                      return;
+                    }
                     if (await compare(
                       c['peerDevice'] as String,
                       c['peerKey'] as String,

@@ -58,6 +58,11 @@ public static class Sql
         if (requireTrusted && !trusted) throw new ApiError(403, "DEVICE_PENDING_TRUST");
         return new Actor(r.GetGuid(0), r.GetGuid(1), r.GetGuid(2), trusted);
     }
+    public static async Task<long> DeliveryFloor(NpgsqlConnection c, Guid conversation, Guid device)
+    {
+        await using var cmd=Cmd(c,"SELECT m.join_seq FROM conversation_devices m JOIN devices d ON d.id=m.device_id WHERE m.conversation_id=$1 AND d.id=$2 AND d.trusted AND NOT d.revoked",conversation,device);
+        return await cmd.ExecuteScalarAsync() is long floor ? floor : throw new ApiError(403,"MEMBERSHIP_REQUIRED");
+    }
     public static async Task RequireMember(NpgsqlConnection c, Guid conversation, Guid device)
     {
         await using var cmd = Cmd(c, "SELECT 1 FROM members m JOIN devices d ON d.id=m.device_id WHERE conversation_id=$1 AND device_id=$2 AND NOT d.revoked AND d.trusted", conversation, device);

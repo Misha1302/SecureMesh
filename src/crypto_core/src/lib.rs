@@ -240,6 +240,16 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     if op == "roster_join" {
         return roster::join(db, p, req, &identity, &public);
     }
+    if op == "roster_state" {
+        let group = load_group(p, s(req, "group")?)?;
+        ensure!(group.is_active(), "inactive group");
+        check_group(db, &group)?;
+        let members = roster::members(&group)?
+            .into_iter()
+            .map(|(id, key)| json!({"device":id,"key":B64.encode(key)}))
+            .collect::<Vec<_>>();
+        return Ok(json!({"epoch":group.epoch().as_u64(),"members":members}));
+    }
     if op == "roster_pending" {
         return roster::pending(db, s(req, "group")?);
     }

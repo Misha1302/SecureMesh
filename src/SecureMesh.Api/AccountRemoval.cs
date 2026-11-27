@@ -95,7 +95,7 @@ public static class AccountRemoval
         await Run("INSERT INTO removed_devices SELECT id FROM devices WHERE user_id=$1",account);
         await Run("""
             UPDATE conversations SET account_removed=true WHERE id IN
-                (SELECT conversation_id FROM members JOIN removed_devices ON device_id=removed_devices.id)
+                (SELECT conversation_id FROM conversation_devices JOIN removed_devices ON device_id=removed_devices.id)
             """);
         await Run("""
             DELETE FROM conversation_bootstraps WHERE sender_device IN (TABLE removed_devices)
