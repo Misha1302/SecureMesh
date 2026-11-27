@@ -78,14 +78,18 @@ fn credential(id: &str, signer: &SignatureKeyPair) -> CredentialWithKey {
 fn load_group(p: &Provider, id: &str) -> Result<MlsGroup> {
     MlsGroup::load(p.storage(), &GroupId::from_slice(id.as_bytes()))?.context("missing group")
 }
+fn pinned_key(db: &Connection, identity: &str) -> Result<Option<Vec<u8>>> {
+    Ok(db
+        .query_row("SELECT public_key FROM pins WHERE identity=?", [identity], |r| {
+            r.get(0)
+        })
+        .optional()?)
+}
+
 fn check_member(db: &Connection, cred: &Credential, key: &[u8]) -> Result<()> {
     let identity = BasicCredential::try_from(cred.clone())?;
     let id = std::str::from_utf8(identity.identity())?;
-    let pin: Option<Vec<u8>> = db
-        .query_row("SELECT public_key FROM pins WHERE identity=?", [id], |r| {
-            r.get(0)
-        })
-        .optional()?;
+    let pin = pinned_key(db, id)?;
     ensure!(pin.as_deref() == Some(key), "KEY_VERIFICATION_REQUIRED");
     Ok(())
 }
@@ -132,6 +136,16 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
         "sign" => Ok(
             json!({"signature":B64.encode(signer.sign(&bytes(req,"payload")?).map_err(|_|anyhow!("signature failed"))?)}),
         ),
+        "peer_key_status" => {
+            let key = bytes(req, "public_key")?;
+            ensure!(key.len() == 32, "bad key");
+            let status = match pinned_key(db, s(req, "identity")?)? {
+                None => "unknown",
+                Some(existing) if existing == key => "matches",
+                Some(_) => "changed",
+            };
+            Ok(json!({"status":status}))
+        }
         "pin" => {
             // Only invoked after the human compares an out-of-band public fingerprint.
             ensure!(
@@ -141,11 +155,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             let id = s(req, "identity")?;
             let key = bytes(req, "public_key")?;
             ensure!(key.len() == 32, "bad key");
-            let old: Option<Vec<u8>> = db
-                .query_row("SELECT public_key FROM pins WHERE identity=?", [id], |r| {
-                    r.get(0)
-                })
-                .optional()?;
+            let old = pinned_key(db, id)?;
             ensure!(
                 old.as_ref().is_none_or(|v| v == &key),
                 "KEY_CHANGED_REJECTED"

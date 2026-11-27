@@ -62,6 +62,16 @@ def main():
         root=Path(tmp)
         a,b,c,attacker=[Device(root) for _ in range(4)]
         assert len({a.public,b.public,c.public,attacker.public})==4
+        def peer_status(key):
+            return a.call('peer_key_status', identity=b.identity, public_key=key)['status']
+
+        assert peer_status(b.public) == 'unknown'
+        assert peer_status(attacker.public) == 'unknown'
+        a.call('peer_key_status', reject=True, identity=b.identity, public_key='AA==')
+        a.pin(b)
+        assert peer_status(b.public) == 'matches'
+        assert peer_status(attacker.public) == 'changed'
+        assert peer_status(b.public) == 'matches'
         for x in (a,b,c):
             for y in (a,b,c): x.pin(y)
         group=str(uuid.uuid4())
