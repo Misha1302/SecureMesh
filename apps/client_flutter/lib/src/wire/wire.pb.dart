@@ -801,12 +801,15 @@ class SyncResponse extends $pb.GeneratedMessage {
     $core.Iterable<EncryptedEnvelope>? messages,
     $core.List<$core.int>? nextCursor,
     $core.bool? hasMore,
+    $fixnum.Int64? peerProcessedSequence,
   }) {
     final result = SyncResponse._();
     if (conversationId != null) result.conversationId = conversationId;
     if (messages != null) result.messages.addAll(messages);
     if (nextCursor != null) result.nextCursor = nextCursor;
     if (hasMore != null) result.hasMore = hasMore;
+    if (peerProcessedSequence != null)
+      result.peerProcessedSequence = peerProcessedSequence;
     return result;
   }
 
@@ -831,6 +834,9 @@ class SyncResponse extends $pb.GeneratedMessage {
     ..a<$core.List<$core.int>>(
         3, _omitFieldNames ? '' : 'nextCursor', $pb.PbFieldType.OY)
     ..aOB(4, _omitFieldNames ? '' : 'hasMore')
+    ..a<$fixnum.Int64>(
+        5, _omitFieldNames ? '' : 'peerProcessedSequence', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -884,6 +890,15 @@ class SyncResponse extends $pb.GeneratedMessage {
   $core.bool hasHasMore() => $_has(3);
   @$pb.TagNumber(4)
   void clearHasMore() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $fixnum.Int64 get peerProcessedSequence => $_getI64(4);
+  @$pb.TagNumber(5)
+  set peerProcessedSequence($fixnum.Int64 value) => $_setInt64(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasPeerProcessedSequence() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearPeerProcessedSequence() => $_clearField(5);
 }
 
 class ProcessedAck extends $pb.GeneratedMessage {

@@ -89,6 +89,7 @@ message SyncResponse {
   repeated EncryptedEnvelope messages = 2;
   bytes next_cursor = 3;
   bool has_more = 4;
+  uint64 peer_processed_sequence = 5; // Received and committed by another account.
 }
 
 message ProcessedAck {

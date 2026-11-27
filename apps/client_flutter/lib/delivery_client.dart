@@ -35,6 +35,7 @@ class NativeDelivery {
   final CryptoCommand crypto;
   final MeshTransport transport;
   Future<void>? _receipt;
+  final Map<String, int> _peerProcessed = {};
   final Map<String, int> _acknowledged = {};
   final Map<String, Future<void>> _sends = {};
   Future<void>? _pull;
@@ -160,6 +161,11 @@ class NativeDelivery {
           'digest': message['ciphertextSha256'],
           'cursor': i == messages.length - 1 ? page['nextCursor'] : '',
         });
+      }
+      final processed = page['peerProcessedSequence'];
+      if (processed is int && processed > (_peerProcessed[group] ?? 0)) {
+        await crypto('peer_processed', {'group': group, 'seq': processed});
+        _peerProcessed[group] = processed;
       }
       _received += messages.length;
       cursor = page['nextCursor'] as String;

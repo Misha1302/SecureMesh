@@ -15,3 +15,12 @@ Initial one-device DMs use accepted username requests, bounded public-only OpenM
 MeshTransport is the native WSS-first protobuf client with a six-request bound, strict correlation/ACK checks, HTTPS fallback and WSS re-probe. NativeDelivery shares its encrypted outbox/cursor cycle with executable Dart network tests. Single-use session refresh is coalesced and persisted before use. An initial full native GPRS regression failed its unchanged 15-second p95 gate; the raw failure remains retained. Independent send/sync scheduling and explicit detached TLS socket ownership now pass all six final current-native trials (2400 IDs). GPRS p95 is 4.672/4.928/4.742s; severe has no latency SLA. Child exit=0, current source hashes and a single binary set are checked; both earlier hanging variants remain failed. Combined faults remain incomplete.
 
 Still missing: multi-device MLS leaf enrollment and server-authorized group changes, history transfer/recovery, QR camera, password reset, background delivery, metadata retention worker and delivered/read UI. Self-update epoch conflict/rebase has a real API test, but it is not a complete group workflow. The durable relay table has no pruning/fanout worker yet. Do not infer complete M2/M3/S0 gates from these component checks. PRODUCTION_APPROVED=false.
+
+### Recipient delivery watermark
+
+Native DM sync pages may carry peerProcessedSequence (protobuf field 5). It is
+the greatest contiguous cursor acknowledged by a trusted, active device of a
+different member account. A sender's own cursor cannot advance it. The server
+relays this delivery indicator; it is not a signed read receipt. Clients cache
+only positive increases in SQLCipher, so retries, reordered pages and an older
+server omitting this additive field cannot regress the displayed state.

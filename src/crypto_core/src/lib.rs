@@ -571,8 +571,26 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             Ok(json!({"saved":true}))
         }
         "profile" => Ok(serde_json::from_str(&meta(db, "local_profile")?)?),
+        "peer_processed" => {
+            let gid = s(req, "group")?;
+            let seq = req["seq"].as_i64().context("missing sequence")?;
+            ensure!(seq > 0, "invalid sequence");
+            db.execute(
+                "INSERT INTO peer_receipts(group_id,seq) VALUES(?,?) ON CONFLICT(group_id) DO UPDATE SET seq=max(seq,excluded.seq)",
+                params![gid, seq],
+            )?;
+            Ok(json!({"saved":true}))
+        }
         "timeline" => {
             let gid = s(req, "group")?;
+            let peer_seq = db
+                .query_row(
+                    "SELECT seq FROM peer_receipts WHERE group_id=?",
+                    [gid],
+                    |r| r.get::<_, i64>(0),
+                )
+                .optional()?
+                .unwrap_or(0);
             let mut entries = Vec::new();
             let mut q=db.prepare("SELECT a.event,o.status,o.seq FROM authored a JOIN outgoing o ON o.group_id=a.group_id AND o.id=a.id WHERE a.group_id=? ORDER BY a.rowid DESC LIMIT 1000")?;
             let rows = q.query_map([gid], |r| {
@@ -585,7 +603,11 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             for row in rows {
                 let (event, status, seq) = row?;
                 let mut event: Value = serde_json::from_str(&event)?;
-                event["status"] = json!(status);
+                event["status"] = if status == "saved" && seq.is_some_and(|s| s <= peer_seq) {
+                    json!("delivered")
+                } else {
+                    json!(status)
+                };
                 event["seq"] = json!(seq);
                 event["own"] = json!(true);
                 entries.push(event);
@@ -643,7 +665,8 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS incoming(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));
       CREATE TABLE IF NOT EXISTS received(group_id TEXT,seq INTEGER,envelope TEXT NOT NULL,PRIMARY KEY(group_id,seq));
       CREATE TABLE IF NOT EXISTS local_cursors(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL,cursor TEXT NOT NULL);")?;
-    db.execute_batch("CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS peer_receipts(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
     Ok(db)
 }
 

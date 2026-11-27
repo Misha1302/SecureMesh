@@ -9,7 +9,7 @@ public sealed record ConversationRequest(Guid Id, Guid[] DeviceIds, long Initial
 public sealed record SendRequest(Guid ConversationId, Guid ClientMessageId, long MlsEpoch, int EnvelopeKind, byte[] Ciphertext);
 public sealed record Saved(Guid ServerMessageId, long ServerSequence, bool AlreadyCommitted, bool Durable = true);
 public sealed record Message(Guid ConversationId, Guid ClientMessageId, Guid SenderDeviceId, long MlsEpoch, int EnvelopeKind, byte[] Ciphertext, long ServerSequence, Guid ServerMessageId, byte[] CiphertextSha256);
-public sealed record Page(Guid ConversationId, List<Message> Messages, string NextCursor, bool HasMore);
+public sealed record Page(Guid ConversationId, List<Message> Messages, string NextCursor, bool HasMore, long PeerProcessedSequence);
 public sealed record ProcessedAckRequest(Guid ConversationId, long Sequence);
 
 public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protection)
@@ -82,7 +82,15 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         }
         var last=messages.Count==0?after:messages[^1].ServerSequence;
         var next=cursorProtector.Protect($"{actor.DeviceId:D}/{conversation:D}/{last.ToString(CultureInfo.InvariantCulture)}");
-        return new Page(conversation,messages,next,more);
+        await r.CloseAsync();
+        await using var receipt = Sql.Cmd(c, """
+            SELECT COALESCE(max(cur.seq), 0) FROM cursors cur
+            JOIN members m ON m.conversation_id=cur.conversation_id AND m.device_id=cur.device_id
+            JOIN devices d ON d.id=m.device_id
+            WHERE cur.conversation_id=$1 AND d.user_id<>$2 AND d.trusted AND NOT d.revoked
+            """, conversation, actor.UserId);
+        var peerProcessed = (long)(await receipt.ExecuteScalarAsync(ct))!;
+        return new Page(conversation,messages,next,more,peerProcessed);
     }
     public async Task Ack(Actor actor,ProcessedAckRequest input)
     {

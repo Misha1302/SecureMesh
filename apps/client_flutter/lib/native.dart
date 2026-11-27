@@ -986,6 +986,11 @@ class _ClientAppState extends State<ClientApp> {
                                         'В очереди на устройстве',
                                         'Queued on this device',
                                       )
+                                    : m['status'] == 'delivered'
+                                    ? tr(
+                                        'Доставлено на устройство',
+                                        'Delivered to device',
+                                      )
                                     : own
                                     ? tr(
                                         'Сохранено на сервере',

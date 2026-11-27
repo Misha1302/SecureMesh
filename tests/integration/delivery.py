@@ -187,7 +187,14 @@ def main():
         assert retry['alreadyCommitted'] and retry['serverSequence']==1
         reply=db.call('queue',group=group,id=str(uuid.uuid4()),text='Ответ после перезапуска')
         request('/v1/messages',envelope(reply,group),token=bt) # HTTPS fallback after WSS closed.
-        sync(da,at,group,limit=1); sync(db,bt,group,limit=1)
+        sync(da,at,group,limit=1)
+        assert request('/v1/sync?conversationId='+group,token=at)['peerProcessedSequence']==0
+        sync(db,bt,group,limit=1)
+        delivered=request('/v1/sync?conversationId='+group,token=at)['peerProcessedSequence']
+        assert delivered==2
+        da.call('peer_processed',group=group,seq=delivered)
+        da.call('peer_processed',group=group,seq=1)
+        assert next(m for m in da.call('timeline',group=group)['messages'] if m['id']==first['id'])['status']=='delivered'
         assert da.call('cursor',group=group)['seq']==db.call('cursor',group=group)['seq']==2
         assert len(da.call('history',group=group)['events'])==len(db.call('history',group=group)['events'])==1
         replay=request('/v1/sync?'+urllib.parse.urlencode(dict(conversationId=group,limit=1)),token=bt)
