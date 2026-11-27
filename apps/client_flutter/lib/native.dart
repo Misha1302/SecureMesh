@@ -31,9 +31,12 @@ import 'earlier_history.dart';
 import 'saved_messages.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
+import 'official_help.dart';
+import 'profile_archive.dart';
 import 'profile_biometrics.dart';
-import 'linux_profile_keyring.dart';
+import 'desktop_profile_keyring.dart';
 import 'account_removal.dart';
+import 'account_credentials.dart';
 import 'account_hub.dart';
 import 'identity_comparison.dart';
 import 'messenger_theme.dart';
@@ -65,7 +68,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   late final desktopNotifications = LinuxNotifications(
     bridge: Platform.isAndroid ? androidNotifications : null,
     allowsGroup: (group) =>
-        NotificationPreferences.fromProfile(profile).allows(group, DateTime.now()),
+        NotificationPreferences.fromProfile(profile)
+            .allows(group, DateTime.now()),
     allowed: () {
       final lifecycle = WidgetsBinding.instance.lifecycleState;
       return (Platform.isLinux || Platform.isAndroid) &&
@@ -122,6 +126,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     text: Platform.environment['SECUREMESH_PROFILE'] ?? '',
   );
   final pass = TextEditingController();
+  bool showUnlockPassword = false;
+  ProfileFileInfo? selectedProfile;
   final composer = TextEditingController();
   ConversationDrafts? drafts;
   PrivateAttachments? attachments;
@@ -356,22 +362,25 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     try {
       await closingStore;
       if (!mounted) return;
-      if (!File(selectedPath).existsSync()) {
-        throw StateError('PROFILE_FILE_MISSING');
+      if (selectedPath.isEmpty || !await File(selectedPath).exists()) {
+        throw const FileSystemException('PROFILE_FILE_MISSING');
       }
       final args = {'path': selectedPath, 'russian': ru};
       if (biometric == BiometricAction.forget) {
-        if (Platform.isLinux) {
-          await LinuxProfileKeyring.forget(selectedPath);
+        if (DesktopProfileKeyring.supported) {
+          await DesktopProfileKeyring.forget(selectedPath);
         } else {
           await profileBiometrics.invokeMethod<void>('forget', args);
         }
         return;
       }
       if (biometric == BiometricAction.unlock) {
-        final wrapped = Platform.isLinux
-            ? await LinuxProfileKeyring.unlock(selectedPath)
-            : await profileBiometrics.invokeMapMethod<String, String>('unlock', args);
+        final wrapped = DesktopProfileKeyring.supported
+            ? await DesktopProfileKeyring.unlock(selectedPath)
+            : await profileBiometrics.invokeMapMethod<String, String>(
+                'unlock',
+                args,
+              );
         boundDevice = wrapped?['deviceId'];
         secret = wrapped?['passphrase'] ?? '';
         if (boundDevice == null || secret.isEmpty) throw CryptoFailure();
@@ -415,8 +424,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       }
       if (biometric == BiometricAction.enable) {
         // The encrypted profile was successfully opened with the manually entered secret.
-        if (Platform.isLinux) {
-          await LinuxProfileKeyring.enable(selectedPath, saved['deviceId'] as String, secret);
+        if (DesktopProfileKeyring.supported) {
+          await DesktopProfileKeyring.enable(
+            selectedPath,
+            saved['deviceId'] as String,
+            secret,
+          );
         } else {
           await profileBiometrics.invokeMethod<void>('enable', {
             ...args,
@@ -496,7 +509,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       await reload();
       timer?.cancel();
       unawaited(pump());
-    } catch (_) {
+    } catch (cause) {
       opening?.dispose();
       transport?.close();
       session?.close();
@@ -506,14 +519,23 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       releaseLocalStore();
       store = null;
       profile = null;
-      error = biometric == null
+      error =
+          cause is FileSystemException &&
+              cause.message == 'PROFILE_FILE_MISSING'
+          ? tr(
+              'Файл профиля не найден. Выберите существующее хранилище.',
+              'Profile file not found. Select an existing profile.',
+            )
+          : biometric == null
           ? tr(
               'Не удалось открыть профиль. Проверьте путь и пароль.',
               'Could not unlock this profile. Check the path and passphrase.',
             )
-          : Platform.isLinux
-          ? tr('Связка ключей недоступна. Введите пароль локального профиля.',
-               'Keyring unlock did not complete. Enter your local profile passphrase.')
+          : DesktopProfileKeyring.supported
+          ? tr(
+              'Связка ключей недоступна. Введите пароль локального профиля.',
+              'Keyring unlock did not complete. Enter your local profile passphrase.',
+            )
           : tr(
               'Действие с биометрией не завершено. Введите пароль хранилища и нажмите «Открыть профиль».',
               'Biometric action did not complete. Enter the store passphrase and choose Unlock profile.',
@@ -536,6 +558,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         resumePath: resumePath,
         resumePassphrase: resumePassphrase,
         onReady: (created, secret) async {
+          selectedProfile = null;
           path.text = created;
           pass.text = secret;
           await unlock(pageContext);
@@ -552,6 +575,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       pass.clear();
       error = null;
       choosing = false;
+      showUnlockPassword = false;
       showLocalUnlock = false;
     });
   }
@@ -561,7 +585,105 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       showLocalUnlock = true;
       error = null;
     });
-    if (path.text.isEmpty) await chooseProfile(context, autoSelectOne: true);
+    if (path.text.isEmpty) {
+      await chooseProfile(context, autoSelectOne: true);
+    } else {
+      final value = path.text;
+      final info = await inspectProfile(
+        File(value),
+        await localProfileDirectory(),
+      );
+      if (mounted && path.text == value) setState(() => selectedProfile = info);
+    }
+  }
+
+  Future<void> pickOriginalProfile(BuildContext pageContext) async {
+    if (loading || choosing) return;
+    setState(() => choosing = true);
+    try {
+      final file = await openFile(
+        acceptedTypeGroups: [
+          const XTypeGroup(label: 'SecureMesh (.db)', extensions: ['db']),
+        ],
+      );
+      if (!mounted || file == null) return;
+      final info = await inspectProfile(
+        File(file.path),
+        await localProfileDirectory(),
+      );
+      if (!mounted) return;
+      if (info == null) throw const FormatException('Invalid profile');
+      setState(() {
+        selectedProfile = info;
+        path.text = info.file.path;
+        pass.clear();
+        showUnlockPassword = false;
+        error = null;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => error = tr(
+            'Не удалось открыть выбранный файл профиля.',
+            'Could not open the selected profile file.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => choosing = false);
+    }
+  }
+
+  Future<void> editProfileLabel(BuildContext pageContext) async {
+    final info = selectedProfile;
+    if (info == null) return;
+    var name = info.alias ?? '';
+    final value = await showDialog<String>(
+      context: pageContext,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('Метка на этом устройстве', 'Label on this device')),
+        content: TextFormField(
+          initialValue: name,
+          maxLength: 48,
+          onChanged: (v) => name = v,
+          decoration: InputDecoration(
+            helperMaxLines: 3,
+            helperText: tr(
+              'Метка видна до ввода пароля. Пример: «Рабочий».',
+              'The label is visible before unlocking. For example, “Work”.',
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, name),
+            child: Text(tr('Сохранить', 'Save')),
+          ),
+        ],
+      ),
+    );
+    if (value == null || !mounted || path.text != info.file.path) return;
+    try {
+      final dir = await localProfileDirectory();
+      await setProfileLabel(info.file, dir, value);
+      final updated = await inspectProfile(info.file, dir);
+      if (mounted && path.text == info.file.path) {
+        setState(() => selectedProfile = updated);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => error = tr(
+            'Не удалось сохранить метку.',
+            'Could not save the label.',
+          ),
+        );
+      }
+    }
   }
 
   Future<void> chooseProfile(
@@ -587,13 +709,15 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       }
       if (autoSelectOne && files.length == 1) {
         setState(() {
-          path.text = files.single.path;
+          selectedProfile = files.single;
+          showUnlockPassword = false;
+          path.text = files.single.file.path;
           pass.clear();
           error = null;
         });
         return;
       }
-      final selected = await showDialog<String>(
+      final selected = await showDialog<ProfileFileInfo>(
         context: pageContext,
         builder: (context) => SimpleDialog(
           title: Text(tr('Сохранённые профили', 'Saved profiles')),
@@ -602,15 +726,17 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               child: Text(
                 tr(
-                  'Выберите файл и введите его пароль хранилища. Незавершённый вход продолжится с сохранёнными ключами.',
-                  'Choose a file and enter its store passphrase. An interrupted sign-in will continue with its saved keys.',
+                  'Это закрытые хранилища переписки на этом устройстве. Выберите своё по метке и дате изменения, затем введите пароль.',
+                  'These profiles hold encrypted chats on this device. Choose yours by its label and modification date, then enter the password.',
                 ),
               ),
             ),
-            for (final file in files)
-              SimpleDialogOption(
-                onPressed: () => Navigator.of(context).pop(file.path),
-                child: Text(file.uri.pathSegments.last),
+            for (final info in files)
+              ListTile(
+                leading: const Icon(Icons.lock_outline),
+                title: Text(info.title(ru)),
+                subtitle: Text(info.details(context, ru)),
+                onTap: () => Navigator.pop(context, info),
               ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -621,8 +747,10 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       );
       if (mounted && selection == profileSelection && selected != null) {
         setState(() {
-          path.text = selected;
+          selectedProfile = selected;
+          path.text = selected.file.path;
           pass.clear();
+          showUnlockPassword = false;
           error = null;
         });
       }
@@ -684,7 +812,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     bool sessionOnly = false,
     Set<String>? removedFields,
     bool? notificationPreference,
-    NotificationPreferences Function(NotificationPreferences)? updateNotificationPolicy,
+    NotificationPreferences Function(NotificationPreferences)?
+    updateNotificationPolicy,
     bool? backgroundLockPreference,
   }) {
     final epoch = generation;
@@ -707,12 +836,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             };
       // Preserve a newer privacy choice across concurrent profile/session writes.
       if (updateNotificationPolicy != null) {
-        updated[NotificationPreferences.key] =
-            updateNotificationPolicy(
-              NotificationPreferences.fromProfile(profile),
-            ).toJson();
+        updated[NotificationPreferences.key] = updateNotificationPolicy(
+          NotificationPreferences.fromProfile(profile),
+        ).toJson();
       } else if (profile!.containsKey(NotificationPreferences.key)) {
-        updated[NotificationPreferences.key] = profile![NotificationPreferences.key];
+        updated[NotificationPreferences.key] =
+            profile![NotificationPreferences.key];
       }
       updated['desktopNotifications'] =
           notificationPreference ?? (profile!['desktopNotifications'] == true);
@@ -969,6 +1098,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       messages = [];
       devices = [];
       composer.clear();
+      showUnlockPassword = false;
       pass.clear();
       error = null;
       sendError = null;
@@ -1411,6 +1541,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                     ),
                   ),
                   actions: [
+                    ProfileArchiveAction(russian: ru),
                     TextButton(
                       onPressed: () => Navigator.pop(ctx),
                       child: Text(tr('Закрыть', 'Close')),
@@ -1420,6 +1551,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ),
               child: Text(tr('Как вернуть доступ', 'Regain access')),
             ),
+            OfficialHelp(russian: ru),
           ],
         ),
       ),
@@ -1459,8 +1591,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                 title: Text(
                   path.text.isEmpty
                       ? tr('Выбрать профиль', 'Choose a profile')
-                      : tr('Профиль на этом устройстве', 'On-device profile'),
+                      : (selectedProfile?.title(ru) ??
+                            File(path.text).uri.pathSegments.last),
                 ),
+                subtitle: selectedProfile == null
+                    ? null
+                    : Text(selectedProfile!.details(context, ru)),
                 trailing: const Icon(Icons.expand_more),
                 onTap: loading || choosing
                     ? null
@@ -1468,10 +1604,44 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ),
               ExpansionTile(
                 tilePadding: EdgeInsets.zero,
-                title: Text(tr('Открыть по пути к файлу', 'Open by file path')),
+                title: Text(
+                  tr('Файл и метка профиля', 'Profile file and label'),
+                ),
                 children: [
+                  ProfileArchiveAction(russian: ru),
+                  if (selectedProfile != null)
+                    TextButton.icon(
+                      icon: const Icon(Icons.edit_outlined),
+                      onPressed: loading || choosing
+                          ? null
+                          : () => editProfileLabel(context),
+                      label: Text(
+                        tr('Изменить местную метку', 'Edit local label'),
+                      ),
+                    ),
+                  if (Platform.isLinux ||
+                      Platform.isWindows ||
+                      Platform.isMacOS)
+                    TextButton.icon(
+                      icon: const Icon(Icons.folder_open_outlined),
+                      onPressed: loading || choosing
+                          ? null
+                          : () => pickOriginalProfile(context),
+                      label: Text(
+                        tr(
+                          'Найти файл профиля на диске',
+                          'Browse for the original profile file',
+                        ),
+                      ),
+                    ),
                   TextField(
                     controller: path,
+                    onChanged: (_) => setState(() {
+                      selectedProfile = null;
+                      pass.clear();
+                      showUnlockPassword = false;
+                      error = null;
+                    }),
                     enabled: !loading && !choosing,
                     autocorrect: false,
                     decoration: InputDecoration(
@@ -1484,12 +1654,25 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               TextField(
                 enabled: !loading && !choosing,
                 controller: pass,
-                obscureText: true,
+                obscureText: !showUnlockPassword,
                 enableSuggestions: false,
                 autocorrect: false,
                 onSubmitted: (_) => unlock(context),
                 decoration: InputDecoration(
                   labelText: tr('Пароль хранилища', 'Store passphrase'),
+                  suffixIcon: IconButton(
+                    tooltip: showUnlockPassword
+                        ? tr('Скрыть пароль', 'Hide password')
+                        : tr('Показать пароль', 'Show password'),
+                    icon: Icon(
+                      showUnlockPassword
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                    ),
+                    onPressed: () => setState(
+                      () => showUnlockPassword = !showUnlockPassword,
+                    ),
+                  ),
                   border: const OutlineInputBorder(),
                 ),
               ),
@@ -1505,9 +1688,11 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-              if (Platform.isAndroid || Platform.isIOS || Platform.isLinux)
+              if (Platform.isAndroid ||
+                  Platform.isIOS ||
+                  DesktopProfileKeyring.supported)
                 ProfileBiometricActions(
-                  linuxKeyring: Platform.isLinux,
+                  desktopKeyring: DesktopProfileKeyring.supported,
                   path: path,
                   disabled: loading || choosing,
                   russian: ru,
@@ -1592,10 +1777,16 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       } else if (droppedPaths != null) {
         files = await localDroppedFiles(droppedPaths);
         if (files.isEmpty && context.mounted && active()) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr(
-            'Перетащите от одного до восьми локальных файлов.',
-            'Drop one to eight local files.',
-          ))));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                tr(
+                  'Перетащите от одного до восьми локальных файлов.',
+                  'Drop one to eight local files.',
+                ),
+              ),
+            ),
+          );
         }
       } else {
         files = await openFiles();
@@ -2175,7 +2366,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           ),
         ),
       DesktopFileDrop(
-        onFiles: attachments?.busy == false && profile?['trustConfirmed'] == true
+        onFiles:
+            attachments?.busy == false && profile?['trustConfirmed'] == true
             ? (paths) => chooseAttachment(context, droppedPaths: paths)
             : null,
         child: ConversationComposer(
@@ -2199,7 +2391,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               attachments?.busy == false && profile?['trustConfirmed'] == true
               ? () => captureVideo(context)
               : null,
-          onFile: attachments?.busy == false && profile?['trustConfirmed'] == true
+          onFile:
+              attachments?.busy == false && profile?['trustConfirmed'] == true
               ? () => chooseAttachment(context)
               : null,
           onPastePhoto:
@@ -2379,12 +2572,18 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       notificationSaveFailed = false;
     });
     try {
-      await persistProfile({}, sessionOnly: true, updateNotificationPolicy: update);
+      await persistProfile(
+        {},
+        sessionOnly: true,
+        updateNotificationPolicy: update,
+      );
     } catch (_) {
       if (mounted && generation == epoch) notificationSaveFailed = true;
       rethrow;
     } finally {
-      if (mounted && generation == epoch) setState(() => changingNotifications = false);
+      if (mounted && generation == epoch) {
+        setState(() => changingNotifications = false);
+      }
     }
   }
 
@@ -2433,9 +2632,25 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       builder: (_) => AccountRemovalDialog(
         russian: ru,
         remove: (password) async {
+          final account = profile;
+          if (account == null || !identical(session, owner)) {
+            throw CryptoFailure();
+          }
+          final int version = account['credentialVersion'] as int? ?? 1;
+          final fields = version == 1
+              ? <String, dynamic>{'password': password}
+              : await accountCredentialFields(
+                  version: version,
+                  endpoint: Uri.parse(account['endpoint'] as String),
+                  username: account['username'] as String,
+                  password: password,
+                );
+          if (!identical(session, owner) || profile?['deviceId'] != device) {
+            throw CryptoFailure();
+          }
           await owner.request(
             '/v1/users/me/removal',
-            data: {'requestId': device, 'password': password},
+            data: {'requestId': device, ...fields},
           );
         },
       ),
@@ -2446,10 +2661,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     var localCleanupFailed = false;
     try {
       await closingStore;
-      if (Platform.isAndroid || Platform.isIOS || Platform.isLinux) {
+      if (Platform.isAndroid ||
+          Platform.isIOS ||
+          DesktopProfileKeyring.supported) {
         try {
-          if (Platform.isLinux) {
-            await LinuxProfileKeyring.forget(file);
+          if (DesktopProfileKeyring.supported) {
+            await DesktopProfileKeyring.forget(file);
           } else {
             await profileBiometrics.invokeMethod<void>('forget', {
               'path': file,
@@ -2459,6 +2676,11 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         } catch (_) {
           localCleanupFailed = true;
         }
+      }
+      try {
+        await setProfileLabel(File(file), await localProfileDirectory(), '');
+      } catch (_) {
+        localCleanupFailed = true;
       }
       for (final suffix in ['', '-wal', '-shm', '-journal']) {
         final target = File(file + suffix);
@@ -2471,7 +2693,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     }
     if (!mounted) return;
     setState(() {
+      selectedProfile = null;
       path.clear();
+      showUnlockPassword = false;
       showLocalUnlock = false;
     });
     messenger.showSnackBar(
@@ -2630,15 +2854,18 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           QuietHoursTile(
             preferences: NotificationPreferences.fromProfile(profile),
             russian: ru,
-            onChanged: changingNotifications ? null : (duration) {
-              final end = duration == Duration.zero
-                  ? null
-                  : DateTime.now().add(duration);
-              // The settings panel displays notificationSaveFailed on a write error.
-              unawaited(changeNotificationPolicy(
-                (prefs) => prefs.quietUntil(end),
-              ).catchError((_) {}));
-            },
+            onChanged: changingNotifications
+                ? null
+                : (duration) {
+                    final end = duration == Duration.zero
+                        ? null
+                        : DateTime.now().add(duration);
+                    // The settings panel displays notificationSaveFailed on a write error.
+                    unawaited(
+                      changeNotificationPolicy((prefs) => prefs.quietUntil(end))
+                          .catchError((_) {}),
+                    );
+                  },
           ),
           if (Platform.isAndroid)
             ListTile(
@@ -2788,6 +3015,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           if (appearanceSaveFailed) saveError,
         ],
         SettingsSection.advanced => [
+          OfficialHelp(russian: ru),
           ListTile(
             title: const Text('SecureMesh'),
             subtitle: Text(

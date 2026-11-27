@@ -14,6 +14,7 @@ class AccountRemovalDialog extends StatefulWidget {
 
 class _AccountRemovalDialogState extends State<AccountRemovalDialog> {
   final password = TextEditingController();
+  bool visible = false;
   bool accepted = false, working = false, failed = false;
   String tr(String ru, String en) => widget.russian ? ru : en;
   @override
@@ -58,11 +59,24 @@ class _AccountRemovalDialogState extends State<AccountRemovalDialog> {
             ),
             TextField(
               controller: password,
-              obscureText: true,
+              obscureText: !visible,
               enableSuggestions: false,
               autocorrect: false,
               decoration: InputDecoration(
                 labelText: tr('Пароль аккаунта', 'Account password'),
+                suffixIcon: IconButton(
+                  tooltip: visible
+                      ? tr('Скрыть пароль', 'Hide password')
+                      : tr('Показать пароль', 'Show password'),
+                  onPressed: working
+                      ? null
+                      : () => setState(() => visible = !visible),
+                  icon: Icon(
+                    visible
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                  ),
+                ),
               ),
               onChanged: (_) => setState(() {}),
             ),

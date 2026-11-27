@@ -16,6 +16,7 @@ dependencies:
   path_provider: 2.1.6
   crypto: 3.0.8
   zxing2: 0.2.4
+  url_launcher: 6.3.2
   camera: 0.12.2
   camera_platform_interface: 2.15.1
   video_player: 2.14.1

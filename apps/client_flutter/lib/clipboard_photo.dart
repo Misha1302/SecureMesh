@@ -30,8 +30,9 @@ Future<Uint8List?> readClipboardPhoto() async {
   final image = await attachmentPreview(bytes);
   try {
     final encoded = await image.toByteData(format: ui.ImageByteFormat.png);
-    if (encoded == null || encoded.lengthInBytes > attachmentLimit)
+    if (encoded == null || encoded.lengthInBytes > attachmentLimit) {
       throw const FormatException('SIZE');
+    }
     return encoded.buffer.asUint8List(
       encoded.offsetInBytes,
       encoded.lengthInBytes,
