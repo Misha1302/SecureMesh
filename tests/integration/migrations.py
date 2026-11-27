@@ -46,8 +46,8 @@ def main():
             assert final[0]['isCurrent'] and final[0]['hasRefreshableSession']
             assert final[1]['revoked'] and not final[1]['hasRefreshableSession']
             result=command('psql','-U','securemesh','-d',database,'-Atc','SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId"')
-            assert result.strip().splitlines()==['202611180001_Foundation','202611180002_DeviceChallenges','202611180003_DeviceTrust','202611180004_MlsDirectory','202611180005_EnrollmentActivation','202611190006_EnrollmentIssuanceQuota','202611270007_DisplayName','202611270008_ProfilePhotos','202611270009_PublicChannels','202611270010_PrivateBlobs','202611270011_ChannelInvitations','202611270012_ResumableBlobs','202611270013_DeviceRoster','202611270014_AccountRemoval','202611270015_ProfileText','202611270016_DeviceClientMetadata']
-            print('PASS: fresh owned PostgreSQL database; all sixteen EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused.')
+            assert result.strip().splitlines()==['202611180001_Foundation','202611180002_DeviceChallenges','202611180003_DeviceTrust','202611180004_MlsDirectory','202611180005_EnrollmentActivation','202611190006_EnrollmentIssuanceQuota','202611270007_DisplayName','202611270008_ProfilePhotos','202611270009_PublicChannels','202611270010_PrivateBlobs','202611270011_ChannelInvitations','202611270012_ResumableBlobs','202611270013_DeviceRoster','202611270014_AccountRemoval','202611270015_ProfileText','202611270016_DeviceClientMetadata','202611270017_UnicodeDisplayName']
+            print('PASS: fresh owned PostgreSQL database; all seventeen EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused.')
     finally:
         command('dropdb','-U','securemesh',database)
 

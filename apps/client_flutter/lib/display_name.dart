@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:material_ui/material_ui.dart';
 
 typedef DisplayNameApi = Future<dynamic> Function(
@@ -9,12 +11,13 @@ typedef DisplayNameApi = Future<dynamic> Function(
 // The directory supplies a presentation label only. Ignore unsafe or malformed
 // labels even if a directory other than the bundled server supplies them.
 final _unsafeLabel = RegExp(
-  r'[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]',
+  r'[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]',
 );
 
 String? peerDisplayName(Object? value) {
   if (value is! String ||
-      value.runes.length > 64 ||
+      value.characters.length > 64 ||
+      utf8.encode(value).length > 2048 ||
       _unsafeLabel.hasMatch(value)) {
     return null;
   }
@@ -82,7 +85,9 @@ class _DisplayNameEditorState extends State<DisplayNameEditor> {
 
   Future<void> save() async {
     final input = controller.text;
-    if (input.runes.length > 64 || _unsafeLabel.hasMatch(input)) {
+    if (input.characters.length > 64 ||
+        utf8.encode(input).length > 2048 ||
+        _unsafeLabel.hasMatch(input)) {
       setState(
         () => error = tr(
           'Введите до 64 символов в одну строку.',
@@ -130,8 +135,8 @@ class _DisplayNameEditorState extends State<DisplayNameEditor> {
               decoration: InputDecoration(
                 labelText: tr('Имя', 'Name'),
                 helperText: tr(
-                  'Видно собеседникам и серверу. Очистите поле, чтобы убрать имя.',
-                  'Visible to your contacts and server. Clear the field to remove it.',
+                  'Любые письменности, эмодзи, пробелы и знаки. Имя видно собеседникам и серверу. Очистите поле, чтобы убрать имя.',
+                  'Use any script, emoji, spaces and punctuation. Contacts and the server can see this name. Clear the field to remove it.',
                 ),
                 helperMaxLines: 3,
               ),

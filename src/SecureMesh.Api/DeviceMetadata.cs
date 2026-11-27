@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -32,6 +33,7 @@ public static class DeviceMetadata
         {
             var actor=await Sql.Authenticate(ctx,db);
             var name=DisplayNames.Normalize(input.Name);
+            if (name.EnumerateRunes().Count() > 64) throw new ApiError(400,"INVALID_DEVICE_NAME");
             await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
             await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
             await Sql.LockTrustedProfileOwner(c,actor,ctx.RequestAborted);

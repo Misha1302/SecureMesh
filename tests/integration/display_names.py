@@ -26,5 +26,7 @@ def verify(request, owner, peer, outsider, pending, group, username):
     assert peer_row()['peerDisplayName'] == 'Елена 👩‍🔬'
     assert update('e\u0301') == {'displayName': 'é'}
     assert update('𐐀' * 64) == {'displayName': '𐐀' * 64}
+    for name in ('👩‍🔬' * 64, 'می‌خواهم', 'ليلى & 李 / 🎵', '🇺🇳' * 64):
+        assert update(name) == {'displayName': name}
     assert update(None) == {'displayName': None}
     assert peer_row() == original

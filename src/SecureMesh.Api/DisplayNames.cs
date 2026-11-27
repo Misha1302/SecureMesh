@@ -11,16 +11,16 @@ public static class DisplayNames
     public static string Normalize(string? input)
     {
         if (input is null) return "";
-        if (input.Length > 512) throw new ApiError(400, "INVALID_DISPLAY_NAME");
+        if (Encoding.UTF8.GetByteCount(input) > 2048) throw new ApiError(400, "INVALID_DISPLAY_NAME");
         foreach (var rune in input.EnumerateRunes())
         {
             var category = Rune.GetUnicodeCategory(rune);
             if (category is UnicodeCategory.Control or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator ||
-                (category == UnicodeCategory.Format && rune.Value != 0x200D))
+                (rune.Value is >= 0x202A and <= 0x202E or >= 0x2066 and <= 0x2069))
                 throw new ApiError(400, "INVALID_DISPLAY_NAME");
         }
         var name = input.Trim().Normalize(NormalizationForm.FormC);
-        if (name.EnumerateRunes().Count() > 64 ||
+        if (new StringInfo(name).LengthInTextElements > 64 ||
             (name.Length > 0 && name.EnumerateRunes().All(rune => Rune.GetUnicodeCategory(rune) is
                 UnicodeCategory.Format or UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark or UnicodeCategory.SpaceSeparator)))
             throw new ApiError(400, "INVALID_DISPLAY_NAME");

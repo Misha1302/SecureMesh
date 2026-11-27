@@ -8,6 +8,8 @@ void main() {
     expect(peerDisplayName(42), isNull);
     expect(peerDisplayName(' \u202Euser'), isNull);
     expect(peerDisplayName('a' * 65), isNull);
+    expect(peerDisplayName('👩‍🔬' * 64), '👩‍🔬' * 64);
+    expect(peerDisplayName('می‌خواهم'), 'می‌خواهم');
     expect(peerDisplayName('  Люба 👩‍🔬 '), 'Люба 👩‍🔬');
   });
 
