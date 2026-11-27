@@ -1293,6 +1293,10 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         'Операция с файлом не удалась. Повторите попытку.',
         'File transfer failed. Try again.',
       ),
+      'paused' => tr(
+        'Сначала отправляются сообщения. Вложение можно продолжить с сохранённого места.',
+        'Messages are sent first. The attachment can resume from its saved position.',
+      ),
       'saved' => tr('Файл сохранён', 'File saved'),
       'upload' => tr('Отправка вложения', 'Uploading attachment'),
       'download' => tr('Получение вложения', 'Downloading attachment'),

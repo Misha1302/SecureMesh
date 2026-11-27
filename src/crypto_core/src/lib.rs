@@ -2,6 +2,7 @@ mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be
 // Local client process. No server keys, no plaintext fallback, no crypto primitives.
 pub mod api;
 mod attachments;
+mod calls;
 mod directory;
 mod enrollment;
 mod history_search;
@@ -180,6 +181,7 @@ fn save_outgoing(
         if meta(db, &pending_key)? == id {
             let mut group = load_group(p, gid)?;
             group.merge_pending_commit(p)?;
+            calls::reset(db, gid)?;
             set_meta(db, &pending_key, "")?;
             result["epoch"] = json!(group.epoch().as_u64());
         } else {
@@ -235,8 +237,20 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     let public = B64.decode(meta(db, "public")?)?;
     let signer = SignatureKeyPair::read(p.storage(), &public, SUITE.signature_algorithm())
         .context("missing signer")?;
+    if op == "roster_pending" {
+        return roster::pending(db, s(req, "group")?);
+    }
+    if op == "roster_stage" {
+        return roster::stage(db, p, req, &identity, &signer);
+    }
+    if matches!(op, "roster_saved" | "roster_rejected") {
+        return roster::resolve(db, p, req);
+    }
     if op == "roster_approve" {
         return roster::approve(db, p, req);
+    }
+    if matches!(op, "call_queue" | "call_events") {
+        return calls::execute(db, p, req, &identity, &signer);
     }
     if op.starts_with("enrollment_") {
         return enrollment::execute(db, p, req, &identity, &signer);
@@ -319,6 +333,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             )?;
             let (commit, welcome, _) = g.add_members(p, &signer, &[kp])?;
             g.merge_pending_commit(p)?;
+            calls::reset(db, s(req, "group")?)?;
             check_group(db, &g)?;
             Ok(
                 json!({"commit":B64.encode(commit.tls_serialize_detached()?),"welcome":B64.encode(welcome.tls_serialize_detached()?),"epoch":g.epoch().as_u64()}),
@@ -379,6 +394,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             ensure!(member.index != g.own_leaf_index(), "use explicit leave");
             let (commit, _, _) = g.remove_members(p, &signer, &[member.index])?;
             g.merge_pending_commit(p)?;
+            calls::reset(db, s(req, "group")?)?;
             Ok(
                 json!({"commit":B64.encode(commit.tls_serialize_detached()?),"epoch":g.epoch().as_u64()}),
             )
@@ -387,6 +403,10 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             let gid = s(req, "group")?;
             let id = s(req, "id")?;
             uuid::Uuid::parse_str(id)?;
+            ensure!(
+                !roster::has_id(db, gid, id)?,
+                "id reserved for a roster change"
+            );
             let old: Option<String> = db
                 .query_row(
                     "SELECT envelope FROM outgoing WHERE group_id=? AND id=?",
@@ -472,6 +492,10 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             let gid = s(req, "group")?;
             let id = s(req, "id")?;
             uuid::Uuid::parse_str(id)?;
+            ensure!(
+                !roster::has_id(db, gid, id)?,
+                "id reserved for a roster change"
+            );
             let old: Option<String> = db
                 .query_row(
                     "SELECT envelope FROM outgoing WHERE group_id=? AND id=?",
@@ -498,8 +522,14 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 None
             };
             if let Some(old) = old {
+                let call_id: bool = db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM call_signal_ids WHERE g=? AND id=? AND outbound=1)",
+                    params![gid,id], |r|r.get(0),
+                )?;
+                ensure!(!call_id, "id belongs to a control signal");
                 return Ok(serde_json::from_str(&old)?);
             }
+            ensure!(!roster::reserved(db, gid)?, "roster transition pending");
             let mut g = load_group(p, gid)?;
             check_group(db, &g)?;
             let text = match &attachment {
@@ -566,6 +596,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                         s(&event, "group")? == gid && s(&event, "sender")? == sender_id,
                         "binding mismatch"
                     );
+                    if calls::is_control(&event) {
+                        return calls::receive(db, &g, gid, &identity, &sender_id, &event);
+                    }
                     attachments::receive(db, gid, &mut event)?;
                     db.execute(
                         "INSERT INTO incoming(group_id,id,event) VALUES(?,?,?)",
@@ -578,12 +611,17 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                         req["kind"].is_null() || req["kind"].as_i64() == Some(3),
                         "wrong envelope kind"
                     );
+                    ensure!(
+                        !roster::reserved(db, gid)?,
+                        "resolve outstanding roster transition"
+                    );
                     let authenticated_delivery = req["sender"].is_string();
                     let before = authenticated_delivery
                         .then(|| roster::members(&g))
                         .transpose()?;
                     let old_epoch = g.epoch().as_u64();
                     g.merge_staged_commit(p, *commit)?;
+                    calls::reset(db, gid)?;
                     check_group(db, &g)?;
                     if let Some(before) = before {
                         // A device removed from the group must not be able to veto its own removal.
@@ -663,7 +701,11 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 matches!(req["kind"].as_i64(), Some(1 | 3)),
                 "unsupported ingest kind"
             );
-            let result = if s(req, "sender")? == identity {
+            let own_sender = s(req, "sender")? == identity;
+            let result = if own_sender && roster::has_id(db, gid, s(req, "id")?)? {
+                roster::check_echo(db, req, &digest, seq)?;
+                json!({"own":true})
+            } else if own_sender {
                 let own: String = db.query_row(
                     "SELECT envelope FROM outgoing WHERE group_id=? AND id=?",
                     params![gid, s(req, "id")?],
@@ -720,9 +762,23 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             let (seq, cursor) = value.unwrap_or((0, String::new()));
             Ok(json!({"seq":seq,"cursor":cursor}))
         }
+        "outbox_pending" => {
+            let pending: bool = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM outgoing WHERE status='queued')",
+                [],
+                |row| row.get(0),
+            )?;
+            Ok(json!({"pending": pending}))
+        }
         "outbox" => {
             let mut q = db.prepare(
-                "SELECT envelope FROM outgoing WHERE status='queued' ORDER BY rowid LIMIT 100",
+                "SELECT o.envelope FROM outgoing o LEFT JOIN call_signal_ids c ON c.g=o.group_id AND c.id=o.id AND c.outbound=1
+                 WHERE o.status='queued' AND (c.id IS NULL OR (c.until>unixepoch() AND EXISTS(
+                   SELECT 1 FROM call_sessions s WHERE s.g=c.g AND s.call=c.call AND s.until>unixepoch())
+                   AND NOT EXISTS(SELECT 1 FROM outgoing earlier JOIN call_signal_ids prior ON prior.g=earlier.group_id AND prior.id=earlier.id
+                     WHERE prior.g=c.g AND prior.call=c.call AND prior.outbound=1 AND prior.until>unixepoch()
+                     AND earlier.status='queued' AND earlier.rowid<o.rowid)))
+                 ORDER BY o.rowid LIMIT 100",
             )?;
             let rows = q.query_map([], |r| r.get::<_, String>(0))?;
             let values = rows
@@ -838,12 +894,16 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
     db.pragma_update(None, "synchronous", "FULL")?;
     db.busy_timeout(std::time::Duration::from_secs(5))?;
     profile_schema::migrate(&mut db)?;
+    calls::schema(&db)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pins(identity TEXT PRIMARY KEY,public_key BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS outgoing(group_id TEXT,id TEXT,envelope TEXT NOT NULL,status TEXT NOT NULL,seq INTEGER,PRIMARY KEY(group_id,id));
+      CREATE INDEX IF NOT EXISTS outbox_queued ON outgoing(status) WHERE status='queued';
       CREATE TABLE IF NOT EXISTS incoming(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));
       CREATE TABLE IF NOT EXISTS received(group_id TEXT,seq INTEGER,envelope TEXT NOT NULL,PRIMARY KEY(group_id,seq));
       CREATE TABLE IF NOT EXISTS local_cursors(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL,cursor TEXT NOT NULL);")?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS roster_transitions(group_id TEXT NOT NULL,id TEXT NOT NULL,binding TEXT NOT NULL,transition TEXT NOT NULL,status TEXT NOT NULL,seq INTEGER,PRIMARY KEY(group_id,id));
+      CREATE UNIQUE INDEX IF NOT EXISTS pending_roster_per_group ON roster_transitions(group_id) WHERE status='pending';")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS peer_receipts(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
     db.execute_batch(

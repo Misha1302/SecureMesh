@@ -13,6 +13,8 @@ const attachmentLimit = 4 * 1024 * 1024;
 const _tagLength = 16;
 const _timeout = Duration(seconds: 45);
 
+class AttachmentDeferredForMessages implements Exception {}
+
 abstract interface class BlobTransport {
   Future<void> put(String id, Uint8List bytes, void Function(double) progress);
   Future<Uint8List> get(
@@ -34,6 +36,11 @@ class SessionBlobs implements BlobTransport {
   final HttpClient client;
   bool closed = false;
   static const block = 32768;
+
+  Future<void> _yieldToMessages() async {
+    final state = await crypto('outbox_pending', {});
+    if (state['pending'] == true) throw AttachmentDeferredForMessages();
+  }
 
   Uri _uri(String id, {bool parts = false, int? offset}) {
     final endpoint = session.endpoint;
@@ -155,6 +162,7 @@ class SessionBlobs implements BlobTransport {
     var offset = status.status == 404 ? 0 : checkedOffset(status.bytes);
     progress(offset / size);
     while (offset < size) {
+      await _yieldToMessages();
       final end = math.min(offset + block, size);
       final response = await _request(
         'PUT',
@@ -193,6 +201,7 @@ class SessionBlobs implements BlobTransport {
     final result = BytesBuilder(copy: false)..add(prefix);
     progress(result.length / size);
     while (result.length < size) {
+      await _yieldToMessages();
       final offset = result.length;
       final end = math.min(size, offset + block);
       final response = await _request(

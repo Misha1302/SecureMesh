@@ -1,0 +1,9 @@
+{
+  "apkSha256": "7e9379a1483c4830fdb834492536357876f39e12458d7ab92992008aaef7202a",
+  "androidApi": "28",
+  "sourceCommit": "93fc7893af186bcb1795c2bedaf164fb4b088836",
+  "androidToLinuxDecrypted": true,
+  "linuxReplyShownOnAndroid": true,
+  "linuxReplyAcknowledgedByAndroid": true,
+  "envelopes": 2
+}

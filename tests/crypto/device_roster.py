@@ -36,11 +36,41 @@ def check(devices):
     proof['grant_signature'] = owner.call('enrollment_approve', **proof, confirmed=True)['signature']
     proof['activation_signature'] = candidate.call('enrollment_accept', **proof,
                                                   approver=owner.identity)['activation_signature']
-    added = owner.call('add', group=group, keypackage=candidate.call('keypackage')['keypackage'])
     approval = dict(group=group, device=candidate.identity, approver=owner.identity,
                     confirmed=True, action='add', epoch=1, **proof)
-    transition = dict(group=group, id=uid(), epoch=1, kind=3, sender=owner.identity,
+    add = dict(group=group, id=uid(), epoch=1, device=candidate.identity, action='add',
+               keypackage=candidate.call('keypackage')['keypackage'])
+    owner.call('roster_approve', **approval)
+    owner.call('roster_stage', reject=True, **add)  # earlier outgoing message is queued
+    owner.call('ingest', **before, seq=1, sender=owner.identity)
+    owner.call('roster_stage', reject=True, **(add | dict(keypackage=peer.call('keypackage')['keypackage'])))
+    Device.call(owner, 'roster_stage', reject=True, **add, crash_before_commit=True)
+    assert owner.call('roster_pending',group=group)['transition'] is None
+    abandoned=owner.call('roster_stage', **add)
+    owner.call('roster_rejected',reject=True,group=group,id=add['id'],digest=abandoned['digest'])
+    owner.call('roster_rejected',group=group,id=add['id'],digest=abandoned['digest'],epoch_conflict_confirmed=True)
+    owner.call('roster_stage', reject=True, **add)
+    add['id']=uid()
+    owner.call('roster_approve', **approval)
+    added=owner.call('roster_stage', **add)
+    assert Device.call(owner,'roster_pending',group=group)['transition']==added
+    assert owner.call('roster_stage', **add)==added
+    owner.call('roster_stage', reject=True, **(add | dict(device=peer.identity)))
+    assert owner.call('outbox')['messages']==[]  # never upload through the generic sender
+    owner.call('queue', reject=True, group=group, id=uid(),text='pending epoch')
+    owner.call('saved', reject=True,group=group,id=add['id'],seq=2)
+    ack=dict(group=group,id=add['id'],digest=added['digest'],seq=2,durable=True)
+    for changed in [dict(digest='wrong'),dict(durable=False),dict(seq=0)]:
+        owner.call('roster_saved',reject=True,**(ack|changed))
+    Device.call(owner,'roster_saved',reject=True,**ack,crash_before_commit=True)
+    assert owner.call('roster_pending',group=group)['transition']==added
+    assert owner.call('roster_saved',**ack)['epoch']==2
+    assert owner.call('roster_saved',**ack)['already_saved']
+    owner.call('roster_saved',reject=True,**(ack|dict(seq=3)))
+    assert owner.call('roster_pending',group=group)['transition'] is None
+    transition = dict(group=group, id=add['id'], epoch=1, kind=3, sender=owner.identity,
                       ciphertext=added['commit'], seq=2)
+    owner.call('ingest', **transition)
     peer.pin(candidate)  # Global out-of-band identity trust is insufficient for this group.
     peer.call('ingest', reject=True, **transition)
     for changed in [dict(confirmed=False), dict(epoch=2), dict(account=uid()),
@@ -64,9 +94,15 @@ def check(devices):
     assert peer.call('ingest', **after, seq=3, sender=owner.identity)['event']['text'] == 'after joining'
     assert candidate.call('process', group=group, ciphertext=after['ciphertext'])['text'] == 'after joining'
 
-    removed = owner.call('remove', group=group, identity=candidate.identity)
-    removal = dict(group=group, epoch=2, kind=3, seq=4, id=uid(), ciphertext=removed['commit'],
+    owner.call('ingest', **after, seq=3,sender=owner.identity)
+    remove=dict(group=group,epoch=2,action='remove',device=candidate.identity)
+    owner.call('roster_approve', **remove, approver=owner.identity,confirmed=True)
+    removed=owner.call('roster_stage', **remove,id=uid())
+    assert not removed['welcome']
+    assert owner.call('roster_saved',group=group,id=removed['id'],digest=removed['digest'],durable=True,seq=4)['epoch']==3
+    removal = dict(group=group, epoch=2, kind=3, seq=4, id=removed['id'], ciphertext=removed['commit'],
                    sender=owner.identity)
+    owner.call('ingest', **removal)
     peer.call('ingest', reject=True, **removal)
     peer.call('roster_approve', group=group, device=candidate.identity, approver=owner.identity,
               epoch=2, action='remove', confirmed=True)

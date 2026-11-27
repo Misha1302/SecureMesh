@@ -107,11 +107,15 @@ class PrivateAttachments extends ChangeNotifier {
       await action();
     } catch (e) {
       if (!_closed) {
-        status = e is FormatException && e.message == 'SIZE'
+        status = e is AttachmentDeferredForMessages
+            ? 'paused'
+            : e is FormatException && e.message == 'SIZE'
             ? 'size'
             : 'failed';
       }
-      nextAttempt = DateTime.now().add(const Duration(seconds: 30));
+      nextAttempt = DateTime.now().add(
+        Duration(seconds: e is AttachmentDeferredForMessages ? 3 : 30),
+      );
     } finally {
       busy = false;
       progress = null;
