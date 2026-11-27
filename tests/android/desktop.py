@@ -94,15 +94,18 @@ class Desktop:
         run('xdotool', 'type', '--clearmodifiers', '--delay', '3', '--file', '-',
             input=value, text=True)
 
-    def chooser_path(self, path):
-        # Wait for the native GTK dialog, not the parent Flutter window.
+    def chooser_path(self, path, title):
+        # Require the expected GTK file-selector action on this client process.
         end = time.monotonic() + 20
         while time.monotonic() < end:
-            found = run('xdotool', 'search', '--onlyvisible', '--pid', str(self.process.pid),
-                        capture_output=True, text=True).stdout.splitlines()
-            dialogs = [w for w in found if w != self.window]
-            if dialogs:
-                run('xdotool', 'windowfocus', '--sync', dialogs[-1])
+            dialogs = subprocess.run(
+                ['xdotool', 'search', '--all', '--onlyvisible', '--pid',
+                 str(self.process.pid), '--name', f'^{title}$'],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.splitlines()
+            if len(dialogs) == 1:
+                dialog, = dialogs
+                run('xdotool', 'windowfocus', '--sync', dialog)
                 self.key('ctrl+l')
                 self.key('ctrl+a')
                 self.type(str(path))
@@ -114,18 +117,18 @@ class Desktop:
                     windows = subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid',
                                               str(self.process.pid)], capture_output=True,
                                              text=True, timeout=5).stdout.splitlines()
-                    if dialogs[-1] not in windows:
+                    if dialog not in windows:
                         return
                     if run('xdotool', 'getwindowfocus', capture_output=True,
-                           text=True).stdout.strip() == dialogs[-1]:
+                           text=True).stdout.strip() == dialog:
                         self.key('Return')
                 raise RuntimeError('Linux file chooser did not accept the supplied path')
             time.sleep(.2)
-        raise RuntimeError('Linux file chooser did not open')
+        raise RuntimeError(f'Linux GTK {title} dialog did not open')
 
     def receive(self, dest, expected):
         self.click(self.word('Save', timeout=70))
-        self.chooser_path(dest)
+        self.chooser_path(dest, 'Save File')
         end = time.monotonic() + 30
         while time.monotonic() < end:
             if dest.is_file() and dest.read_bytes() == expected:
@@ -134,28 +137,19 @@ class Desktop:
         raise RuntimeError('Linux export did not reproduce the Android file')
 
     def send(self, path):
-        # The GTK save dialog just closed. Restore focus to Flutter before
-        # hovering the composer. Keep OCR away from chat and sidebar text.
+        # Restore focus after GTK Save. Xvfb can deliver a button click even
+        # when Flutter's hover tooltip is absent on the captured frame.
         run('xdotool', 'windowfocus', '--sync', self.window)
         geometry = run('xdotool', 'getwindowgeometry', '--shell', self.window,
                        capture_output=True, text=True).stdout.splitlines()
         dimensions = dict(line.split('=', 1) for line in geometry)
         width, height = int(dimensions['WIDTH']), int(dimensions['HEIGHT'])
         mx, my = self.word('Message', region=(0, height - 48, width, 32))
-        for x in range(max(16, mx - 200), mx - 18, 13):
-            run('xdotool', 'mousemove', '--window', self.window, str(x), str(my))
-            time.sleep(.65)
-            # Only the observed Attach file tooltip may select a button.
-            # A nearby clipboard, camera or microphone action is not enough.
-            left = max(0, x - 150)
-            region = (left, my - 65, min(300, width - left), min(100, height - my + 65))
-            if any('attach file' in ' '.join(t for t, _, _ in self.words(layout, region))
-                   for layout in (11, 6)):
-                self.click((x, my))
-                break
-        else:
-            raise RuntimeError('Could not locate the desktop Attach file action')
-        self.chooser_path(path)
+        # The wide Linux composer places Attach, Paste image and Voice in
+        # consecutive 48 px targets. From the editor label center to the
+        # attach target center is 52 px inside the editor plus 2.5 targets.
+        self.click((mx - 172, my))
+        self.chooser_path(path, 'Open File')
         self.word('this')
         self.word(path.name)
         self.key('ctrl+Return')
