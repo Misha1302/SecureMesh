@@ -590,6 +590,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 event["own"] = json!(true);
                 entries.push(event);
             }
+            // The query limits to the newest authored rows. Keep creation order
+            // among pending messages with no server sequence in the stable sort.
+            entries.reverse();
             let mut q=db.prepare("SELECT i.event,r.seq FROM incoming i LEFT JOIN received r ON r.group_id=i.group_id AND json_extract(r.envelope,'$.id')=i.id WHERE i.group_id=? ORDER BY i.rowid DESC LIMIT 1000")?;
             let rows = q.query_map([gid], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))

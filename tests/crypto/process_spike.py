@@ -126,6 +126,9 @@ def main():
         next_message = a.call('queue', group=group, id=str(uuid.uuid4()), text='durable epoch')
         assert next_message['epoch'] == confirmed['epoch']
         assert b.call('process', group=group, ciphertext=next_message['ciphertext'])['text'] == 'durable epoch'
+        following = a.call('queue', group=group, id=str(uuid.uuid4()), text='second queued')
+        timeline = a.call('timeline', group=group)['messages']
+        assert [msg['id'] for msg in timeline[-2:]] == [next_message['id'], following['id']]
         for d in (a,b,c):
             assert not d.path.read_bytes().startswith(b'SQLite format')
             assert b'private test sentinel' not in d.path.read_bytes()
