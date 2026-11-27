@@ -177,6 +177,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
           http!,
           base,
           '/v2/auth/register',
+          notFoundCode: 'REGISTRATION_V2_UNAVAILABLE',
           data: {
             'username': username.text.trim(),
             'email': email.text.trim(),
@@ -277,8 +278,16 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       if (mounted) {
         setState(() {
           error =
-              failure is ApiFailure &&
-                  failure.code == 'DEVICE_CHALLENGE_MISMATCH'
+              step == 0 &&
+                  failure is ApiFailure &&
+                  failure.status == 404 &&
+                  failure.code == 'REGISTRATION_V2_UNAVAILABLE'
+              ? (
+                  ru: 'Сервер несовместим с этой версией приложения. Для регистрации укажите сервер с поддержкой SecureMesh API v2.',
+                  en: 'This server is incompatible with this app version. To create an account, use a server that supports SecureMesh API v2.',
+                )
+              : failure is ApiFailure &&
+                    failure.code == 'DEVICE_CHALLENGE_MISMATCH'
               ? (
                   ru: 'Сервер вернул неподходящий запрос подписи. Проверьте адрес сервера; вход не выполнен.',
                   en: 'The server returned an invalid signing challenge. Check the server address; sign-in was stopped.',
