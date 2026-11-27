@@ -32,6 +32,7 @@ import 'saved_messages.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
 import 'profile_biometrics.dart';
+import 'linux_profile_keyring.dart';
 import 'account_removal.dart';
 import 'account_hub.dart';
 import 'identity_comparison.dart';
@@ -360,14 +361,17 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       }
       final args = {'path': selectedPath, 'russian': ru};
       if (biometric == BiometricAction.forget) {
-        await profileBiometrics.invokeMethod<void>('forget', args);
+        if (Platform.isLinux) {
+          await LinuxProfileKeyring.forget(selectedPath);
+        } else {
+          await profileBiometrics.invokeMethod<void>('forget', args);
+        }
         return;
       }
       if (biometric == BiometricAction.unlock) {
-        final wrapped = await profileBiometrics.invokeMapMethod<String, String>(
-          'unlock',
-          args,
-        );
+        final wrapped = Platform.isLinux
+            ? await LinuxProfileKeyring.unlock(selectedPath)
+            : await profileBiometrics.invokeMapMethod<String, String>('unlock', args);
         boundDevice = wrapped?['deviceId'];
         secret = wrapped?['passphrase'] ?? '';
         if (boundDevice == null || secret.isEmpty) throw CryptoFailure();
@@ -411,11 +415,15 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       }
       if (biometric == BiometricAction.enable) {
         // The encrypted profile was successfully opened with the manually entered secret.
-        await profileBiometrics.invokeMethod<void>('enable', {
-          ...args,
-          'passphrase': secret,
-          'deviceId': saved['deviceId'] as String,
-        });
+        if (Platform.isLinux) {
+          await LinuxProfileKeyring.enable(selectedPath, saved['deviceId'] as String, secret);
+        } else {
+          await profileBiometrics.invokeMethod<void>('enable', {
+            ...args,
+            'passphrase': secret,
+            'deviceId': saved['deviceId'] as String,
+          });
+        }
       }
       final lifecycle = WidgetsBinding.instance.lifecycleState;
       if (!mounted ||
@@ -503,6 +511,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               'Не удалось открыть профиль. Проверьте путь и пароль.',
               'Could not unlock this profile. Check the path and passphrase.',
             )
+          : Platform.isLinux
+          ? tr('Связка ключей недоступна. Введите пароль локального профиля.',
+               'Keyring unlock did not complete. Enter your local profile passphrase.')
           : tr(
               'Действие с биометрией не завершено. Введите пароль хранилища и нажмите «Открыть профиль».',
               'Biometric action did not complete. Enter the store passphrase and choose Unlock profile.',
@@ -1494,8 +1505,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-              if (Platform.isAndroid || Platform.isIOS)
+              if (Platform.isAndroid || Platform.isIOS || Platform.isLinux)
                 ProfileBiometricActions(
+                  linuxKeyring: Platform.isLinux,
                   path: path,
                   disabled: loading || choosing,
                   russian: ru,
@@ -2434,12 +2446,16 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     var localCleanupFailed = false;
     try {
       await closingStore;
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (Platform.isAndroid || Platform.isIOS || Platform.isLinux) {
         try {
-          await profileBiometrics.invokeMethod<void>('forget', {
-            'path': file,
-            'russian': ru,
-          });
+          if (Platform.isLinux) {
+            await LinuxProfileKeyring.forget(file);
+          } else {
+            await profileBiometrics.invokeMethod<void>('forget', {
+              'path': file,
+              'russian': ru,
+            });
+          }
         } catch (_) {
           localCleanupFailed = true;
         }
@@ -2463,8 +2479,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         content: Text(
           localCleanupFailed
               ? tr(
-                  'Аккаунт удалён. Проверьте локальный файл и биометрический доступ на этом устройстве.',
-                  'Account removed. Check the local profile file and biometric access on this device.',
+                  'Аккаунт удалён. Проверьте локальный файл и сохранённый способ входа на этом устройстве.',
+                  'Account removed. Check the local profile file and saved unlock method on this device.',
                 )
               : tr(
                   'Тестовый аккаунт и локальный профиль удалены.',
