@@ -39,7 +39,7 @@ class NativeDelivery {
     this.onCallSignal,
     this.onRosterChange,
   });
-  final void Function()? onIncomingText;
+  final void Function(String group)? onIncomingText;
   final void Function(String group)? onCallSignal;
   final Future<void> Function(String, Map)? onRosterChange;
   final CryptoCommand crypto;
@@ -229,7 +229,7 @@ class NativeDelivery {
           onCallSignal?.call(group);
         }
         if (!_closed && isNewIncomingText(committed, message['envelopeKind'])) {
-          onIncomingText?.call();
+          onIncomingText?.call(group);
         }
       }
       final processed = page['peerProcessedSequence'];

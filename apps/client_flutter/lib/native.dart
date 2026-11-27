@@ -23,6 +23,7 @@ import 'voice_wave.dart';
 import 'video_message.dart';
 import 'linux_notifications.dart';
 import 'android_notifications.dart';
+import 'notification_preferences.dart';
 import 'message_markup.dart';
 import 'history_search.dart';
 import 'earlier_history.dart';
@@ -61,6 +62,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   final androidNotifications = const AndroidNotifications();
   late final desktopNotifications = LinuxNotifications(
     bridge: Platform.isAndroid ? androidNotifications : null,
+    allowsGroup: (group) =>
+        NotificationPreferences.fromProfile(profile).allows(group, DateTime.now()),
     allowed: () {
       final lifecycle = WidgetsBinding.instance.lifecycleState;
       return (Platform.isLinux || Platform.isAndroid) &&
@@ -669,6 +672,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     bool sessionOnly = false,
     Set<String>? removedFields,
     bool? notificationPreference,
+    NotificationPreferences Function(NotificationPreferences)? updateNotificationPolicy,
     bool? backgroundLockPreference,
   }) {
     final epoch = generation;
@@ -690,6 +694,14 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                 key: profile![key],
             };
       // Preserve a newer privacy choice across concurrent profile/session writes.
+      if (updateNotificationPolicy != null) {
+        updated[NotificationPreferences.key] =
+            updateNotificationPolicy(
+              NotificationPreferences.fromProfile(profile),
+            ).toJson();
+      } else if (profile!.containsKey(NotificationPreferences.key)) {
+        updated[NotificationPreferences.key] = profile![NotificationPreferences.key];
+      }
       updated['desktopNotifications'] =
           notificationPreference ?? (profile!['desktopNotifications'] == true);
       updated['lockWhenHidden'] =
@@ -1062,6 +1074,10 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     api: (route, {data}) => api(route, data: data),
     channelApi: session!.request,
     onDirectory: updateDirectoryLabels,
+    onMute: (Platform.isAndroid || Platform.isLinux)
+        ? (group, muted) =>
+              changeNotificationPolicy((prefs) => prefs.setMute(group, muted))
+        : null,
     mediaAttachments: (group) {
       final activeSession = session!;
       final activeGeneration = generation;
@@ -2325,6 +2341,26 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> changeNotificationPolicy(
+    NotificationPreferences Function(NotificationPreferences) update,
+  ) async {
+    final epoch = generation;
+    if (changingNotifications || store == null) return;
+    desktopNotifications.cancel();
+    setState(() {
+      changingNotifications = true;
+      notificationSaveFailed = false;
+    });
+    try {
+      await persistProfile({}, sessionOnly: true, updateNotificationPolicy: update);
+    } catch (_) {
+      if (mounted && generation == epoch) notificationSaveFailed = true;
+      rethrow;
+    } finally {
+      if (mounted && generation == epoch) setState(() => changingNotifications = false);
+    }
+  }
+
   Future<void> setNotifications(bool enabled) async {
     final epoch = generation;
     if (changingNotifications || store == null) return;
@@ -2559,6 +2595,19 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             ),
             value: profile?['desktopNotifications'] == true,
             onChanged: changingNotifications ? null : setNotifications,
+          ),
+          QuietHoursTile(
+            preferences: NotificationPreferences.fromProfile(profile),
+            russian: ru,
+            onChanged: changingNotifications ? null : (duration) {
+              final end = duration == Duration.zero
+                  ? null
+                  : DateTime.now().add(duration);
+              // The settings panel displays notificationSaveFailed on a write error.
+              unawaited(changeNotificationPolicy(
+                (prefs) => prefs.quietUntil(end),
+              ).catchError((_) {}));
+            },
           ),
           if (Platform.isAndroid)
             ListTile(

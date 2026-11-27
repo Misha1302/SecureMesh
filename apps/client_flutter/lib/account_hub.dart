@@ -7,6 +7,7 @@ import 'attachment_transfer.dart';
 import 'conversation_media.dart';
 import 'profile_photo.dart';
 import 'profile_text.dart';
+import 'notification_preferences.dart';
 import 'public_channels.dart';
 
 import 'dart:async';
@@ -33,6 +34,7 @@ class AccountHub extends StatefulWidget {
     required this.saveProfile,
     this.saveChanges,
     this.mediaAttachments,
+    this.onMute,
     required this.openChat,
     this.channelApi,
     this.onDirectory,
@@ -41,6 +43,7 @@ class AccountHub extends StatefulWidget {
   final Map<String, dynamic> profile;
   final DisplayNameApi? channelApi;
   final LocalCrypto crypto;
+  final Future<void> Function(String group, bool muted)? onMute;
   final ValueChanged<List<dynamic>>? onDirectory;
   final PrivateAttachments Function(String group)? mediaAttachments;
   final HttpsRequest api;
@@ -1353,6 +1356,9 @@ class _AccountHubState extends State<AccountHub> {
     }
   }
 
+  bool isMuted(Map chat) => NotificationPreferences.fromProfile(widget.profile)
+      .mutedGroups.contains(chat['id']);
+
   Widget _chatRow(Map c, Set<String> pinned) => ListTile(
     key: ValueKey('chat-${c['id']}'),
     selected: widget.profile['group'] == c['id'],
@@ -1371,6 +1377,8 @@ class _AccountHubState extends State<AccountHub> {
       onSelected: (field) => action(
         () => field == 'rosterAdd' || field == 'rosterRemove'
             ? manageRoster(c, field == 'rosterAdd')
+            : field == 'mute'
+            ? widget.onMute!(c['id'] as String, !isMuted(c))
             : field == 'folders'
             ? chooseFolders(c['id'] as String)
             : toggleChat(field, c['id'] as String),
@@ -1392,6 +1400,13 @@ class _AccountHubState extends State<AccountHub> {
                 : tr('В архив', 'Archive chat'),
           ),
         ),
+        if (widget.onMute != null)
+          PopupMenuItem(
+            value: 'mute',
+            child: Text(isMuted(c)
+                ? tr('Включить уведомления', 'Unmute chat')
+                : tr('Отключить уведомления', 'Mute chat')),
+          ),
         PopupMenuItem(
           value: 'folders',
           child: Text(tr('Папки чата', 'Chat folders')),
@@ -1426,6 +1441,11 @@ class _AccountHubState extends State<AccountHub> {
     ),
     subtitle: Row(
       children: [
+        if (widget.onMute != null && isMuted(c)) ...[
+          Icon(Icons.notifications_off_outlined, size: 16,
+              semanticLabel: tr('Уведомления отключены', 'Notifications muted')),
+          const SizedBox(width: 4),
+        ],
         if (pinned.contains(c['id'])) ...[
           Icon(
             Icons.push_pin_outlined,

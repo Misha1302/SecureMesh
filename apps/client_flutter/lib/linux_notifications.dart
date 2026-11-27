@@ -23,12 +23,15 @@ bool isNewIncomingText(Map<String, dynamic> result, dynamic envelopeKind) {
 class LinuxNotifications {
   LinuxNotifications({
     this.bridge,
+    this.allowsGroup,
     required this.allowed,
     required this.russian,
     required this.availability,
   });
 
   final NativeNotificationBridge? bridge;
+  final bool Function(String group)? allowsGroup;
+  final _groups = <String?>{};
   final bool Function() allowed, russian;
   final void Function(bool) availability;
   Timer? _pending;
@@ -64,16 +67,23 @@ class LinuxNotifications {
     if (generation == _generation) availability(available);
   }
 
-  void incoming() {
+  bool _allows(String? group) =>
+      allowsGroup == null || (group != null && allowsGroup!(group));
+
+  void incoming([String? group]) {
     if (!allowed() ||
         _sending ||
-        _pending != null ||
+        !_allows(group) ||
         (_visible?.elapsed.inSeconds ?? 5) < 5) {
       return;
     }
+    _groups.add(group);
+    if (_pending != null) return;
     _pending = Timer(const Duration(seconds: 1), () {
       _pending = null;
-      if (allowed()) unawaited(_show());
+      final eligible = allowed() && _groups.any(_allows);
+      _groups.clear();
+      if (eligible) unawaited(_show());
     });
   }
 
@@ -111,6 +121,7 @@ class LinuxNotifications {
   void cancel() {
     unawaited(bridge?.clear().catchError((_) {}));
     _generation++;
+    _groups.clear();
     _pending?.cancel();
     _pending = null;
     _visible = null;
