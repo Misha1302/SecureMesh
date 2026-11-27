@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="SecureMesh">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="description" content="Офлайн-справка SecureMesh для iPhone: установка и адрес демосервера.">
+  <meta name="description" content="Тестовый мессенджер SecureMesh для iPhone и справка по установке.">
   <title>SecureMesh для iPhone</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon-192.png" type="image/png">
@@ -29,7 +29,7 @@
       <h1>SecureMesh для iPhone</h1>
       <p>Тестовый веб‑клиент для личных текстовых диалогов один на один. После первого запуска справка и локальный профиль доступны офлайн.</p>
       <a class="profile-link" href="./profile.html">Открыть тестовый мессенджер</a>
-      <p id="offline-status" class="cache-status" role="status" hidden></p>
+      <p id="offline-status" class="cache-status" role="status"></p>
     </header>
 
     <div class="layout">
@@ -40,7 +40,7 @@
           <li>Откройте эту страницу в Safari.</li>
           <li>Нажмите «Поделиться» на панели Safari или в меню страницы. Выберите «На экран “Домой”».</li>
           <li>Если видите переключатель «Открывать как веб‑приложение», включите его. Нажмите «Добавить».</li>
-          <li>Первый раз откройте значок SecureMesh при подключении к интернету. Для проверки кеша откройте справку по ссылке SecureMesh в шапке мессенджера.</li>
+          <li>Первый раз откройте значок SecureMesh при подключении к интернету. Чтобы проверить доступность справки офлайн, нажмите SecureMesh в шапке мессенджера.</li>
         </ol>
         <details id="install-help">
           <summary>Нет пункта «На экран “Домой”»?</summary>
@@ -56,7 +56,7 @@
           <button type="button" id="copy-address" hidden>Скопировать адрес</button>
           <a href="https://securemesh.90-156-230-119.sslip.io/health/ready" target="_blank" rel="noopener noreferrer">Проверить доступность<span class="visually-hidden"> (новая вкладка)</span></a>
         </div>
-        <p id="copy-status" class="feedback" role="status" hidden></p>
+        <p id="copy-status" class="feedback" role="status"></p>
         <p class="hint">Проверка требует интернета. Ответ <code>ready</code> означает, что API соединился с базой данных.</p>
       </section>
 

@@ -27,13 +27,11 @@ copyButton.addEventListener('click', async () => {
     address.setSelectionRange(0, address.value.length);
     copyStatus.textContent = 'Адрес выделен. Нажмите «Скопировать» в меню выделения.';
   }
-  copyStatus.hidden = false;
 });
 
 function showOfflineStatus(text, ready = false) {
   offlineStatus.textContent = text;
   offlineStatus.toggleAttribute('data-ready', ready);
-  offlineStatus.hidden = false;
 }
 
 async function activateOfflineGuide() {
