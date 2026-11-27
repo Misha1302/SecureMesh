@@ -14,6 +14,7 @@ import 'message_markup.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
 import 'account_hub.dart';
+import 'display_name.dart';
 import 'transport.dart';
 
 class CryptoFailure implements Exception {}
@@ -1161,6 +1162,20 @@ class _ClientAppState extends State<ClientApp> {
         style: Theme.of(context).textTheme.headlineMedium,
       ),
       const SizedBox(height: 24),
+      if (profile?['trustState'] == 'DEVICE_TRUSTED')
+        ListTile(
+          leading: const Icon(Icons.badge_outlined),
+          title: Text(tr('Отображаемое имя', 'Display name')),
+          subtitle: Text('@${profile?['username'] ?? ''}'),
+          onTap: () {
+            final ownerSession = session!;
+            showDialog<void>(
+              context: context,
+              builder: (_) =>
+                  DisplayNameEditor(api: ownerSession.request, russian: ru),
+            );
+          },
+        ),
       SwitchListTile(
         title: const Text('Русский / English'),
         value: ru,

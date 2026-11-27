@@ -11,6 +11,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 import delivery as d
+import display_names
 
 
 def sql(statement):
@@ -109,6 +110,7 @@ def main():
         d.request(f'/v1/crypto/welcomes/{group}/ack',{},token=bt,expected=204)
         assert all(c['group']!=group for c in d.request('/v1/crypto/welcomes',token=bt))
         assert sql(f"SELECT count(*) FROM members WHERE conversation_id='{uuid.UUID(group)}'").strip()=='2'
+        display_names.verify(d.request, at, bt, ot, ps['accessToken'], group, a['username'])
         # Native preparation stores group, Welcome and immutable retry request in one SQLCipher transaction.
         second=establish(a,b,check_crash=True)
         prepared=da.call('outbox')['messages']

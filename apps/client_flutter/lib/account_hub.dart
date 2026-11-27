@@ -1,3 +1,5 @@
+import 'display_name.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -57,7 +59,8 @@ class _AccountHubState extends State<AccountHub> {
     final matches = chats.where(
       (chat) =>
           archived.contains(chat['id']) == archiveOpen &&
-          (chat['peerName'] as String).toLowerCase().contains(chatQuery),
+          ((chat['peerName'] as String).toLowerCase().contains(chatQuery) ||
+                    (peerDisplayName(chat['peerDisplayName']) ?? '').toLowerCase().contains(chatQuery)),
     );
     return [
       ...matches.where((c) => pinned.contains(c['id'])),
@@ -636,8 +639,12 @@ class _AccountHubState extends State<AccountHub> {
                 ),
               ],
             ),
-            title: Text(c['peerName'] as String),
-            subtitle: const Text('E2EE · OpenMLS'),
+            title: Text(
+              peerDisplayName(c['peerDisplayName']) ?? c['peerName'] as String,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text('@${c['peerName']}'),
             onTap: blocked
                 ? null
                 : () => action(() async {

@@ -120,7 +120,28 @@ public static class Identity
             await using var cmd=Sql.Cmd(c,"UPDATE sessions SET revoked=true WHERE id=$1",actor.SessionId); await cmd.ExecuteNonQueryAsync(); return Results.NoContent();
         });
         app.MapGet("/v1/users/me",async(HttpContext ctx,NpgsqlDataSource db)=>
-        {var a=await Sql.Authenticate(ctx,db,false); return Results.Ok(new {userId=a.UserId,deviceId=a.DeviceId,trustState=a.Trusted?"DEVICE_TRUSTED":"DEVICE_PENDING_TRUST"});});
+        {
+            var actor = await Sql.Authenticate(ctx, db, false);
+            await using var c = await db.OpenConnectionAsync();
+            await using var cmd = Sql.Cmd(c, "SELECT display_name FROM users WHERE id=$1", actor.UserId);
+            var name = await cmd.ExecuteScalarAsync() as string;
+            return Results.Ok(new { userId=actor.UserId, deviceId=actor.DeviceId,
+                trustState=actor.Trusted ? "DEVICE_TRUSTED" : "DEVICE_PENDING_TRUST", displayName=name });
+        });
+        app.MapPut("/v1/users/me/display-name", async (DisplayNameUpdate input, HttpContext ctx, NpgsqlDataSource db) =>
+        {
+            var actor = await Sql.Authenticate(ctx, db);
+            var name = DisplayNames.Normalize(input.DisplayName);
+            await using var c = await db.OpenConnectionAsync();
+            await using var cmd = Sql.Cmd(c, """
+                UPDATE users u SET display_name=NULLIF($1,'')
+                FROM devices d JOIN sessions s ON s.device_id=d.id
+                WHERE u.id=$2 AND d.user_id=u.id AND d.id=$3 AND d.trusted AND NOT d.revoked
+                  AND s.id=$4 AND NOT s.revoked AND NOT s.used AND s.expires_at>now()
+                """, name, actor.UserId, actor.DeviceId, actor.SessionId);
+            if (await cmd.ExecuteNonQueryAsync() != 1) throw new ApiError(401, "AUTH_REQUIRED");
+            return Results.Ok(new { displayName = name.Length == 0 ? null : name });
+        });
         app.MapGet("/v1/devices",async(HttpContext ctx,NpgsqlDataSource db)=>
         {
             var a=await Sql.Authenticate(ctx,db); await using var c=await db.OpenConnectionAsync();
