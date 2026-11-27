@@ -140,6 +140,8 @@ class Server:
 def main():
     with Server() as server, tempfile.TemporaryDirectory(prefix='securemesh-delivery-',dir=ROOT/'.local') as tmp:
         root=Path(tmp); a,b,outsider=[account(root) for _ in range(3)]
+        import credential_versions
+        credential_versions.verify(sys.modules[__name__], root, a)
         da,db=a['device'],b['device']; at=a['session']['accessToken']; bt=b['session']['accessToken']; ot=outsider['session']['accessToken']
         da.pin(db); db.pin(da)
         login(a['username'],'incorrect password',da,expected=401)

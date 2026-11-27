@@ -7,6 +7,22 @@ namespace SecureMesh;
 
 public static class Passwords
 {
+    // The extra '$' also makes older six-component PHC parsers reject this row.
+    public static string Marker(int version) => version == 2 ? "sm2$" : "";
+    public static string? Input(int version, string? password, string? credential)
+    {
+        if (version == 1) return credential is null && password is { Length: >= 1 and <= 256 } ? password : null;
+        if (version != 2 || password is not null || credential is not { Length: 44 }) return null;
+        Span<byte> decoded = stackalloc byte[32];
+        return Convert.TryFromBase64String(credential, decoded, out var len) && len == 32 &&
+            Convert.ToBase64String(decoded) == credential ? credential : null;
+    }
+    public static async Task<bool> VerifyVersion(int version, string secret, string stored, string dummy)
+    {
+        bool matches = stored.StartsWith("sm2$", StringComparison.Ordinal) == (version == 2);
+        return await Verify(secret, matches ? stored[Marker(version).Length..] : dummy) && matches;
+    }
+
     private const int Memory = 65536;
     public static async Task<string> Hash(string password)
     {

@@ -31,7 +31,7 @@ public sealed class AccountRemovalMigration : Migration
         throw new NotSupportedException("Preserve non-reusable historical MLS sender identifiers.");
 }
 
-public sealed record RemoveLabAccount(Guid RequestId, string Password);
+public sealed record RemoveLabAccount(Guid RequestId, string? Password = null, string? Credential = null);
 
 public static class AccountRemoval
 {
@@ -43,7 +43,7 @@ public static class AccountRemoval
         {
             if (!app.Environment.IsDevelopment() || !app.Configuration.GetValue<bool>("EnableLabAccountRemoval"))
                 throw new ApiError(404, "ACCOUNT_REMOVAL_UNAVAILABLE");
-            if (input.RequestId == Guid.Empty || input.Password is null || input.Password.Length is < 1 or > 256)
+            if (input.RequestId == Guid.Empty || Passwords.Input(input.Credential is null ? 1 : 2, input.Password, input.Credential) is null)
                 throw new ApiError(400, "REMOVAL_CONFIRMATION_REQUIRED");
             var auth = ctx.Request.Headers.Authorization.ToString();
             if (!auth.StartsWith("Bearer ", StringComparison.Ordinal) || auth.Length is <= 7 or > 200)
@@ -83,7 +83,8 @@ public static class AccountRemoval
         {
             if (!await reader.ReadAsync(ct)) throw new ApiError(401,"AUTH_REQUIRED");
             if (!reader.GetBoolean(3)) throw new ApiError(403,"DEVICE_PENDING_TRUST");
-            if (!await Passwords.Verify(input.Password, reader.GetString(2)))
+            var version = input.Credential is null ? 1 : 2;
+            if (!await Passwords.VerifyVersion(version, input.Credential ?? input.Password!, reader.GetString(2), Identity.DummyPhc))
                 throw new ApiError(403,"REMOVAL_CONFIRMATION_FAILED");
             account = reader.GetGuid(0);
             name = reader.GetString(1);

@@ -4,6 +4,11 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 
 import 'account_setup.dart';
+import 'account_credentials.dart';
+import 'display_name.dart';
+
+import 'dart:convert';
+
 import 'http_api.dart';
 import 'local_client.dart';
 import 'profile_files.dart';
@@ -52,6 +57,9 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   final endpoint = TextEditingController();
   bool editingServer = false;
   final username = TextEditingController();
+  final displayName = TextEditingController();
+  bool legacy = false, remembered = false;
+  final revealed = <TextEditingController>{};
   final email = TextEditingController();
   final password = TextEditingController();
   final localPassword = TextEditingController();
@@ -66,7 +74,10 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   bool busy = false, ru = true, verifiedRegistrationHere = false;
   bool resuming = false, profileComplete = false;
   bool get needsAccountPassword =>
-      !profileComplete && draft?['session'] == null;
+      !(verifiedRegistrationHere && !legacy) &&
+      !(resuming && !legacy) &&
+      !profileComplete &&
+      draft?['session'] == null;
   int step = 0; // register, email verification, login
   String tr(String a, String b) => ru ? a : b;
 
@@ -92,6 +103,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
     for (final c in [
       endpoint,
       username,
+      displayName,
       email,
       password,
       localPassword,
@@ -124,6 +136,11 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       final state = await setup!.state();
       draft = state['draft'] as Map<String, dynamic>?;
       if (draft == null) throw StateError('DRAFT_MISSING');
+      final version = draft!['credentialVersion'] ?? 1;
+      if (version != 1 && version != 2)
+        throw StateError('Unsupported credential version');
+      legacy = version == 1;
+      if (!legacy) password.text = widget.resumePassphrase!;
       endpoint.text = draft!['endpoint'] as String;
       username.text = draft!['username'] as String;
       identity = draft!['deviceId'] as String;
@@ -154,14 +171,21 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       }
       http ??= nativeHttpClient();
       if (step == 0) {
+        await initializeNativeBridge();
         await meshHttp(
           http!,
           base,
-          '/v1/auth/register',
+          '/v2/auth/register',
           data: {
             'username': username.text.trim(),
             'email': email.text.trim(),
-            'password': password.text,
+            'displayName': displayName.text.trim(),
+            ...await accountCredentialFields(
+              version: 2,
+              endpoint: base,
+              username: username.text.trim(),
+              password: password.text,
+            ),
           },
         );
         if (mounted) {
@@ -170,7 +194,9 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
             editingServer = false;
           });
         }
-      } else if (step == 1) {
+        return;
+      }
+      if (step == 1) {
         await meshHttp(
           http!,
           base,
@@ -180,52 +206,49 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         verification.clear();
         verifiedRegistrationHere = true;
         if (mounted) setState(() => step = 2);
-      } else {
-        await initializeNativeBridge();
-        if (!profileComplete && setup == null) {
-          if (identity == null) {
-            final directory = await localProfileDirectory();
-            await directory.create(recursive: true);
-            identity = newUuid();
-            storePath = '${directory.path}/$identity.db';
-          }
-          store = await NativeClient.open(
-            path: storePath!,
-            passphrase: localPassword.text,
-          );
-          http ??= nativeHttpClient();
-          final prepared = AccountSetup(store: store!, http: http!);
-          try {
-            await prepared.prepare(
-              device: identity!,
-              endpoint: base,
-              username: username.text.trim(),
-              registeredHere: verifiedRegistrationHere,
-            );
-          } catch (_) {
-            // No login was sent. A rejected initializer must not trap the
-            // corrected form on an uninitialized database connection.
-            store?.dispose();
-            store = null;
-            setup = null;
-            identity = null;
-            storePath = null;
-            rethrow;
-          }
-          setup = prepared;
-          draft = (await setup!.state())['draft'] as Map<String, dynamic>;
-        }
-        if (!profileComplete) await setup!.finish(password: password.text);
-        profileComplete = true;
-        store?.dispose();
-        store = null;
-        setup = null;
-        final passphrase = localPassword.text;
-        await widget.onReady(storePath!, passphrase);
-        password.clear();
-        localPassword.clear();
-        if (mounted) Navigator.of(context).pop();
       }
+      final localKey = legacy ? localPassword.text : password.text;
+      await initializeNativeBridge();
+      if (!profileComplete && setup == null) {
+        if (identity == null) {
+          final directory = await localProfileDirectory();
+          await directory.create(recursive: true);
+          identity = newUuid();
+          storePath = '${directory.path}/$identity.db';
+        }
+        store = await NativeClient.open(path: storePath!, passphrase: localKey);
+        http ??= nativeHttpClient();
+        final prepared = AccountSetup(store: store!, http: http!);
+        try {
+          await prepared.prepare(
+            device: identity!,
+            endpoint: base,
+            username: username.text.trim(),
+            registeredHere: verifiedRegistrationHere,
+            credentialVersion: legacy ? 1 : 2,
+          );
+        } catch (_) {
+          // No login was sent. A rejected initializer must not trap the
+          // corrected form on an uninitialized database connection.
+          store?.dispose();
+          store = null;
+          setup = null;
+          identity = null;
+          storePath = null;
+          rethrow;
+        }
+        setup = prepared;
+        draft = (await setup!.state())['draft'] as Map<String, dynamic>;
+      }
+      if (!profileComplete) await setup!.finish(password: password.text);
+      profileComplete = true;
+      store?.dispose();
+      store = null;
+      setup = null;
+      await widget.onReady(storePath!, localKey);
+      password.clear();
+      localPassword.clear();
+      if (mounted) Navigator.of(context).pop();
     } catch (failure) {
       if (setup != null) {
         try {
@@ -301,14 +324,36 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       controller: controller,
       enabled: !busy,
       readOnly:
-          draft != null &&
-          [endpoint, username, localPassword].contains(controller),
-      obscureText: secret,
+          (verifiedRegistrationHere && controller == username) ||
+          (draft != null &&
+              ([endpoint, username, localPassword].contains(controller) ||
+                  (!legacy && controller == password))),
+      obscureText: secret && !revealed.contains(controller),
       autocorrect: false,
       enableSuggestions: !secret,
+      autofillHints: controller == password
+          ? [step == 0 ? AutofillHints.newPassword : AutofillHints.password]
+          : controller == username
+          ? const [AutofillHints.username]
+          : null,
       keyboardType: keyboard,
       decoration: InputDecoration(
         labelText: label,
+        suffixIcon: secret
+            ? IconButton(
+                tooltip: revealed.contains(controller)
+                    ? tr('Скрыть', 'Hide')
+                    : tr('Показать', 'Show'),
+                icon: Icon(
+                  revealed.contains(controller)
+                      ? Icons.visibility_off
+                      : Icons.visibility,
+                ),
+                onPressed: () => setState(() {
+                  if (!revealed.remove(controller)) revealed.add(controller);
+                }),
+              )
+            : null,
         helperText: help,
         helperMaxLines: 8,
         errorMaxLines: 5,
@@ -316,12 +361,31 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         border: const OutlineInputBorder(),
       ),
       validator: (v) {
-        if (v == null || v.length < min || v.length > max) {
+        final length = legacy && controller == password
+            ? v?.length
+            : v?.characters.length;
+        if (v == null ||
+            length == null ||
+            length < min ||
+            length > max ||
+            (controller == password &&
+                !legacy &&
+                (utf8.encode(v).length > 4096 || v.contains('\u0000')))) {
           return tr(
             'Введите от $min до $max символов.',
             'Enter $min–$max characters.',
           );
         }
+        if (controller == displayName && peerDisplayName(v) == null)
+          return tr(
+            'Введите имя в одну строку.',
+            'Enter your name on one line.',
+          );
+        if (controller == localPassword && v == password.text)
+          return tr(
+            'Выберите отдельный пароль хранилища.',
+            'Choose a separate local passphrase.',
+          );
         if (controller == endpoint) {
           if (httpsServerOrigin(v) == null) {
             return tr(
@@ -452,7 +516,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                       if (step != 1)
                         field(
                           username,
-                          tr('Имя пользователя', 'Username'),
+                          tr('Уникальный @username', 'Unique @username'),
                           help: tr(
                             'От 3 до 32 символов: строчные латинские буквы, цифры и знак _.',
                             'Use 3–32 lowercase letters (a–z), digits or underscores.',
@@ -460,6 +524,12 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           example: 'marina_24',
                           min: 3,
                           max: 32,
+                        ),
+                      if (step == 0)
+                        field(
+                          displayName,
+                          tr('Имя в профиле', 'Name on profile'),
+                          max: 64,
                         ),
                       if (step == 0)
                         field(
@@ -478,15 +548,29 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           tr('Пароль аккаунта', 'Account password'),
                           help: step == 0
                               ? tr(
-                                  'Придумайте пароль длиной от 12 до 256 символов.',
-                                  'Choose a password of 12–256 characters.',
+                                  'Придумайте уникальный пароль из 16–256 символов и сохраните в менеджере паролей. Он также открывает переписку на этом устройстве.',
+                                  'Choose a unique password of 16–256 characters and save it in your password manager. It also unlocks chats on this device.',
                                 )
                               : tr(
                                   'Введите пароль, который указали при регистрации.',
                                   'Enter the password you chose at registration.',
                                 ),
                           secret: true,
-                          min: 12,
+                          min: legacy ? 12 : 16,
+                        ),
+                      if (step == 0)
+                        CheckboxListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: remembered,
+                          onChanged: busy
+                              ? null
+                              : (v) => setState(() => remembered = v == true),
+                          title: Text(
+                            tr(
+                              'Я запомнил или сохранил пароль',
+                              'I remember or have saved my password',
+                            ),
+                          ),
                         ),
                       if (step == 1)
                         field(
@@ -499,7 +583,39 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           secret: true,
                           max: 128,
                         ),
-                      if (step == 2 && !resuming) ...[
+                      if (step == 2 &&
+                          !resuming &&
+                          !verifiedRegistrationHere &&
+                          draft == null)
+                        TextButton(
+                          onPressed: busy
+                              ? null
+                              : () => setState(() {
+                                  legacy = !legacy;
+                                  password.clear();
+                                  localPassword.clear();
+                                  revealed.clear();
+                                  error = null;
+                                }),
+                          child: Text(
+                            legacy
+                                ? tr(
+                                    'Вход с единым паролем',
+                                    'Use single-password sign-in',
+                                  )
+                                : tr(
+                                    'Вход в аккаунт старой версии',
+                                    'Sign in to a legacy account',
+                                  ),
+                          ),
+                        ),
+                      if (step == 2 && legacy && !resuming) ...[
+                        Text(
+                          tr(
+                            'Только для старых аккаунтов: их пароль передаётся серверу по HTTPS. Здесь нельзя вводить единый пароль нового аккаунта.',
+                            'For legacy accounts only: the old account password is sent to the server over HTTPS. Never enter a new account’s single password here.',
+                          ),
+                        ),
                         field(
                           localPassword,
                           tr(
@@ -530,6 +646,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                       FilledButton(
                         onPressed:
                             busy ||
+                                (step == 0 && !remembered) ||
                                 (resuming && setup == null && !profileComplete)
                             ? null
                             : submit,
@@ -558,6 +675,11 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           onPressed: busy
                               ? null
                               : () => setState(() {
+                                  password.clear();
+                                  localPassword.clear();
+                                  revealed.clear();
+                                  remembered = false;
+                                  legacy = false;
                                   step = step == 0 ? 2 : 0;
                                   if (step == 0 && verifiedRegistrationHere) {
                                     verifiedRegistrationHere = false;

@@ -7,29 +7,32 @@ using NSec.Cryptography;
 
 namespace SecureMesh;
 
-public sealed record Registration(string Username, string Email, string Password);
+public sealed record Registration(string Username, string Email, string? Password = null, string? Credential = null, string? DisplayName = null);
 public sealed record Verification(string Token);
 public sealed record Challenge(string Username, Guid DeviceId);
-public sealed record Login(string Username, string Password, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, string? ClientOs = null);
+public sealed record Login(string Username, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, string? ClientOs = null, string? Password = null, string? Credential = null);
 public sealed record Refresh(string Token);
 public static class Identity
 {
-    private static readonly string DummyPhc = Passwords.Hash(Sql.Token()).GetAwaiter().GetResult();
+    internal static readonly string DummyPhc = Passwords.Hash(Sql.Token()).GetAwaiter().GetResult();
     public static void MapIdentity(this WebApplication app)
     {
         app.MapDeviceNames();
-        app.MapPost("/v1/auth/register", async (Registration input, NpgsqlDataSource db, VerificationEmail email, CancellationToken cancellationToken) =>
+        foreach (var version in new[] {1, 2})
+        app.MapPost($"/v{version}/auth/register", async (Registration input, NpgsqlDataSource db, VerificationEmail email, CancellationToken cancellationToken) =>
         {
+            var secret = Passwords.Input(version, input.Password, input.Credential) ?? throw new ApiError(400, "INVALID_REGISTRATION");
+            var display = version == 2 ? DisplayNames.Normalize(input.DisplayName) : "";
             var username = input.Username.ToLowerInvariant();
-            if (!Regex.IsMatch(username, "^[a-z0-9_]{3,32}$") || input.Email.Length > 254 || input.Password.Length is < 12 or > 256 || !MailAddress.TryCreate(input.Email, out var mail) || mail.Address != input.Email)
+            if (!Regex.IsMatch(username, "^[a-z0-9_]{3,32}$") || input.Email.Length > 254 || secret.Length < 12 || (version == 2 && display.Length == 0) || !MailAddress.TryCreate(input.Email, out var mail) || mail.Address != input.Email)
                 throw new ApiError(400, "INVALID_REGISTRATION");
-            var phc = await Passwords.Hash(input.Password);
+            var phc = Passwords.Marker(version) + await Passwords.Hash(secret);
             var token = Sql.Token(); var user = Guid.NewGuid();
             await using var c = await db.OpenConnectionAsync();
             await using var tx = await c.BeginTransactionAsync();
             try
             {
-                await using var insert = Sql.Cmd(c, "INSERT INTO users(id,username,email,password_hash) VALUES($1,$2,$3,$4)", user, username, input.Email.ToLowerInvariant(), phc);
+                await using var insert = Sql.Cmd(c, "INSERT INTO users(id,username,email,password_hash,display_name) VALUES($1,$2,$3,$4,NULLIF($5,''))", user, username, input.Email.ToLowerInvariant(), phc, display);
                 await insert.ExecuteNonQueryAsync();
                 await using var verify = Sql.Cmd(c, "INSERT INTO email_tokens VALUES($1,$2,now()+interval '30 minutes')", Sql.Hash(token), user);
                 await verify.ExecuteNonQueryAsync();
@@ -62,15 +65,16 @@ public static class Identity
             await cmd.ExecuteNonQueryAsync();
             return Results.Ok(new { challengeId=id, payload=Convert.ToBase64String(payload) });
         });
-        app.MapPost("/v1/auth/login", async (Login input, NpgsqlDataSource db) =>
+        foreach (var version in new[] {1, 2})
+        app.MapPost($"/v{version}/auth/login", async (Login input, NpgsqlDataSource db) =>
         {
-            if(input.Password.Length>256) throw new ApiError(401,"INVALID_CREDENTIALS");
+            var secret = Passwords.Input(version, input.Password, input.Credential) ?? throw new ApiError(401,"INVALID_CREDENTIALS");
             await using var c=await db.OpenConnectionAsync();
             Guid user=Guid.Empty; string phc=DummyPhc; bool verified=false;
             await using(var cmd=Sql.Cmd(c,"SELECT id,password_hash,verified FROM users WHERE username=$1",input.Username))
             await using(var r=await cmd.ExecuteReaderAsync())
                 if(await r.ReadAsync()) { user=r.GetGuid(0); phc=r.GetString(1); verified=r.GetBoolean(2); }
-            if(!await Passwords.Verify(input.Password,phc) || user==Guid.Empty || !verified) throw new ApiError(401,"INVALID_CREDENTIALS");
+            if(!await Passwords.VerifyVersion(version,secret,phc,DummyPhc) || user==Guid.Empty || !verified) throw new ApiError(401,"INVALID_CREDENTIALS");
             await using var tx=await c.BeginTransactionAsync();
             // Serialize device enrollment for the account; concurrent first-login cannot enroll hidden devices.
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 AND username=$2 AND verified FOR UPDATE",user,input.Username))

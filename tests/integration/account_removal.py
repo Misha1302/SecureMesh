@@ -120,6 +120,14 @@ def main():
     with database() as source, tempfile.TemporaryDirectory(dir=d.ROOT/'.local') as tmp:
         with patch.dict(os.environ,{'EnableLabAccountRemoval':'true'}), d.Server(database=source,legacy_bootstrap=False) as server:
             verify(server,source,Path(tmp))
+            import credential_versions
+            account = credential_versions.verify(d, Path(tmp), d.account(Path(tmp)))
+            token = account['session']['accessToken']
+            request_id = str(uuid.uuid4())
+            confirmation = dict(requestId=request_id)
+            d.request('/v1/users/me/removal', {**confirmation, 'password': account['credential']}, token=token, expected=403)
+            d.request('/v1/users/me/removal', {**confirmation, 'credential': account['credential']}, token=token, expected=204)
+            d.request('/v1/users/me', token=token, expected=401)
             hosted_ui(Path(tmp))
 
 

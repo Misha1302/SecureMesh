@@ -966,6 +966,9 @@ pub const MAX_LOCAL_COMMAND_BYTES: usize = attachments::MAX_REQUEST;
 
 pub fn execute_json(path: &str, input: &str) -> Result<String> {
     let req = attachments::parse_command(input)?;
+    if req["op"] == "derive_server_credential_v2" {
+        return onboarding::server_credential(&req);
+    }
     let pass = s(&req, "passphrase")?;
     let db = open_store(path, pass)?;
     transact(&db, &req)

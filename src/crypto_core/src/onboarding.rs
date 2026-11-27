@@ -14,7 +14,7 @@ fn optional_meta(db: &Connection, key: &str) -> Result<Option<Value>> {
         .transpose()
 }
 
-pub(super) fn prepare(db: &Connection, input: &Value, identity: &str) -> Result<()> {
+fn principal(input: &Value) -> Result<(&str, &str)> {
     let endpoint = s(input, "endpoint")?;
     let username = s(input, "username")?;
     ensure!(
@@ -32,6 +32,45 @@ pub(super) fn prepare(db: &Connection, input: &Value, identity: &str) -> Result<
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
         "invalid username"
     );
+    Ok((endpoint, username))
+}
+
+pub(super) fn server_credential(req: &Value) -> Result<String> {
+    use argon2::{Algorithm, Argon2, Params, Version};
+    use sha2::{Digest, Sha256};
+    use unicode_segmentation::UnicodeSegmentation;
+    let (origin, username) = principal(req)?;
+    let password = s(req, "password")?;
+    ensure!(
+        password.len() <= 4096
+            && !password.contains('\0')
+            && (16..=256).contains(&password.graphemes(true).count()),
+        "invalid passphrase length"
+    );
+    let salt = Sha256::digest(
+        [
+            b"SecureMesh/server-credential/v2\0",
+            origin.as_bytes(),
+            b"\0",
+            username.as_bytes(),
+        ]
+        .concat(),
+    );
+    let params = Params::new(65536, 3, 4, Some(32))
+        .map_err(|_| anyhow::anyhow!("invalid KDF parameters"))?;
+    let mut output = [0u8; 32];
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+        .hash_password_into(password.as_bytes(), &salt, &mut output)
+        .map_err(|_| anyhow::anyhow!("credential derivation failed"))?;
+    Ok(json!({"credential": base64::engine::general_purpose::STANDARD.encode(output)}).to_string())
+}
+
+pub(super) fn prepare(db: &Connection, input: &Value, identity: &str) -> Result<()> {
+    let (endpoint, username) = principal(input)?;
+    let version = input
+        .get("credentialVersion")
+        .map_or(Some(1), Value::as_u64);
+    ensure!(matches!(version, Some(1 | 2)), "invalid credential version");
     let registered = input["registeredHere"]
         .as_bool()
         .context("registration state")?;
@@ -40,6 +79,7 @@ pub(super) fn prepare(db: &Connection, input: &Value, identity: &str) -> Result<
         DRAFT,
         &json!({
             "version": 1,
+            "credentialVersion": version,
             "deviceId": identity,
             "endpoint": endpoint,
             "username": username,
@@ -132,6 +172,8 @@ pub(super) fn execute(db: &Connection, req: &Value, identity: &str) -> Result<Va
             let registered = draft["registeredHere"]
                 .as_bool()
                 .context("registration state")?;
+            profile["credentialVersion"] =
+                draft.get("credentialVersion").cloned().unwrap_or(json!(1));
             profile["endpoint"] = draft["endpoint"].clone();
             profile["username"] = draft["username"].clone();
             profile["userId"] = account["userId"].clone();
@@ -153,4 +195,22 @@ pub(super) fn execute(db: &Connection, req: &Value, identity: &str) -> Result<Va
     }
     set_meta(db, DRAFT, &draft.to_string())?;
     Ok(json!({"saved": true}))
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    #[test]
+    fn argon2id_v2_matches_reference_with_exact_utf8_and_spacing() {
+        let mut request = json!({"endpoint":"https://example.org","username":"marina_24","password":"  Пароль-🔑 phrase  "});
+        let body: Value = serde_json::from_str(&server_credential(&request).unwrap()).unwrap();
+        // Generated independently with the Argon2 reference C library.
+        assert_eq!(
+            body["credential"],
+            "6o6VxV36UehxRt6qSoL6b2PpP8FxoiHtEQ/oG8NHl4s="
+        );
+        request["password"] = json!("👨‍👩‍👧‍👦".repeat(15));
+        assert!(server_credential(&request).is_err());
+    }
 }

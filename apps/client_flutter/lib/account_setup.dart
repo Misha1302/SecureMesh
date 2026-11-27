@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'account_credentials.dart';
 import 'http_api.dart';
 import 'src/rust/api.dart';
 import 'transport.dart';
@@ -25,6 +26,7 @@ class AccountSetup {
     required Uri endpoint,
     required String username,
     required bool registeredHere,
+    int credentialVersion = 1,
   }) async {
     if (endpoint.scheme != 'https' ||
         endpoint.host.isEmpty ||
@@ -40,6 +42,7 @@ class AccountSetup {
         'endpoint': endpoint.origin,
         'username': username,
         'registeredHere': registeredHere,
+        'credentialVersion': credentialVersion,
       },
     });
   }
@@ -93,16 +96,23 @@ class AccountSetup {
           draft['username'] as String,
         );
         final proof = await command('sign', {'payload': challenge['payload']});
+        final version = (draft['credentialVersion'] ?? 1) as int;
+        final fields = await accountCredentialFields(
+          version: version,
+          endpoint: endpoint,
+          username: draft['username'] as String,
+          password: password,
+        );
         final attempt = await command('onboarding_attempt');
         Map<String, dynamic> session;
         try {
           session = await meshHttp(
             http,
             endpoint,
-            '/v1/auth/login',
+            '/v$version/auth/login',
             data: {
               'username': draft['username'],
-              'password': password,
+              ...fields,
               'deviceId': me['identity'],
               'publicKey': me['public_key'],
               'clientOs': Platform.operatingSystem,
