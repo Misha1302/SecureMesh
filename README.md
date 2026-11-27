@@ -9,7 +9,7 @@
 Целевые native приложения **Android, iOS, Linux и Windows** (оба desktop варианта Linux+Windows обязательны); простой Telegram-подобный UX с безопасным локальным unlock и скрытыми серверными настройками; настоящий trusted multi-device MLS/history/recovery; группы, каналы, посты, приватные файлы, голосовые, кружочки и звонки; реальные E2E/chaos/performance проверки. Web private chat только после отдельного E2EE security gate, иначе disabled. Появление требований не значит их реализацию: см. STATUS.md и reports/TEST_RESULTS.md. **PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.**
 
 
-**PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.** A real encrypted-text vertical slice, not the complete product in the immutable Russian brief. Known RustSec findings block release: see [security limitations](docs/SECURITY_LIMITATIONS.md). Do not use this alpha with real sensitive data.
+**PARTIAL / NOT_READY. PRODUCTION_APPROVED=false.** A real encrypted-text vertical slice, not the complete product in the immutable Russian brief. The patched native dependency candidate uses prerelease OpenMLS crates and still needs platform acceptance and independent review. See [security limitations](docs/SECURITY_LIMITATIONS.md). Do not use this alpha with real sensitive data.
 
 Early qualitative user feedback, product positioning and the proposed 10–20-person pilot are documented in [USER_FEEDBACK_AND_PILOT_2026-11-19_RU.md](docs/USER_FEEDBACK_AND_PILOT_2026-11-19_RU.md). This is a research hypothesis, not evidence of market fit, security certification, or permission for a public launch.
 
@@ -24,7 +24,7 @@ make verify               # nonzero for known security/incomplete gates
 make down                 # only SecureMesh, preserves DB volume
 ```
 
-Requirements: Linux, Docker/Compose, Python 3, OpenSSL, .NET SDK 10.0.111, Rust 1.93.1. Credentials are generated into ignored .env; SDKs/stores/runtime files live in ignored .local. Test clients explicitly trust the local certificate; verification is never disabled. API: https://127.0.0.1:5088. Mailpit: http://127.0.0.1:58028. Production startup is disabled.
+Requirements: Linux, Docker/Compose, Python 3, OpenSSL, .NET SDK 10.0.111, Rust 1.94.1. Credentials are generated into ignored .env; SDKs/stores/runtime files live in ignored .local. Test clients explicitly trust the local certificate; verification is never disabled. API: https://127.0.0.1:5088. Mailpit: http://127.0.0.1:58028. Production startup is disabled.
 
 For the actual Linux UI:
 

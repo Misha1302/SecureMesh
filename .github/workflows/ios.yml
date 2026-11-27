@@ -21,9 +21,9 @@ jobs:
       - name: Compile native encryption library for iPhone
         run: |
           set -euo pipefail
-          rustup toolchain install 1.93.1 --profile minimal --target aarch64-apple-ios
+          rustup toolchain install 1.94.1 --profile minimal --target aarch64-apple-ios
           cd src/crypto_core
-          IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo +1.93.1 rustc --locked --release --lib --target aarch64-apple-ios --crate-type staticlib
+          IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo +1.94.1 rustc --locked --release --lib --target aarch64-apple-ios --crate-type staticlib
       - name: Build and inspect device IPA
         working-directory: apps/client_flutter
         run: |

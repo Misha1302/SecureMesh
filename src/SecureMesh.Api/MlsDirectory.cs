@@ -73,16 +73,17 @@ public static class MlsDirectory
         {
             var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync();
             await using var cmd=Sql.Cmd(c,"""
-                SELECT c.id,d.id,d.public_key,u.username,u.display_name FROM members own JOIN conversations c ON c.id=own.conversation_id
+                SELECT c.id,d.id,d.public_key,u.username,u.display_name,p.version FROM members own JOIN conversations c ON c.id=own.conversation_id
                 JOIN members peer ON peer.conversation_id=c.id AND peer.device_id<>own.device_id
                 JOIN devices d ON d.id=peer.device_id JOIN users u ON u.id=d.user_id
+                LEFT JOIN profile_photos p ON p.user_id=u.id
                 LEFT JOIN conversation_bootstraps b ON b.conversation_id=c.id
                 WHERE own.device_id=$1 AND (SELECT count(*) FROM members WHERE conversation_id=c.id)=2
                   AND (b.conversation_id IS NULL OR b.sender_device=$1 OR b.received)
                 ORDER BY c.id LIMIT 100
                 """,actor.DeviceId);
             await using var r=await cmd.ExecuteReaderAsync();var rows=new List<object>();
-            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),peerDevice=r.GetGuid(1),peerKey=Convert.ToBase64String((byte[])r[2]),peerName=r.GetString(3),peerDisplayName=r.IsDBNull(4)?null:r.GetString(4),mode="E2EE_PRIVATE"});
+            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),peerDevice=r.GetGuid(1),peerKey=Convert.ToBase64String((byte[])r[2]),peerName=r.GetString(3),peerDisplayName=r.IsDBNull(4)?null:r.GetString(4),peerPhotoVersion=r.IsDBNull(5)?(Guid?)null:r.GetGuid(5),mode="E2EE_PRIVATE"});
             return Results.Ok(rows);
         });
         app.MapGet("/v1/crypto/welcomes",async(HttpContext ctx,NpgsqlDataSource db)=>

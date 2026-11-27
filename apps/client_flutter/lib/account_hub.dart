@@ -1,4 +1,5 @@
 import 'display_name.dart';
+import 'profile_photo.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -638,12 +639,11 @@ class _AccountHubState extends State<AccountHub> {
         for (final c in visibleChats())
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: CircleAvatar(
-              child: Text(
-                (c['peerName'] as String).isEmpty
-                    ? '?'
-                    : (c['peerName'] as String).characters.first.toUpperCase(),
-              ),
+            leading: PeerAvatar(
+              key: ValueKey(c['id']),
+              username: c['peerName'] as String,
+              fetch: widget.api,
+              route: peerPhotoRoute(c['id'], c['peerPhotoVersion']),
             ),
             trailing: PopupMenuButton<String>(
               enabled: !blocked,

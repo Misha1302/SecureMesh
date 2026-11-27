@@ -2,7 +2,7 @@
 name = "securemesh-crypto"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.93"
+rust-version = "1.94"
 license = "MIT"
 
 [lib]
@@ -11,12 +11,13 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 anyhow = "1.0"
 base64 = "0.22"
-openmls = "=0.9.2"
-openmls_basic_credential = "=0.6.0"
-openmls_rust_crypto = "=0.6.0"
-openmls_sqlite_storage = "=0.3.0"
-openmls_traits = "=0.6.0"
-rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl"] }
+openmls = "=0.10.0-rc.1"
+openmls_basic_credential = "=0.7.0-rc.1"
+openmls_rust_crypto = "=0.7.0-rc.1"
+openmls_sqlite_storage = "=0.4.0-rc.1"
+openmls_traits = "=0.7.0-rc.1"
+rusqlite = { version = "0.41", features = ["bundled-sqlcipher-vendored-openssl"] }
+refinery = { version = "=0.10.0", features = ["rusqlite"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
@@ -26,3 +27,9 @@ flutter_rust_bridge = "=2.13.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+# Upstream PR rusqlite/rusqlite#1932 bundles SQLCipher 4.20 (SQLite 3.54.1).
+# The 0.39.1 registry release bundles 4.19. Keep the full commit pin until
+# OpenMLS storage and refinery support rusqlite with a fixed published FFI.
+[patch.crates-io]
+libsqlite3-sys = { git = "https://github.com/rusqlite/rusqlite.git", rev = "0f1ab7393ae5d62d44a94a5a5107c00b23d4ed58" }

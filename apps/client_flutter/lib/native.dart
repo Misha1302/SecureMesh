@@ -17,6 +17,7 @@ import 'profile_files.dart';
 import 'account_hub.dart';
 import 'display_name.dart';
 import 'device_tile.dart';
+import 'profile_photo.dart';
 import 'transport.dart';
 
 class CryptoFailure implements Exception {}
@@ -1452,6 +1453,19 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         value: profile?['lockWhenHidden'] == true,
         onChanged: savingBackgroundLock ? null : setBackgroundLock,
       ),
+      if (profile?['trustState'] == 'DEVICE_TRUSTED')
+        ListTile(
+          leading: const Icon(Icons.account_circle_outlined),
+          title: Text(tr('Фото профиля', 'Profile photo')),
+          onTap: () {
+            final ownerSession = session!;
+            showDialog<void>(
+              context: context,
+              builder: (_) =>
+                  ProfilePhotoEditor(api: ownerSession.request, russian: ru),
+            );
+          },
+        ),
       if (Platform.isLinux)
         SwitchListTile(
           title: Text(tr('Уведомления о сообщениях', 'Message notifications')),

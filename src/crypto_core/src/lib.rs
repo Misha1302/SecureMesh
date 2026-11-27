@@ -4,6 +4,53 @@ pub mod api;
 mod directory;
 mod enrollment;
 mod onboarding;
+
+mod profile_schema {
+    // OpenMLS 0.10 adds two migrations for the experimental virtual-clients
+    // extension, which SecureMesh does not enable. Pin the shared profile schema
+    // so previous clients keep validating the same migration ledger on rollback.
+    refinery::embed_migrations!("profile_migrations");
+
+    pub(super) fn migrate(db: &mut rusqlite::Connection) -> Result<(), refinery::Error> {
+        let mut runner = migrations::runner();
+        runner.set_migration_table_name("openmls_sqlite_storage_migrations");
+        runner.run(db)?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::{open_store, JsonCodec, SqliteStorageProvider};
+
+        #[test]
+        fn encrypted_profile_uses_fixed_sqlite_and_compatible_migrations() {
+            let mut db = open_store(":memory:", "test-only-profile-passphrase").unwrap();
+            assert!(rusqlite::version_number() >= 3_054_000);
+            let cipher: String = db
+                .query_row("PRAGMA cipher_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(cipher.split_whitespace().next(), Some("4.20.0"));
+            let version = |db: &rusqlite::Connection| {
+                db.query_row(
+                    "SELECT MAX(version) FROM openmls_sqlite_storage_migrations",
+                    [],
+                    |r| r.get::<_, i32>(0),
+                )
+                .unwrap()
+            };
+            assert_eq!(version(&db), 6);
+
+            // Refinery checks the six embedded migration names/checksums when
+            // the upstream runner advances this disposable database to V8.
+            SqliteStorageProvider::<JsonCodec, _>::new(&mut db)
+                .run_migrations()
+                .unwrap();
+            assert_eq!(version(&db), 8);
+            assert!(super::migrate(&mut db).is_err());
+            assert_eq!(version(&db), 8);
+        }
+    }
+}
 use ::tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -712,7 +759,7 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
     db.pragma_update(None, "journal_mode", "WAL")?;
     db.pragma_update(None, "synchronous", "FULL")?;
     db.busy_timeout(std::time::Duration::from_secs(5))?;
-    SqliteStorageProvider::<JsonCodec, _>::new(&mut db).run_migrations()?;
+    profile_schema::migrate(&mut db)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pins(identity TEXT PRIMARY KEY,public_key BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS outgoing(group_id TEXT,id TEXT,envelope TEXT NOT NULL,status TEXT NOT NULL,seq INTEGER,PRIMARY KEY(group_id,id));

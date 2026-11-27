@@ -43,3 +43,8 @@ The client resolves the preview against its own authenticated timeline. If the
 original is outside local history it shows an unavailable-message label.
 Messages containing spoilers use a generic preview. The application does not
 send a copy of the quoted message or fetch it from the relay for preview.
+### Optional profile photo
+
+A trusted device can use `GET /v1/users/me/photo` and `PUT /v1/users/me/photo`. The JSON field `pixels` is either null (no photo, or remove on update) or base64 of exactly 6,912 bytes of 48 × 48 RGB pixels, top row first. The client previews the center crop and sends it only after the user chooses Save. The server stores one current thumbnail per account. These profile pixels are visible to the server and are separate from encrypted message content.
+
+The update returns a nullable UUID `photoVersion`. Existing two-party conversation listings expose `peerPhotoVersion`; an unchanged thumbnail retains its version on retry. The client fetches the pixels using `GET /v1/conversations/{group}/photo/{version}` after a version is first seen. This request checks the same device membership and Welcome visibility as the listing. Unrelated conversations and retired versions return 404. Identical pixel data on different accounts has independent version identifiers. An old client can ignore the optional field. Removing a photo prevents future downloads but cannot erase copies a peer already obtained. Usernames, identity keys, trust decisions, and message formats are independent of photos.

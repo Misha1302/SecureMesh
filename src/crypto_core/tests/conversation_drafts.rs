@@ -12,8 +12,13 @@ fn drafts_survive_reopen_and_are_consumed_by_the_queue_transaction() {
     let dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
     fs::create_dir(&dir).unwrap();
     let path = dir.join("store");
-    let open = || NativeClient::open(path.to_str().unwrap().to_string(),
-        "long-enough-test-passphrase".to_string()).unwrap();
+    let open = || {
+        NativeClient::open(
+            path.to_str().unwrap().to_string(),
+            "long-enough-test-passphrase".to_string(),
+        )
+        .unwrap()
+    };
     let client = open();
     call(&client, json!({"op":"init","identity":"alice"}));
     call(&client, json!({"op":"create","group":"A"}));
@@ -34,7 +39,10 @@ fn drafts_survive_reopen_and_are_consumed_by_the_queue_transaction() {
     let envelope = call(&client, queue.clone());
     assert_eq!(get("A"), "");
     assert_eq!(get("B"), "independent draft");
-    call(&client, json!({"op":"draft_put","group":"A","text":" local private draft "}));
+    call(
+        &client,
+        json!({"op":"draft_put","group":"A","text":" local private draft "}),
+    );
     assert_eq!(call(&client, queue), envelope);
     assert_eq!(get("A"), " local private draft ");
     drop(client);
