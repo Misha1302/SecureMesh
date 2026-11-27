@@ -24,6 +24,7 @@ class ConversationTimeline extends StatefulWidget {
     required this.attachment,
     required this.onReply,
     this.onOlder,
+    this.onRetryQueue,
     this.onSave,
     this.onPin,
     this.pin,
@@ -37,6 +38,7 @@ class ConversationTimeline extends StatefulWidget {
   final void Function(String, String)? onReply;
   final TranslateMarkup tr;
   final VoidCallback? onOlder;
+  final VoidCallback? onRetryQueue;
   final Map<String, dynamic>? pin;
   final Future<void> Function(Map item, bool pinned)? onPin;
   final Future<void> Function(List<dynamic> rows)? onSave;
@@ -254,7 +256,7 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
               container: true,
               selected: selectedHere,
               label: own
-                  ? tr('Ваше сообщение', 'Your message')
+                  ? '${tr('Ваше сообщение', 'Your message')}. $statusLabel'
                   : tr('Сообщение собеседника', 'Message from contact'),
               child: MenuAnchor(
                 menuChildren: [
@@ -262,6 +264,19 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
                     Padding(
                       padding: const EdgeInsets.all(12),
                       child: Text(statusLabel),
+                    ),
+                  if (own &&
+                      m['status'] == 'queued' &&
+                      widget.onRetryQueue != null)
+                    MenuItemButton(
+                      leadingIcon: const Icon(Icons.refresh),
+                      onPressed: widget.onRetryQueue,
+                      child: Text(
+                        tr(
+                          'Повторить отправку очереди',
+                          'Retry sending queued messages',
+                        ),
+                      ),
                     ),
                   MenuItemButton(
                     leadingIcon: const Icon(Icons.reply),
@@ -356,7 +371,7 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
                           icon: selectedHere
                               ? const Icon(Icons.check_circle)
                               : own
-                              ? Icon(statusIcon, semanticLabel: statusLabel)
+                              ? Icon(statusIcon)
                               : const Icon(Icons.more_horiz),
                         ),
                       ],
@@ -594,10 +609,15 @@ class _ConversationTimelineState extends State<ConversationTimeline> {
         Icons.schedule,
         tr('В очереди на устройстве', 'Queued on this device'),
       ),
-      'saved' => (Icons.check, tr('Сохранено на сервере', 'Saved on server')),
+      'saved' => (Icons.check, tr('Принято сервером', 'Accepted by server')),
       'delivered' => (
-        Icons.done_all,
-        tr('Доставлено по данным сервера', 'Delivery reported by server'),
+        // The legacy name is derived from a server-supplied cursor. Only a
+        // durable server acknowledgement is established for this message.
+        Icons.check,
+        tr(
+          'Принято сервером. Получение устройством не подтверждено',
+          'Accepted by server. Device delivery is unconfirmed',
+        ),
       ),
       _ => (Icons.more_horiz, tr('Статус неизвестен', 'Status unknown')),
     };

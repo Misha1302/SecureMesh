@@ -2265,6 +2265,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                 messages: messages,
                 scroll: chatScroll,
                 replyPreview: replyPreview,
+                onRetryQueue: () => unawaited(pump()),
                 pin: pinnedMessage?['group'] == profile?['group']
                     ? pinnedMessage
                     : null,

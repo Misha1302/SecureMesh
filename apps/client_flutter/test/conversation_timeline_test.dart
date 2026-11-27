@@ -53,10 +53,11 @@ void main() {
       find.text(fmt.formatTimeOfDay(TimeOfDay.fromDateTime(first))),
       findsNWidgets(2),
     );
-    expect(find.byIcon(Icons.done_all), findsOneWidget);
+    expect(find.byIcon(Icons.done_all), findsNothing);
+    expect(find.byIcon(Icons.check), findsOneWidget);
     expect(
-      tester.widget<Icon>(find.byIcon(Icons.done_all)).semanticLabel,
-      'Delivery reported by server',
+      find.bySemanticsLabel(RegExp('Device delivery is unconfirmed')),
+      findsOneWidget,
     );
     await tester.tap(find.byTooltip('Message actions').at(1));
     await tester.pumpAndSettle();
@@ -86,6 +87,51 @@ void main() {
     expect(copied, 'message 0\nmessage 2');
     expect(find.text('Selected: 2'), findsNothing);
   });
+
+  testWidgets(
+    'retry acts on the durable queue and disappears after server ACK',
+    (tester) async {
+      final scroll = ScrollController();
+      addTearDown(scroll.dispose);
+      var retries = 0;
+      Future<void> render(String status) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ConversationTimeline(
+              tr: en,
+              scroll: scroll,
+              messages: [message(1, own: true)..['status'] = status],
+              replyPreview: (_, _) => '',
+              attachment: (_, _, _) => const SizedBox(),
+              onReply: null,
+              onRetryQueue: () {
+                retries++;
+              },
+            ),
+          ),
+        ),
+      );
+      await render('queued');
+      expect(
+        find.bySemanticsLabel(RegExp('Queued on this device')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('Message actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Retry sending queued messages'));
+      await tester.pumpAndSettle();
+      expect(retries, 1);
+      expect(find.byIcon(Icons.schedule), findsOneWidget);
+      await render('saved');
+      expect(
+        find.bySemanticsLabel(RegExp('Accepted by server')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('Message actions'));
+      await tester.pumpAndSettle();
+      expect(find.text('Retry sending queued messages'), findsNothing);
+    },
+  );
 
   testWidgets(
     'new incoming messages preserve the reader position and supply a jump target',
