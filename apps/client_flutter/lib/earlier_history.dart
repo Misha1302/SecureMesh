@@ -8,10 +8,12 @@ class EarlierHistory extends StatefulWidget {
   const EarlierHistory({
     super.key,
     required this.initial,
+    this.title,
     required this.peer,
     required this.read,
     required this.tr,
   });
+  final String? title;
   final HistoryCursor initial;
   final Future<Map<String, dynamic>> Function(HistoryCursor) read;
   final String peer;
@@ -64,7 +66,9 @@ class _EarlierHistoryState extends State<EarlierHistory> {
     final tr = widget.tr;
     return Scaffold(
       appBar: AppBar(
-        title: Text(tr('Более ранние сообщения', 'Earlier messages')),
+        title: Text(
+          widget.title ?? tr('Более ранние сообщения', 'Earlier messages'),
+        ),
       ),
       body: SafeArea(
         child: Column(

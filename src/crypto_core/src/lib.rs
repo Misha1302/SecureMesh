@@ -11,6 +11,7 @@ mod favorites;
 mod history_page;
 mod history_search;
 mod onboarding;
+mod profile_archive;
 mod roster;
 
 mod profile_schema {
@@ -966,6 +967,9 @@ pub const MAX_LOCAL_COMMAND_BYTES: usize = attachments::MAX_REQUEST;
 
 pub fn execute_json(path: &str, input: &str) -> Result<String> {
     let req = attachments::parse_command(input)?;
+    if req["op"] == "archive_read" {
+        return profile_archive::read(path, &req);
+    }
     if req["op"] == "derive_server_credential_v2" {
         return onboarding::server_credential(&req);
     }
