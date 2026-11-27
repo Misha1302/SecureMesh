@@ -75,9 +75,12 @@ val buildReleaseCrypto by tasks.registering(Exec::class) {
     // own incremental state even when Gradle has retained the shared libraries.
     outputs.upToDateWhen { false }
     workingDir(crate)
+    // cargo-ndk prints its child environment when reporting a panic.
+    // The native compiler has no role in signing the APK.
+    setEnvironment(environment.filterKeys { !it.startsWith("SECUREMESH_") })
     environment("ANDROID_NDK_HOME", androidComponents.sdkComponents.ndkDirectory.get().asFile)
     commandLine("cargo", "ndk", "-t", "armeabi-v7a", "-t", "arm64-v8a", "-t", "x86_64",
-        "-p", android.defaultConfig.minSdk.toString(), "-o", output.absolutePath,
+        "--platform", android.defaultConfig.minSdk.toString(), "-o", output.absolutePath,
         "build", "--locked", "--release", "--lib")
 }
 tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn(buildReleaseCrypto) }

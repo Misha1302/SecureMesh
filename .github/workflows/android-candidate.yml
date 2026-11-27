@@ -38,6 +38,7 @@ jobs:
           export SECUREMESH_SIGNING_STORE="$RUNNER_TEMP/test.jks"
           export SECUREMESH_KEY_ALIAS=ci-only
           SECUREMESH_STORE_PASSWORD=$(openssl rand -hex 24)
+          echo "::add-mask::$SECUREMESH_STORE_PASSWORD"
           export SECUREMESH_STORE_PASSWORD
           export SECUREMESH_KEY_PASSWORD="$SECUREMESH_STORE_PASSWORD"
           keytool -genkeypair -storetype JKS -keystore "$SECUREMESH_SIGNING_STORE" \
