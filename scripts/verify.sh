@@ -16,6 +16,7 @@ check() {
 check bundle python3 tools/verify_bundle.py
 check build dotnet build src/SecureMesh.Api --no-restore
 check crypto-build cargo build --locked --manifest-path src/crypto_core/Cargo.toml
+check encrypted-drafts cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test conversation_drafts
 check crypto python3 tests/crypto/process_spike.py
 check smoke python3 tests/integration/smoke.py
 check delivery .local/venv/bin/python tests/integration/delivery.py

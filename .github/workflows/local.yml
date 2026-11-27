@@ -1,5 +1,12 @@
 name: local-checks
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: local-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -7,11 +14,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
       - uses: dtolnay/rust-toolchain@1.93.1
       - run: make bootstrap
+      - name: Install locked Flutter dependencies
+        run: bash scripts/install-flutter.sh
+      - name: Install dependency advisory scanner
+        run: cargo install cargo-audit --version 0.23.0 --locked --root .local/security
       - run: make verify
       - if: always()
         uses: actions/upload-artifact@v4
