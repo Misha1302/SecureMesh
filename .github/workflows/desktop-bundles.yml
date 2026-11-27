@@ -47,6 +47,28 @@ jobs:
         run: |
           $env:SECUREMESH_CRYPTO_LIB = (Resolve-Path 'build/${{ matrix.bundle }}/${{ matrix.core }}').Path
           dart tool/bridge_smoke.dart
+      - name: Open and close the packaged Windows client
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/client_flutter
+        run: |
+          $bundle = (Resolve-Path 'build/${{ matrix.bundle }}').Path
+          $client = Start-Process -FilePath (Join-Path $bundle 'securemesh_client.exe') -WorkingDirectory $bundle -PassThru
+          try {
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            do {
+              Start-Sleep -Milliseconds 250
+              $client.Refresh()
+              if ($client.HasExited) { throw "Client exited during startup (code $($client.ExitCode))" }
+              $ready = ($client.MainWindowHandle -ne [IntPtr]::Zero -and $client.MainWindowTitle -eq 'SecureMesh' -and $client.Responding)
+            } until ($ready -or $timer.Elapsed.TotalSeconds -ge 45)
+            if (-not $ready) { throw 'SecureMesh did not display a responsive main window' }
+            if (-not $client.CloseMainWindow() -or -not $client.WaitForExit(15000)) { throw 'Client did not close cleanly' }
+            if ($client.ExitCode -ne 0) { throw "Client exited with code $($client.ExitCode)" }
+          } finally {
+            if (-not $client.HasExited) { $client.Kill() }
+            $client.Dispose()
+          }
       - name: Preserve bundle permissions
         shell: bash
         working-directory: apps/client_flutter
