@@ -5,6 +5,7 @@ demo:
 	bash scripts/demo.sh
 crypto:
 	python3 tests/crypto/process_spike.py
+	python3 tests/crypto/device_roster.py
 seed-demo:
 	.local/venv/bin/python scripts/seed_demo.py
 build-linux:

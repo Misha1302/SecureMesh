@@ -9,6 +9,7 @@ struct Request {
     device: String,
     key: Vec<u8>,
     id: String,
+    expires: u64,
     raw: Vec<u8>,
 }
 
@@ -51,6 +52,7 @@ fn parse(req: &Value) -> Result<Request> {
         device: parts[2].to_owned(),
         key,
         id: parts[4].to_owned(),
+        expires,
         raw,
     })
 }
@@ -207,7 +209,7 @@ pub(super) fn execute(
     }
 }
 
-fn execute_pin(db: &Connection, identity: &str, key: &[u8]) -> Result<()> {
+pub(super) fn execute_pin(db: &Connection, identity: &str, key: &[u8]) -> Result<()> {
     let old = db
         .query_row(
             "SELECT public_key FROM pins WHERE identity=?",
@@ -224,4 +226,38 @@ fn execute_pin(db: &Connection, identity: &str, key: &[u8]) -> Result<()> {
         params![identity, key],
     )?;
     Ok(())
+}
+
+/// Verify the original request, the pinned existing group member's grant, and
+/// the independent candidate's activation signature. A server trust flag is never consulted.
+pub(super) fn verify_roster_certificate(
+    p: &Provider,
+    req: &Value,
+    approver_key: &[u8],
+) -> Result<(Vec<u8>, u64)> {
+    let request = parse(req)?;
+    ensure!(request.device == s(req, "device")?, "wrong candidate");
+    let proof = bytes(req, "candidate_signature")?;
+    let approver = s(req, "approver")?;
+    let grant = bytes(req, "grant_signature")?;
+    p.crypto()
+        .verify_signature(SignatureScheme::ED25519, &request.raw, &request.key, &proof)?;
+    p.crypto().verify_signature(
+        SignatureScheme::ED25519,
+        &grant_payload(approver, &request.raw, &proof),
+        approver_key,
+        &grant,
+    )?;
+    let activation = format!(
+        "SecureMesh/enrollment-activate/v1\n{}\n{}",
+        request.id,
+        B64.encode(grant)
+    );
+    p.crypto().verify_signature(
+        SignatureScheme::ED25519,
+        activation.as_bytes(),
+        &request.key,
+        &bytes(req, "activation_signature")?,
+    )?;
+    Ok((request.key, request.expires))
 }

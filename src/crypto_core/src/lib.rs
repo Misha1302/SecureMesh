@@ -6,6 +6,7 @@ mod directory;
 mod enrollment;
 mod history_search;
 mod onboarding;
+mod roster;
 
 mod profile_schema {
     // OpenMLS 0.10 adds two migrations for the experimental virtual-clients
@@ -234,6 +235,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     let public = B64.decode(meta(db, "public")?)?;
     let signer = SignatureKeyPair::read(p.storage(), &public, SUITE.signature_algorithm())
         .context("missing signer")?;
+    if op == "roster_approve" {
+        return roster::approve(db, p, req);
+    }
     if op.starts_with("enrollment_") {
         return enrollment::execute(db, p, req, &identity, &signer);
     }
@@ -541,19 +545,27 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             let mut g = load_group(p, gid)?;
             let raw = bytes(req, "ciphertext")?;
             let msg = MlsMessageIn::tls_deserialize_exact(&raw)?.try_into_protocol_message()?;
+            if let Some(epoch) = req["epoch"].as_u64() {
+                ensure!(msg.epoch().as_u64() == epoch, "MLS envelope epoch mismatch");
+            }
             let processed = g.process_message(p, msg)?;
             let sender = BasicCredential::try_from(processed.credential().clone())?;
             let sender_id = std::str::from_utf8(sender.identity())?.to_string();
+            // The native delivery path supplies both sender and kind from the envelope.
+            if let Some(expected) = req["sender"].as_str() {
+                ensure!(expected == sender_id, "sender mismatch");
+            }
             match processed.into_content() {
                 ProcessedMessageContent::ApplicationMessage(app) => {
+                    ensure!(
+                        req["kind"].is_null() || req["kind"].as_i64() == Some(1),
+                        "wrong envelope kind"
+                    );
                     let mut event: Value = serde_json::from_slice(&app.into_bytes())?;
                     ensure!(
                         s(&event, "group")? == gid && s(&event, "sender")? == sender_id,
                         "binding mismatch"
                     );
-                    if let Some(expected) = req["sender"].as_str() {
-                        ensure!(expected == sender_id, "sender mismatch");
-                    }
                     attachments::receive(db, gid, &mut event)?;
                     db.execute(
                         "INSERT INTO incoming(group_id,id,event) VALUES(?,?,?)",
@@ -562,8 +574,31 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                     Ok(event)
                 }
                 ProcessedMessageContent::StagedCommitMessage(commit) => {
+                    ensure!(
+                        req["kind"].is_null() || req["kind"].as_i64() == Some(3),
+                        "wrong envelope kind"
+                    );
+                    let authenticated_delivery = req["sender"].is_string();
+                    let before = authenticated_delivery
+                        .then(|| roster::members(&g))
+                        .transpose()?;
+                    let old_epoch = g.epoch().as_u64();
                     g.merge_staged_commit(p, *commit)?;
                     check_group(db, &g)?;
+                    if let Some(before) = before {
+                        // A device removed from the group must not be able to veto its own removal.
+                        // On all remaining devices, roster, cursor and consent commit atomically.
+                        if g.is_active() {
+                            roster::validate_change(
+                                db,
+                                gid,
+                                old_epoch,
+                                &sender_id,
+                                &before,
+                                &roster::members(&g)?,
+                            )?;
+                        }
+                    }
                     Ok(json!({"epoch":g.epoch().as_u64(),"active":g.is_active()}))
                 }
                 _ => bail!("unsupported event"),
@@ -811,6 +846,11 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS local_cursors(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL,cursor TEXT NOT NULL);")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS peer_receipts(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS private_downloads(
+        group_id TEXT NOT NULL,id TEXT NOT NULL,size INTEGER NOT NULL,prefix BLOB NOT NULL,
+        updated INTEGER NOT NULL,PRIMARY KEY(group_id,id));",
+    )?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS private_files(group_id TEXT NOT NULL,id TEXT NOT NULL,descriptor TEXT NOT NULL,sealed BLOB,source_digest BLOB,PRIMARY KEY(group_id,id));")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS conversation_drafts(group_id TEXT PRIMARY KEY,body TEXT NOT NULL);")?;
     // Each lookup walks the selected conversation in reverse insertion order.

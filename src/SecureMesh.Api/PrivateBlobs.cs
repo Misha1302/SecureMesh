@@ -26,7 +26,7 @@ public sealed class PrivateBlobMigration : Migration
         throw new NotSupportedException("Restore a backup to preserve attachments.");
 }
 
-public static class PrivateBlobs
+public static partial class PrivateBlobs
 {
     private const string Route = "/v1/conversations/{group:guid}/blobs/{id:guid}";
     private const int MaxCiphertext = 4 * 1024 * 1024 + 16;
@@ -34,6 +34,8 @@ public static class PrivateBlobs
 
     public static void MapPrivateBlobs(this WebApplication app)
     {
+        app.MapPut(Route + "/parts", PutPart);
+        app.MapGet(Route + "/parts", Progress);
         app.MapPut(Route, Put);
         app.MapGet(Route, Get);
         app.MapDelete(Route, Delete);
@@ -72,9 +74,7 @@ public static class PrivateBlobs
             await using var c = await db.OpenConnectionAsync(ct);
             await using var tx = await c.BeginTransactionAsync(ct);
             await LockMember(c, group, actor.DeviceId, ct);
-            // One bounded quota check across all API instances, after upload completion.
-            await using (var gate = Sql.Cmd(c, "SELECT pg_advisory_xact_lock(2445610010)"))
-                await gate.ExecuteNonQueryAsync(ct);
+            await LockUploads(c, ct);
             await using (var existing = Sql.Cmd(c, "SELECT owner_id,digest FROM private_blobs WHERE conversation_id=$1 AND blob_id=$2", group, id))
             await using (var reader = await existing.ExecuteReaderAsync(ct))
                 if (await reader.ReadAsync(ct))
@@ -83,19 +83,9 @@ public static class PrivateBlobs
                         throw new ApiError(409, "BLOB_ID_CONFLICT");
                     return Results.NoContent();
                 }
-            await using (var usage = Sql.Cmd(c, """
-                SELECT count(*), coalesce(sum(octet_length(ciphertext)),0),
-                       count(*) FILTER (WHERE owner_id=$1),
-                       coalesce(sum(octet_length(ciphertext)) FILTER (WHERE owner_id=$1),0)
-                FROM private_blobs
-                """, actor.UserId))
-            await using (var reader = await usage.ExecuteReaderAsync(ct))
-            {
-                await reader.ReadAsync(ct);
-                if (reader.GetInt64(0) >= 8192 || reader.GetInt64(1) + size > 256L*1024*1024 ||
-                    reader.GetInt64(2) >= 1024 || reader.GetInt64(3) + size > 64L*1024*1024)
-                    throw new ApiError(507, "BLOB_QUOTA");
-            }
+            await using (var stage = Sql.Cmd(c, "SELECT 1 FROM private_blob_uploads WHERE conversation_id=$1 AND blob_id=$2", group, id))
+                if (await stage.ExecuteScalarAsync(ct) is not null) throw new ApiError(409, "BLOB_ID_CONFLICT");
+            await Reserve(c, actor.UserId, (int)size.Value, ct);
             await using (var insert = Sql.Cmd(c, "INSERT INTO private_blobs VALUES($1,$2,$3,$4,$5)", group,id,actor.UserId,bytes,digest))
                 await insert.ExecuteNonQueryAsync(ct);
             await tx.CommitAsync(ct);
@@ -110,10 +100,35 @@ public static class PrivateBlobs
         await using var c = await db.OpenConnectionAsync(ct);
         await using var tx = await c.BeginTransactionAsync(ct);
         await LockMember(c, group, actor.DeviceId, ct);
+        // Use PostgreSQL's bytea slice for the bounded range used by native clients.
+        // Other HTTP range forms retain the framework's standard file handling.
+        if (System.Net.Http.Headers.RangeHeaderValue.TryParse(ctx.Request.Headers.Range, out var ranges) &&
+            ranges.Unit == "bytes" && ranges.Ranges.Count == 1 &&
+            ranges.Ranges.First() is { From: long start, To: long end } &&
+            start >= 0 && end >= start && end < MaxCiphertext && end - start < Chunk)
+        {
+            await using var part = Sql.Cmd(c, """
+                SELECT octet_length(ciphertext), substring(ciphertext FROM $3 FOR $4)
+                FROM private_blobs WHERE conversation_id=$1 AND blob_id=$2
+                """, group, id, (int)start + 1, (int)(end - start + 1));
+            await using var reader = await part.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) throw new ApiError(404, "BLOB_NOT_FOUND");
+            var size = reader.GetInt32(0);
+            if (start >= size)
+            {
+                ctx.Response.Headers.ContentRange = $"bytes */{size}";
+                return Results.StatusCode(416);
+            }
+            var chunk = reader.GetFieldValue<byte[]>(1);
+            ctx.Response.Headers.AcceptRanges = "bytes";
+            ctx.Response.Headers.ContentRange = $"bytes {start}-{start + chunk.Length - 1}/{size}";
+            ctx.Response.StatusCode = 206;
+            return Results.Bytes(chunk, "application/octet-stream");
+        }
         await using var select = Sql.Cmd(c, "SELECT ciphertext FROM private_blobs WHERE conversation_id=$1 AND blob_id=$2",group,id);
         var bytes = await select.ExecuteScalarAsync(ct) as byte[] ?? throw new ApiError(404, "BLOB_NOT_FOUND");
         await tx.CommitAsync(ct);
-        return Results.Bytes(bytes, "application/octet-stream");
+        return Results.Bytes(bytes, "application/octet-stream", enableRangeProcessing: true);
     }
 
     private static async Task<IResult> Delete(Guid group, Guid id, HttpContext ctx, NpgsqlDataSource db, CancellationToken ct)
@@ -122,8 +137,11 @@ public static class PrivateBlobs
         await using var c = await db.OpenConnectionAsync(ct);
         await using var tx = await c.BeginTransactionAsync(ct);
         await LockMember(c, group, actor.DeviceId, ct);
+        await LockUploads(c, ct);
+        await using var partial = Sql.Cmd(c, "DELETE FROM private_blob_uploads WHERE conversation_id=$1 AND blob_id=$2 AND owner_id=$3", group, id, actor.UserId);
+        var removed = await partial.ExecuteNonQueryAsync(ct);
         await using var delete = Sql.Cmd(c, "DELETE FROM private_blobs WHERE conversation_id=$1 AND blob_id=$2 AND owner_id=$3",group,id,actor.UserId);
-        if (await delete.ExecuteNonQueryAsync(ct) != 1) throw new ApiError(404, "BLOB_NOT_FOUND");
+        if (await delete.ExecuteNonQueryAsync(ct) + removed == 0) throw new ApiError(404, "BLOB_NOT_FOUND");
         await tx.CommitAsync(ct);
         return Results.NoContent();
     }

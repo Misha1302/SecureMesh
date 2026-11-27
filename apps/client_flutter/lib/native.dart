@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:material_ui/material_ui.dart';
@@ -12,6 +13,9 @@ import 'session.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
 import 'attachment_transfer.dart';
+import 'voice_note.dart';
+import 'voice_wave.dart';
+import 'video_message.dart';
 import 'linux_notifications.dart';
 import 'message_markup.dart';
 import 'history_search.dart';
@@ -63,6 +67,11 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (supportsVideoMessages) {
+      unawaited(
+        VideoScratch.root().then<void>((_) {}).catchError((Object _) {}),
+      );
+    }
   }
 
   @override
@@ -162,7 +171,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       final current = PrivateAttachments(
         group,
         (op, args) => crypto(op, args),
-        SessionBlobs(currentSession, group),
+        SessionBlobs(currentSession, group, (op, args) => crypto(op, args)),
         () {
           if (mounted && profile?['group'] == group) {
             unawaited(pump());
@@ -1131,6 +1140,44 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> recordVoice(BuildContext context) async {
+    final current = attachments;
+    if (current == null || current.busy || profile?['trustConfirmed'] != true) {
+      return;
+    }
+    await current.stageMedia(
+      'voice',
+      'voice-note.wav',
+      () => showDialog<Uint8List>(
+        context: context,
+        builder: (_) => VoiceDialog(tr),
+      ),
+    );
+    if (identical(current, attachments) && online && !lite) {
+      unawaited(current.resume(explicit: false, weak: false));
+    }
+  }
+
+  Future<void> captureVideo(BuildContext context) async {
+    final current = attachments;
+    if (current == null || current.busy || profile?['trustConfirmed'] != true) {
+      return;
+    }
+    await current.stageMedia('video', 'video-message.mp4', () async {
+      final clip = await showDialog<Uint8List>(
+        context: context,
+        builder: (_) => VideoMessageDialog(tr: tr),
+      );
+      return identical(attachments, current) &&
+              profile?['trustConfirmed'] == true
+          ? clip
+          : null;
+    });
+    if (identical(attachments, current) && online && !lite) {
+      unawaited(current.resume(explicit: false, weak: false));
+    }
+  }
+
   Widget attachmentMessage(
     BuildContext context,
     String id,
@@ -1152,6 +1199,44 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                   ? () => current.download(id, meta, exportAttachment)
                   : null,
             ),
+            if (meta['media'] == 'voice')
+              TextButton.icon(
+                icon: const Icon(Icons.play_circle_outline),
+                label: Text(tr('Прослушать', 'Listen')),
+                onPressed: enabled
+                    ? () => current.download(id, meta, (_, bytes) async {
+                        voiceDuration(bytes);
+                        if (!context.mounted ||
+                            !identical(current, attachments)) {
+                          return false;
+                        }
+                        await showDialog<void>(
+                          context: context,
+                          builder: (_) => VoiceDialog(tr, received: bytes),
+                        );
+                        return false;
+                      })
+                    : null,
+              ),
+            if (supportsVideoMessages && meta['media'] == 'video')
+              TextButton.icon(
+                icon: const Icon(Icons.play_circle_outline),
+                label: Text(tr('Смотреть видео', 'Play video')),
+                onPressed: enabled
+                    ? () => current.download(id, meta, (name, bytes) async {
+                        if (!context.mounted ||
+                            !identical(attachments, current)) {
+                          return false;
+                        }
+                        await showDialog<void>(
+                          context: context,
+                          builder: (_) =>
+                              VideoMessageDialog(tr: tr, received: bytes),
+                        );
+                        return false;
+                      })
+                    : null,
+              ),
             if (meta['media'] == 'photo')
               TextButton.icon(
                 icon: const Icon(Icons.image_outlined),
@@ -1572,6 +1657,17 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            if (supportsVideoMessages)
+              IconButton(
+                tooltip: tr('Записать видеосообщение', 'Record video message'),
+                icon: const Icon(Icons.videocam_outlined),
+                onPressed:
+                    attachments == null ||
+                        attachments!.busy ||
+                        profile?['trustConfirmed'] != true
+                    ? null
+                    : () => captureVideo(context),
+              ),
             IconButton(
               tooltip: tr(
                 'Прикрепить файл (до 4 МиБ)',
@@ -1584,6 +1680,19 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                       profile?['trustConfirmed'] != true
                   ? null
                   : () => chooseAttachment(context),
+            ),
+            IconButton(
+              tooltip: tr(
+                'Записать голосовое сообщение',
+                'Record a voice note',
+              ),
+              icon: const Icon(Icons.mic_none),
+              onPressed:
+                  attachments == null ||
+                      attachments!.busy ||
+                      profile?['trustConfirmed'] != true
+                  ? null
+                  : () => recordVoice(context),
             ),
             Expanded(
               child: draftLoadFailed
@@ -1693,14 +1802,17 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       final state = WidgetsBinding.instance.lifecycleState;
       if (enabled &&
           (state == AppLifecycleState.hidden ||
-              state == AppLifecycleState.paused))
+              state == AppLifecycleState.paused)) {
         lock();
+      }
     } catch (_) {
-      if (mounted && epoch == generation)
+      if (mounted && epoch == generation) {
         setState(() => backgroundLockSaveFailed = true);
+      }
     } finally {
-      if (mounted && epoch == generation)
+      if (mounted && epoch == generation) {
         setState(() => savingBackgroundLock = false);
+      }
     }
   }
 

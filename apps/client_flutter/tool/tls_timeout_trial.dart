@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../lib/tls_client.dart';
+import 'package:securemesh_client/tls_client.dart';
 
 Future<void> main(List<String> args) async {
   final endpoint = Uri.parse(args[0]);

@@ -92,8 +92,9 @@ class DeviceTile extends StatelessWidget {
                           ],
                         ),
                       );
-                      if (confirmed == true && context.mounted)
+                      if (confirmed == true && context.mounted) {
                         onRevoke?.call();
+                      }
                     },
             ),
     );

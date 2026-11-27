@@ -34,7 +34,7 @@ jobs:
           channel: stable
       - name: Install GTK build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build libgtk-3-dev libstdc++-13-dev
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build libgtk-3-dev libstdc++-13-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good pulseaudio-utils
       - working-directory: apps/client_flutter
         run: flutter pub get --enforce-lockfile
       - working-directory: apps/client_flutter

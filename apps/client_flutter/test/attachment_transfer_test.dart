@@ -29,6 +29,7 @@ class _TestBlobs implements BlobTransport {
 
   @override
   Future<Uint8List> get(
+    String message,
     String id,
     int size,
     void Function(double) progress,
@@ -112,6 +113,7 @@ void main() {
       final transfer = PrivateAttachments(
         'g',
         (op, args) async {
+          if (op == 'attachment_download_reset') return {};
           expect(op, 'attachment_open');
           if (rejects) throw StateError('authentication failed');
           return {

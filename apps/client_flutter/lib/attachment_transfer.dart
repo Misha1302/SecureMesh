@@ -10,12 +10,10 @@ import 'package:material_ui/material_ui.dart';
 
 import 'conversation_drafts.dart';
 import 'local_client.dart';
-import 'session.dart';
-import 'transport.dart';
+import 'attachment_transport.dart';
+export 'attachment_transport.dart';
 
-const attachmentLimit = 4 * 1024 * 1024;
 const _tagLength = 16;
-const _timeout = Duration(seconds: 45);
 
 String attachmentName(String untrusted) {
   final name = untrusted
@@ -58,108 +56,6 @@ Future<Uint8List> readAttachment(XFile input) async {
   }
   if (bytes.length != expected) throw const FormatException('SIZE');
   return bytes.takeBytes();
-}
-
-abstract interface class BlobTransport {
-  Future<void> put(String id, Uint8List bytes, void Function(double) progress);
-  Future<Uint8List> get(String id, int size, void Function(double) progress);
-  void close();
-}
-
-class SessionBlobs implements BlobTransport {
-  SessionBlobs(this.session, this.group) : client = nativeHttpClient();
-  final AccountSession session;
-  final String group;
-  final HttpClient client;
-
-  Future<Uint8List> _transfer(
-    String id,
-    int size,
-    Uint8List? upload,
-    void Function(double) progress,
-  ) async {
-    if (size <= _tagLength || size > attachmentLimit + _tagLength) {
-      throw const FormatException('SIZE');
-    }
-    final endpoint = session.endpoint;
-    final uri = endpoint.replace(
-      pathSegments: ['v1', 'conversations', group, 'blobs', id],
-      query: null,
-      fragment: null,
-    );
-    if (uri.scheme != 'https' ||
-        uri.userInfo.isNotEmpty ||
-        uri.origin != endpoint.origin) {
-      throw StateError('HTTPS required');
-    }
-    return session.authorized((token) async {
-      final request = await client
-          .openUrl(upload == null ? 'GET' : 'PUT', uri)
-          .timeout(_timeout);
-      request.followRedirects = false;
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
-      try {
-        if (upload != null) {
-          request.headers.contentType = ContentType.binary;
-          request.contentLength = size;
-          for (var at = 0; at < size; at += 65536) {
-            final end = math.min(size, at + 65536);
-            request.add(Uint8List.sublistView(upload, at, end));
-            await request.flush().timeout(_timeout);
-            progress(end / size);
-          }
-        }
-        final response = await request.close().timeout(_timeout);
-        if (upload != null) {
-          if (response.statusCode != 201 && response.statusCode != 204) {
-            throw ApiFailure(response.statusCode, 'BLOB_UPLOAD_FAILED');
-          }
-          // Successful PUT may carry a small acknowledgement.
-          var n = 0;
-          await for (final part in response.timeout(_timeout)) {
-            n += part.length;
-            if (n > 4096) throw const FormatException('ACK_SIZE');
-          }
-          return Uint8List(0);
-        }
-        if (response.statusCode != 200) {
-          throw ApiFailure(response.statusCode, 'BLOB_DOWNLOAD_FAILED');
-        }
-        if (response.contentLength >= 0 && response.contentLength != size) {
-          throw const FormatException('SIZE');
-        }
-        final bytes = BytesBuilder(copy: false);
-        await for (final part in response.timeout(_timeout)) {
-          if (bytes.length + part.length > size) {
-            throw const FormatException('SIZE');
-          }
-          bytes.add(part);
-          progress(bytes.length / size);
-        }
-        if (bytes.length != size) throw const FormatException('SIZE');
-        return bytes.takeBytes();
-      } catch (_) {
-        request.abort();
-        rethrow;
-      }
-    });
-  }
-
-  @override
-  Future<void> put(
-    String id,
-    Uint8List bytes,
-    void Function(double) progress,
-  ) async {
-    await _transfer(id, bytes.length, bytes, progress);
-  }
-
-  @override
-  Future<Uint8List> get(String id, int size, void Function(double) progress) =>
-      _transfer(id, size, null, progress);
-  @override
-  void close() => client.close(force: true);
 }
 
 class PrivateAttachments extends ChangeNotifier {
@@ -234,16 +130,34 @@ class PrivateAttachments extends ChangeNotifier {
       r'\.(png|jpg|jpeg|webp)$',
       caseSensitive: false,
     ).hasMatch(name);
+    await _stageBytes(data, name, isPhoto ? 'photo' : 'file');
+  });
+
+  Future<void> stageMedia(
+    String media,
+    String name,
+    Future<Uint8List?> Function() pick,
+  ) => _run(() async {
+    final data = await pick();
+    _active();
+    if (data != null) await _stageBytes(data, attachmentName(name), media);
+  });
+
+  Future<void> _stageBytes(Uint8List data, String name, String media) async {
+    if (data.isEmpty || data.length > attachmentLimit) {
+      throw const FormatException('SIZE');
+    }
     await crypto('attachment_prepare', {
       'group': group,
       'id': newUuid(),
       'name': name,
-      'media': isPhoto ? 'photo' : 'file',
+      'media': media,
       'data': base64Encode(data),
     });
     await _load();
     status = 'staged';
-  });
+  }
+
   Future<void> resume({required bool explicit, required bool weak}) async {
     if (busy ||
         _closed ||
@@ -295,17 +209,25 @@ class PrivateAttachments extends ChangeNotifier {
     progress = 0;
     _update();
     final cipher = await blobs.get(
+      id,
       metadata['blobId'] as String,
       size + _tagLength,
       _progress,
     );
     _active();
     if (cipher.length != size + _tagLength) throw const FormatException('SIZE');
-    final result = await crypto('attachment_open', {
-      'group': group,
-      'id': id,
-      'ciphertext': base64Encode(cipher),
-    });
+    late final Map<String, dynamic> result;
+    try {
+      result = await crypto('attachment_open', {
+        'group': group,
+        'id': id,
+        'ciphertext': base64Encode(cipher),
+      });
+    } catch (_) {
+      _active();
+      await crypto('attachment_download_reset', {'group': group, 'id': id});
+      rethrow;
+    }
     _active();
     final plain = base64Decode(result['data'] as String);
     if (plain.length != size || result['size'] != size) {

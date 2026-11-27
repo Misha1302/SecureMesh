@@ -34,7 +34,7 @@ fn validate_info(info: &Value) -> Result<usize> {
         !name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')),
         "invalid filename");
     ensure!(
-        matches!(s(info, "media")?, "file" | "photo"),
+        matches!(s(info, "media")?, "file" | "photo" | "voice" | "video"),
         "invalid media"
     );
     ensure!(
@@ -190,6 +190,66 @@ pub(super) fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Valu
             )?;
             Ok(json!({"cancelled":cancelled==1}))
         }
+        "attachment_download_prefix" => {
+            let info = descriptor(db, group, id)?;
+            validate_info(&info)?;
+            db.execute(
+                "DELETE FROM private_downloads WHERE updated < unixepoch()-86400",
+                [],
+            )?;
+            let prefix: Option<Vec<u8>> = db
+                .query_row(
+                    "SELECT prefix FROM private_downloads WHERE group_id=? AND id=?",
+                    params![group, id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            Ok(json!({"ciphertext":B64.encode(prefix.unwrap_or_default())}))
+        }
+        "attachment_download_part" => {
+            let info = descriptor(db, group, id)?;
+            let size = validate_info(&info)? + TAG;
+            let offset = req["offset"].as_u64().context("missing download offset")?;
+            ensure!(
+                offset < size as u64 && offset % 32768 == 0,
+                "invalid download offset"
+            );
+            let chunk = bytes(req, "ciphertext")?;
+            ensure!(
+                chunk.len() == (size - offset as usize).min(32768),
+                "invalid download length"
+            );
+            db.execute(
+                "DELETE FROM private_downloads WHERE updated < unixepoch()-86400",
+                [],
+            )?;
+            if offset == 0 {
+                // Discard the least recently used partial download when reserving another slot.
+                // Each reservation fits a bounded attachment, so eight rows take at most 32 MiB + tags.
+                db.execute(
+                    "DELETE FROM private_downloads WHERE rowid IN (
+                    SELECT rowid FROM private_downloads WHERE NOT(group_id=? AND id=?)
+                    ORDER BY updated DESC,rowid DESC LIMIT -1 OFFSET 7)",
+                    params![group, id],
+                )?;
+                db.execute("INSERT INTO private_downloads VALUES(?,?,?,X'',unixepoch()) ON CONFLICT DO NOTHING",
+                    params![group,id,size as i64])?;
+            }
+            let written = db.execute(
+                "UPDATE private_downloads SET prefix=CAST(prefix || ? AS BLOB),
+                updated=unixepoch() WHERE group_id=? AND id=? AND size=? AND length(prefix)=?",
+                params![chunk, group, id, size as i64, offset as i64],
+            )?;
+            ensure!(written == 1, "download offset conflict");
+            Ok(json!({"offset":offset + chunk.len() as u64}))
+        }
+        "attachment_download_reset" => {
+            db.execute(
+                "DELETE FROM private_downloads WHERE group_id=? AND id=?",
+                params![group, id],
+            )?;
+            Ok(json!({}))
+        }
         "attachment_open" => {
             let info = descriptor(db, group, id)?;
             let size = validate_info(&info)?;
@@ -201,6 +261,10 @@ pub(super) fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Valu
                 &sealed,
                 &bytes(&info, "nonce")?,
                 &aad(group, id, &info)?,
+            )?;
+            db.execute(
+                "DELETE FROM private_downloads WHERE group_id=? AND id=?",
+                params![group, id],
             )?;
             let mut result = public_info(&info);
             result["data"] = json!(B64.encode(data));

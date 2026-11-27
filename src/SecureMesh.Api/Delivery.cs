@@ -43,6 +43,18 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
             }
         }
         if(existing is not null) {await tx.CommitAsync(ct); return existing;}
+        // Revocation does not remove an MLS leaf. Serialize acceptance with device
+        // revocation so no new envelope can be saved for a known stale roster.
+        await using(var cmd=Sql.Cmd(c,"""
+            SELECT d.trusted, d.revoked FROM members m JOIN devices d ON d.id=m.device_id
+            WHERE m.conversation_id=$1 ORDER BY d.id FOR SHARE OF d
+            """,input.ConversationId))
+        await using(var reader=await cmd.ExecuteReaderAsync(ct))
+        {
+            while(await reader.ReadAsync(ct))
+                if(!reader.GetBoolean(0) || reader.GetBoolean(1))
+                    throw new ApiError(409,"MLS_ROSTER_REKEY_REQUIRED");
+        }
         if(input.MlsEpoch!=epoch) throw new ApiError(409,"MLS_EPOCH_CONFLICT");
         seq=checked(seq+1);
         var id=Guid.NewGuid();
