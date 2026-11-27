@@ -44,8 +44,9 @@ void formatMessage(TextEditingController controller, MessageFormat format) {
   final block = format.close.isEmpty || format == MessageFormat.block;
   if (block && start > 0 && value.text[start - 1] != '\n') prefix = '\n$prefix';
   var suffix = format.close;
-  if (block && end < value.text.length && value.text[end] != '\n')
+  if (block && end < value.text.length && value.text[end] != '\n') {
     suffix += '\n';
+  }
   final text = value.text.replaceRange(start, end, prefix + content + suffix);
   if (text.characters.length > 4000) return;
   final offset = start + prefix.length;

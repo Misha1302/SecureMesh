@@ -60,7 +60,9 @@ class _AccountHubState extends State<AccountHub> {
       (chat) =>
           archived.contains(chat['id']) == archiveOpen &&
           ((chat['peerName'] as String).toLowerCase().contains(chatQuery) ||
-                    (peerDisplayName(chat['peerDisplayName']) ?? '').toLowerCase().contains(chatQuery)),
+              (peerDisplayName(chat['peerDisplayName']) ?? '')
+                  .toLowerCase()
+                  .contains(chatQuery)),
     );
     return [
       ...matches.where((c) => pinned.contains(c['id'])),
