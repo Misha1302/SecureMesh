@@ -1,0 +1,55 @@
+name: SecureMesh PWA iPhone Safari simulator
+
+on:
+  pull_request:
+    paths:
+      - 'site/app/**'
+      - 'src/browser_crypto/**'
+      - 'src/crypto_core/src/server_credential.rs'
+      - 'scripts/package-pwa.py'
+      - 'tests/pwa/safari*'
+      - '.github/workflows/pwa-safari.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install pinned browser crypto toolchain
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --target wasm32-unknown-unknown
+          cargo +1.100.0 install wasm-bindgen-cli --version 0.2.130 --locked --root "$RUNNER_TEMP/securemesh-wasm-cli"
+          echo "$RUNNER_TEMP/securemesh-wasm-cli/bin" >> "$GITHUB_PATH"
+      - name: Package the dedicated-origin PWA
+        run: python3 scripts/package-pwa.py "$RUNNER_TEMP/securemesh-pwa"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: securemesh-pwa-safari-fixture
+          path: ${{ runner.temp }}/securemesh-pwa/
+          if-no-files-found: error
+
+  safari:
+    needs: package
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: securemesh-pwa-safari-fixture
+          path: ${{ runner.temp }}/securemesh-pwa
+      - name: Verify the downloaded bundle
+        run: |
+          cd "$RUNNER_TEMP/securemesh-pwa"
+          shasum -a 256 -c SHA256SUMS
+      - name: Create, lock, and unlock an offline profile in Mobile Safari
+        run: tests/pwa/safari.sh "$RUNNER_TEMP/securemesh-pwa"
