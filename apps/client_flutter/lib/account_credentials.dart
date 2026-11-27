@@ -2,6 +2,13 @@ import 'dart:convert';
 
 import 'src/rust/api.dart' as native;
 
+typedef CredentialDerivation = Future<Map<String, String>> Function({
+  required int version,
+  required Uri endpoint,
+  required String username,
+  required String password,
+});
+
 Future<Map<String, String>> accountCredentialFields({
   required int version,
   required Uri endpoint,

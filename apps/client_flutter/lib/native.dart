@@ -38,6 +38,8 @@ import 'profile_biometrics.dart';
 import 'desktop_profile_keyring.dart';
 import 'account_removal.dart';
 import 'account_credentials.dart';
+import 'account_reauthentication.dart';
+import 'account_setup.dart';
 import 'account_hub.dart';
 import 'identity_comparison.dart';
 import 'messenger_theme.dart';
@@ -200,6 +202,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   HttpClient? http;
   MeshTransport? transport;
   AccountSession? session;
+  bool reauthenticating = false;
   SessionInactivity? sessionInactivity;
   NativeDelivery? delivery;
   Map<String, dynamic>? profile;
@@ -855,6 +858,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       updated['lockWhenHidden'] =
           backgroundLockPreference ?? (profile!['lockWhenHidden'] == true);
       await crypto('profile_put', {'profile': updated});
+      if (epoch != generation) throw CryptoFailure();
       final previousGroup = profile?['group'];
       profile = updated;
       if (previousGroup != updated['group']) {
@@ -870,7 +874,101 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     String route, {
     Map<String, dynamic>? data,
     String? method,
-  }) => session!.request(route, data: data, method: method);
+  }) async {
+    final owner = session!;
+    final epoch = generation;
+    final access = profile?['accessToken'];
+    try {
+      return await owner.request(route, data: data, method: method);
+    } on ApiFailure catch (failure) {
+      if (failure.status == 401 &&
+          mounted &&
+          epoch == generation &&
+          store != null &&
+          profile?['accessToken'] == access &&
+          connectionState != 'auth') {
+        setState(requireSignIn);
+      }
+      rethrow;
+    }
+  }
+
+  void requireSignIn() {
+    online = false;
+    connectionState = 'auth';
+    error = null;
+  }
+
+  Future<void> signInAgain(BuildContext context) async {
+    final owner = session;
+    final original = profile;
+    final epoch = generation;
+    if (reauthenticating ||
+        owner == null ||
+        original == null ||
+        !canReauthenticate(original)) {
+      return;
+    }
+    void checkOwner() {
+      if (!mounted ||
+          epoch != generation ||
+          store == null ||
+          !identical(session, owner)) {
+        throw CryptoFailure();
+      }
+    }
+
+    final request = bindLoginRequest(owner.http, owner.endpoint);
+    setState(() => reauthenticating = true);
+    var signedIn = false;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AccountReauthenticationDialog(
+          russian: ru,
+          legacy: original['credentialVersion'] == 1,
+          username: original['username'] as String,
+          confirm: (password) async {
+            checkOwner();
+            final tokens = await reauthenticateDevice(
+              profile: Map.of(profile!),
+              endpoint: owner.endpoint,
+              identity: await crypto('identity'),
+              password: password,
+              request: (route, {data, token, notFoundCode}) {
+                checkOwner();
+                return request(
+                  route,
+                  data: data,
+                  token: token,
+                  notFoundCode: notFoundCode,
+                );
+              },
+              sign: (payload) => crypto('sign', {'payload': payload}),
+            );
+            checkOwner();
+            await owner.replaceTokens(tokens);
+            checkOwner();
+            setState(() {
+              sessionInactivity = SessionInactivity(owner.request);
+              connectionState = 'offline';
+              error = null;
+              deviceError = null;
+              failures = 0;
+            });
+            signedIn = true;
+          },
+        ),
+      );
+    } finally {
+      if (mounted && epoch == generation) {
+        setState(() => reauthenticating = false);
+        if (signedIn && tab == 1) unawaited(loadDevices());
+        unawaited(pump());
+      }
+    }
+  }
 
   List<String> get deliveryGroups {
     final active = profile?['group'];
@@ -943,7 +1041,14 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
 
   Future<void> pump() async {
     final groups = deliveryGroups;
-    if (busy || store == null || !mounted || groups.isEmpty) return;
+    if (busy ||
+        reauthenticating ||
+        connectionState == 'auth' ||
+        store == null ||
+        !mounted ||
+        groups.isEmpty) {
+      return;
+    }
     final epoch = generation;
     busy = true;
     timer?.cancel();
@@ -974,13 +1079,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           'Ошибка ключей или хранилища. Событие не подтверждено; проверьте профиль.',
           'Key or storage error. The event was not acknowledged; check this profile.',
         );
-      } else if (failure is ApiFailure &&
-          (failure.status == 401 || failure.status == 403)) {
-        connectionState = 'auth';
-        error = tr(
-          'Сеанс истёк или доступ отозван. Нужен повторный вход через API. Очередь сохранена.',
-          'Your session expired or access was revoked. Sign in again through the API. Your queue is saved.',
-        );
+      } else if (failure is ApiFailure && failure.status == 401) {
+        requireSignIn();
       } else if (failure is ApiFailure) {
         connectionState = 'server';
         error = tr(
@@ -1012,18 +1112,20 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         busy = false;
         if (mounted && store != null && deliveryGroups.isNotEmpty) {
           setState(() {});
-          final delay = failures == 0
-              ? nextDelay
-              : Duration(seconds: min(30, 1 << min(failures, 5)));
-          timer = Timer(
-            delay +
-                Duration(
-                  milliseconds: Random().nextInt(
-                    delay.inMilliseconds < 1000 ? 100 : 600,
+          if (connectionState != 'auth') {
+            final delay = failures == 0
+                ? nextDelay
+                : Duration(seconds: min(30, 1 << min(failures, 5)));
+            timer = Timer(
+              delay +
+                  Duration(
+                    milliseconds: Random().nextInt(
+                      delay.inMilliseconds < 1000 ? 100 : 600,
+                    ),
                   ),
-                ),
-            () => unawaited(pump()),
-          );
+              () => unawaited(pump()),
+            );
+          }
         }
       }
     }
@@ -1117,6 +1219,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       lite = false;
       busy = false;
       sending = false;
+      reauthenticating = false;
       failures = 0;
       connectionState = "offline";
     });
@@ -1349,7 +1452,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     darkTheme: messengerTheme(Brightness.dark),
     builder: (context, child) => SessionActivityBoundary(
       onActivity: () {
-        if (store != null && profile?['trustState'] != 'DEVICE_PENDING_TRUST') {
+        if (store != null &&
+            connectionState != 'auth' &&
+            profile?['trustState'] != 'DEVICE_PENDING_TRUST') {
           unawaited(sessionInactivity?.recordActivity());
         }
       },
@@ -1422,6 +1527,36 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                         Expanded(
                           child: Column(
                             children: [
+                              if (connectionState == 'auth')
+                                ListTile(
+                                  title: Semantics(
+                                    liveRegion: true,
+                                    child: Text(
+                                      tr(
+                                        'Сеанс завершён. Очередь сообщений сохранена.',
+                                        'Your session ended. Your message queue is saved.',
+                                      ),
+                                    ),
+                                  ),
+                                  trailing: canReauthenticate(profile!)
+                                      ? TextButton(
+                                          onPressed: reauthenticating
+                                              ? null
+                                              : () => signInAgain(ctx),
+                                          child: Text(
+                                            tr('Войти снова', 'Sign in again'),
+                                          ),
+                                        )
+                                      : null,
+                                  subtitle: canReauthenticate(profile!)
+                                      ? null
+                                      : Text(
+                                          tr(
+                                            'Для повторного входа этому профилю не хватает данных аккаунта.',
+                                            'This profile is missing the account details required to sign in again.',
+                                          ),
+                                        ),
+                                ),
                               if (directCall case final PrivateCall current)
                                 CallPanel(current, tr),
                               Expanded(
@@ -2267,7 +2402,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             ),
           ],
         ),
-      if (error != null)
+      if (error != null && connectionState != 'auth')
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Text(
@@ -2945,6 +3080,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           ),
         ],
         SettingsSection.devices => [
+          if (canReauthenticate(profile!))
+            ListTile(
+              leading: const Icon(Icons.login),
+              title: Text(tr('Войти снова', 'Sign in again')),
+              onTap: reauthenticating ? null : () => signInAgain(context),
+            ),
           if (sessionInactivity case final SessionInactivity policy
               when profile?['trustState'] != 'DEVICE_PENDING_TRUST')
             SessionInactivityTile(

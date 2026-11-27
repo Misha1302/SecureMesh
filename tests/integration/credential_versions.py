@@ -36,10 +36,10 @@ def verify(d, root, legacy):
         token = json.load(response)['Text'].strip()
     d.request('/v1/auth/verify-email', {'token': token}, expected=204)
 
-    def login(version, user, device, fields, expected=200):
+    def login(version, user, device, fields, expected=200, action='login'):
         ch = d.request('/v1/auth/challenge', dict(username=user, deviceId=device.identity))
         signature = device.call('sign', payload=ch['payload'])['signature']
-        return d.request(f'/v{version}/auth/login', dict(username=user, deviceId=device.identity,
+        return d.request(f'/v{version}/auth/{action}', dict(username=user, deviceId=device.identity,
             publicKey=device.public, signature=signature, challengeId=ch['challengeId'], **fields), expected=expected)
 
     device = d.Device(root)
@@ -48,7 +48,39 @@ def verify(d, root, legacy):
     login(2, legacy['username'], legacy['device'], {'credential': cred}, 401)
     session = login(2, username, device, {'credential': cred})
     assert session['trustState'] == 'DEVICE_TRUSTED'
-    assert d.request('/v1/users/me', token=session['accessToken'])['displayName'] == name
+    me = d.request('/v1/users/me', token=session['accessToken'])
+    assert me['displayName'] == name
+    expected_identity = dict(expectedUserId=me['userId'], expectedTrustState=me['trustState'])
+    fields = dict(credential=cred, **expected_identity)
+    unknown = d.Device(root)
+    login(2, username, unknown, fields, 403, 'reauthenticate')
+    login(2, username, device, dict(fields, expectedUserId=str(uuid.uuid4())), 403, 'reauthenticate')
+    login(2, username, device, dict(fields, expectedTrustState='DEVICE_PENDING_TRUST'), 403, 'reauthenticate')
+    devices = d.request('/v1/devices', token=session['accessToken'])
+    assert [row['id'] for row in devices] == [device.identity]
+
+    # Reauthorize the same MLS identity while a real encrypted outbox row is
+    # pending, then deliver that immutable row with the new session.
+    peer = legacy['device']
+    device.pin(peer); peer.pin(device)
+    group = str(uuid.uuid4())
+    device.call('create', group=group)
+    joined = device.call('add', group=group, keypackage=peer.call('keypackage')['keypackage'])
+    peer.call('join', group=group, welcome=joined['welcome'])
+    d.request('/v1/conversations', dict(id=group, deviceIds=[device.identity, peer.identity],
+        initialEpoch=joined['epoch']), token=session['accessToken'], expected=201)
+    queued = device.call('queue', group=group, id=str(uuid.uuid4()), text='Queued before reauthentication')
+    d.request('/v1/auth/logout', {}, token=session['accessToken'], expected=204)
+    d.request('/v1/users/me', token=session['accessToken'], expected=401)
+    replacement = login(2, username, device, fields, action='reauthenticate')
+    assert replacement['accessToken'] != session['accessToken']
+    assert replacement['deviceId'] == device.identity and replacement['trustState'] == 'DEVICE_TRUSTED'
+    token = replacement['accessToken']
+    assert d.request('/v1/users/me', token=token) == me
+    assert device.call('identity')['public_key'] == device.public
+    assert queued in device.call('outbox')['messages']
+    assert d.request('/v1/messages', d.envelope(queued, group), token=token)['durable']
+    session = replacement
     assert login(2, username, d.Device(root), {'credential': cred})['trustState'] == 'DEVICE_PENDING_TRUST'
     assert d.login(legacy['username'], legacy['password'], legacy['device'])['trustState'] == 'DEVICE_TRUSTED'
     path = root / 'v2-store.db'
@@ -70,7 +102,7 @@ def main():
     with database() as db, tempfile.TemporaryDirectory(dir=d.ROOT / '.local') as work, d.Server(db):
         root = Path(work)
         verify(d, root, d.account(root))
-    print('PASS: v1 and v2 registration, signed login, version isolation and v2 local unlock.')
+    print('PASS: v1/v2 credential isolation, v2 same-device reauthentication and durable MLS outbox delivery.')
 
 
 if __name__ == '__main__':

@@ -17,6 +17,7 @@ def verify(db, root):
     account = d.account(root)
     session = account["session"]
     access, refresh = session["accessToken"], session["refreshToken"]
+    identity = d.request("/v1/users/me", token=access)
 
     def sql(query):
         return postgres(
@@ -76,7 +77,15 @@ def verify(db, root):
     assert configure(access, "never", 401)["code"] == "AUTH_REQUIRED"
     assert d.request("/v1/auth/refresh", dict(token=refresh), expected=401)["code"] == "INVALID_REFRESH"
 
-    fresh = d.login(account["username"], account["password"], account["device"])
+    device = account["device"]
+    challenge = d.request("/v1/auth/challenge", dict(username=account["username"], deviceId=device.identity))
+    signature = device.call("sign", payload=challenge["payload"])["signature"]
+    fresh = d.request("/v1/auth/reauthenticate", dict(
+        username=account["username"], password=account["password"], deviceId=device.identity,
+        publicKey=device.public, challengeId=challenge["challengeId"], signature=signature,
+        expectedUserId=identity["userId"], expectedTrustState=identity["trustState"],
+    ))
+    assert d.request("/v1/users/me", token=fresh["accessToken"]) == identity
     access, refresh = fresh["accessToken"], fresh["refreshToken"]
     assert settings(access)["idleTimeout"] == "7"
     age(access, 6)
@@ -101,7 +110,7 @@ def verify(db, root):
 def main():
     with database() as db, tempfile.TemporaryDirectory(dir=d.ROOT / ".local") as work, d.Server(db):
         verify(db, Path(work))
-    print("PASS: inactivity policy, explicit activity, HTTPS/WSS expiry, refresh and replay, trusted sign-in")
+    print("PASS: inactivity policy, explicit activity, HTTPS/WSS expiry, refresh and replay, same-device v1 reauthentication")
 
 
 if __name__ == "__main__":

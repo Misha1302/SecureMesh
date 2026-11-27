@@ -11,7 +11,7 @@ namespace SecureMesh;
 public sealed record Registration(string Username, string Email, string? Password = null, string? Credential = null, string? DisplayName = null);
 public sealed record Verification(string Token);
 public sealed record Challenge(string Username, Guid DeviceId);
-public sealed record Login(string Username, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, string? ClientOs = null, string? Password = null, string? Credential = null);
+public sealed record Login(string Username, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, string? ClientOs = null, string? Password = null, string? Credential = null, Guid? ExpectedUserId = null, string? ExpectedTrustState = null);
 public sealed record Refresh(string Token);
 public static class Identity
 {
@@ -67,8 +67,15 @@ public static class Identity
             return Results.Ok(new { challengeId=id, payload=Convert.ToBase64String(payload) });
         });
         foreach (var version in new[] {1, 2})
-        app.MapPost($"/v{version}/auth/login", async (Login input, NpgsqlDataSource db) =>
         {
+            app.MapPost($"/v{version}/auth/login", (Login input, NpgsqlDataSource db) => SignIn(input, db, version, existingDeviceOnly: false));
+            app.MapPost($"/v{version}/auth/reauthenticate", (Login input, NpgsqlDataSource db) => SignIn(input, db, version, existingDeviceOnly: true));
+        }
+        async Task<IResult> SignIn(Login input, NpgsqlDataSource db, int version, bool existingDeviceOnly)
+        {
+            if (existingDeviceOnly && (input.ExpectedUserId is null || input.ExpectedUserId == Guid.Empty ||
+                input.ExpectedTrustState is not ("DEVICE_TRUSTED" or "DEVICE_PENDING_TRUST")))
+                throw new ApiError(400, "INVALID_REAUTHENTICATION");
             var secret = Passwords.Input(version, input.Password, input.Credential) ?? throw new ApiError(401,"INVALID_CREDENTIALS");
             await using var c=await db.OpenConnectionAsync();
             Guid user=Guid.Empty; string phc=DummyPhc; bool verified=false;
@@ -77,6 +84,7 @@ public static class Identity
                 if(await r.ReadAsync()) { user=r.GetGuid(0); phc=r.GetString(1); verified=r.GetBoolean(2); }
             if(!await Passwords.VerifyVersion(version,secret,phc,DummyPhc) || user==Guid.Empty || !verified) throw new ApiError(401,"INVALID_CREDENTIALS");
             await using var tx=await c.BeginTransactionAsync();
+            if (existingDeviceOnly && input.ExpectedUserId != user) throw new ApiError(403, "REAUTHENTICATION_MISMATCH");
             // Serialize device enrollment for the account; concurrent first-login cannot enroll hidden devices.
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 AND username=$2 AND verified FOR UPDATE",user,input.Username))
                 if(await cmd.ExecuteScalarAsync() is null) throw new ApiError(401,"INVALID_CREDENTIALS");
@@ -86,13 +94,16 @@ public static class Identity
             var publicKey=Convert.FromBase64String(input.PublicKey);
             var key=PublicKey.Import(SignatureAlgorithm.Ed25519,publicKey,KeyBlobFormat.RawPublicKey);
             if(!SignatureAlgorithm.Ed25519.Verify(key,payload,Convert.FromBase64String(input.Signature))) throw new ApiError(401,"DEVICE_PROOF_REQUIRED");
-            byte[]? existing=null; Guid owner=Guid.Empty; bool revoked=false;
-            await using(var cmd=Sql.Cmd(c,"SELECT user_id,public_key,revoked FROM devices WHERE id=$1",input.DeviceId))
+            byte[]? existing=null; Guid owner=Guid.Empty; bool revoked=false, trusted=false;
+            await using(var cmd=Sql.Cmd(c,"SELECT user_id,public_key,revoked,trusted FROM devices WHERE id=$1 FOR UPDATE",input.DeviceId))
             await using(var r=await cmd.ExecuteReaderAsync())
-                if(await r.ReadAsync()) { owner=r.GetGuid(0); existing=(byte[])r[1]; revoked=r.GetBoolean(2); }
+                if(await r.ReadAsync()) { owner=r.GetGuid(0); existing=(byte[])r[1]; revoked=r.GetBoolean(2); trusted=r.GetBoolean(3); }
             if(existing is not null && (owner!=user || revoked || !CryptographicOperations.FixedTimeEquals(existing,publicKey))) throw new ApiError(403,"DEVICE_KEY_CHANGED");
+            if(existingDeviceOnly && input.ExpectedTrustState != (trusted ? "DEVICE_TRUSTED" : "DEVICE_PENDING_TRUST"))
+                throw new ApiError(403,"REAUTHENTICATION_MISMATCH");
             if(existing is null)
             {
+                if(existingDeviceOnly) throw new ApiError(403, "REAUTHENTICATION_MISMATCH");
                 await using var retired=Sql.Cmd(c,"SELECT 1 FROM device_identifiers WHERE id=$1",input.DeviceId);
                 if(await retired.ExecuteScalarAsync() is not null) throw new ApiError(403,"DEVICE_KEY_CHANGED");
                 await using var count=Sql.Cmd(c,"SELECT count(*) FROM devices WHERE user_id=$1",user);
@@ -109,7 +120,7 @@ public static class Identity
             var result=await NewSession(c,input.DeviceId,Guid.NewGuid());
             await tx.CommitAsync();
             return Results.Ok(result);
-        });
+        }
         app.MapPost("/v1/auth/refresh", async (Refresh input,NpgsqlDataSource db) =>
         {
             await using var c=await db.OpenConnectionAsync(); await using var tx=await c.BeginTransactionAsync();

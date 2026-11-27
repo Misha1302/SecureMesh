@@ -17,6 +17,7 @@ class AccountSession {
   final Map<String, dynamic> Function() profile;
   final Future<void> Function(Map<String, dynamic>) persist;
   Future<void>? _rotation;
+  Future<void>? _replacement;
   bool _closed = false;
   void close() {
     _closed = true;
@@ -24,6 +25,23 @@ class AccountSession {
 
   void _check() {
     if (_closed) throw ApiFailure(499, 'SESSION_CLOSED');
+  }
+
+  Future<void> replaceTokens(Map<String, dynamic> verifiedTokens) {
+    _check();
+    if (_replacement != null) throw ApiFailure(409, 'SESSION_REPLACING');
+    final previousRotation = _rotation;
+    final replacing = () async {
+      // A rotation that had already started may be writing old tokens.
+      // Let it settle before committing the verified replacement.
+      try {
+        await previousRotation;
+      } catch (_) {}
+      _check();
+      await persist(verifiedTokens);
+      _check();
+    }();
+    return _replacement = replacing.whenComplete(() => _replacement = null);
   }
 
   Future<dynamic> request(
@@ -50,6 +68,11 @@ class AccountSession {
     bool retried = false,
   }) async {
     _check();
+    final replacing = _replacement;
+    if (replacing != null) {
+      await replacing;
+      _check();
+    }
     final token = profile()['accessToken'] as String;
     try {
       final response = await action(token);
@@ -58,6 +81,11 @@ class AccountSession {
     } on ApiFailure catch (failure) {
       _check();
       if (failure.status != 401 || retried) rethrow;
+      final replacing = _replacement;
+      if (replacing != null) {
+        await replacing;
+        _check();
+      }
       if (profile()['accessToken'] == token) {
         _rotation ??= (() async {
           final updated = await meshHttp(
