@@ -7,7 +7,10 @@ simulator=''
 driver_pid=''
 cleanup() {
   if [[ -n "$driver_pid" ]]; then kill "$driver_pid" 2>/dev/null || true; fi
-  if [[ -n "$simulator" ]]; then xcrun simctl delete "$simulator"; fi
+  if [[ -n "$simulator" ]]; then
+    xcrun simctl shutdown "$simulator" >/dev/null 2>&1 || true
+    xcrun simctl delete "$simulator"
+  fi
   rm -rf "$fixture"
 }
 trap cleanup EXIT
