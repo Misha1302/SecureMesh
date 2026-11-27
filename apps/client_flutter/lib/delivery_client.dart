@@ -45,6 +45,7 @@ class NativeDelivery {
   final Map<String, int> _acknowledged = {};
   final Map<String, Future<void>> _sends = {};
   Future<void>? _pull;
+  String? _lastListedGroup;
   Object? _error;
   StackTrace? _errorStack;
   int _sent = 0, _received = 0;
@@ -55,7 +56,10 @@ class NativeDelivery {
     _closed = true;
   }
 
-  Future<DeliveryProgress> tick(String group) async {
+  Future<DeliveryProgress> tick(
+    String group, {
+    List<String> listedGroups = const [],
+  }) async {
     if (_closed || _busy) throw StateError('DELIVERY_NOT_AVAILABLE');
     _busy = true;
     try {
@@ -82,9 +86,17 @@ class NativeDelivery {
         if (_sends.length >= 3) break;
         _startSend(key, message);
       }
-      _pull ??= _pullMessages(group)
-          .catchError(_rememberError)
-          .whenComplete(() => _pull = null);
+      if (_pull == null) {
+        var next = group;
+        if (listedGroups.isNotEmpty) {
+          final previous = listedGroups.indexOf(_lastListedGroup ?? '');
+          next = listedGroups[(previous + 1) % listedGroups.length];
+          _lastListedGroup = next;
+        }
+        _pull = _pullMessages(next)
+            .catchError(_rememberError)
+            .whenComplete(() => _pull = null);
+      }
       await Future.any<void>([
         ..._sends.values,
         ?_pull,

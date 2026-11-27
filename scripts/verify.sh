@@ -27,6 +27,7 @@ check epochs .local/venv/bin/python tests/integration/epochs.py
 check device-enrollment .local/venv/bin/python tests/integration/enrollment.py
 check enrollment-quota .local/venv/bin/python tests/integration/enrollment_quota.py
 check migrations .local/venv/bin/python tests/integration/migrations.py
+check private-blobs .local/venv/bin/python tests/integration/private_blobs.py
 check mls-directory .local/venv/bin/python tests/integration/directory.py
 check public-channels .local/venv/bin/python tests/integration/public_channels.py
 check restore-v2 .local/venv/bin/python tests/integration/restore_v2.py

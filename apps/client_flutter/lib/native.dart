@@ -353,7 +353,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       if (!mounted || !identical(unlocked, store)) return;
       await reload();
       timer?.cancel();
-      if (profile?['group'] != null) unawaited(pump());
+      unawaited(pump());
     } catch (_) {
       opening?.dispose();
       transport?.close();
@@ -541,14 +541,28 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     String? method,
   }) => session!.request(route, data: data, method: method);
 
+  List<String> get deliveryGroups {
+    final active = profile?['group'];
+    if (active is String) return [active];
+    final verified = profile?['verifiedChats'];
+    return {
+      if (verified is Map) ...verified.keys.whereType<String>(),
+      if (profile?['lastDeliveryGroup'] case final String previous) previous,
+    }.toList();
+  }
+
   Future<void> pump() async {
-    if (busy || store == null || !mounted || profile?['group'] == null) return;
+    final groups = deliveryGroups;
+    if (busy || store == null || !mounted || groups.isEmpty) return;
     final epoch = generation;
     busy = true;
     timer?.cancel();
     var nextDelay = const Duration(seconds: 3);
     try {
-      final progress = await delivery!.tick(profile!['group'] as String);
+      final progress = await delivery!.tick(
+        groups.first,
+        listedGroups: profile?['group'] == null ? groups : const [],
+      );
       if (!mounted || epoch != generation) return;
       nextDelay = progress.delay;
       failures = 0;
@@ -605,7 +619,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           }
         }
         busy = false;
-        if (mounted && store != null && profile?['group'] != null) {
+        if (mounted && store != null && deliveryGroups.isNotEmpty) {
           setState(() {});
           final delay = failures == 0
               ? nextDelay
@@ -1271,9 +1285,16 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ? null
               : () async {
                   timer?.cancel();
-                  final updated = {...profile!}..remove('group');
+                  final updated = {
+                    ...profile!,
+                    if (profile!['trustConfirmed'] == true)
+                      'lastDeliveryGroup': profile!['group'],
+                  }..remove('group');
                   await persistProfile(updated);
-                  if (mounted) setState(() => messages = []);
+                  if (mounted) {
+                    setState(() => messages = []);
+                    unawaited(pump());
+                  }
                 },
           icon: const Icon(Icons.arrow_back),
         ),
@@ -1779,8 +1800,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                     'Desktop notification service is unavailable.',
                   )
                 : tr(
-                    'Для открытого чата, пока окно в фоне. Имя и текст скрыты.',
-                    'For the open chat while this window is in the background. Names and message text stay hidden.',
+                    'Пока окно в фоне и профиль открыт. Имя и текст скрыты.',
+                    'While the profile is unlocked and the window is in the background. Names and message text stay hidden.',
                   ),
           ),
           value: profile?['desktopNotifications'] == true,

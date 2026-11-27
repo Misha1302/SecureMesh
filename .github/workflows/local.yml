@@ -5,17 +5,82 @@ on:
   pull_request:
   workflow_dispatch:
 concurrency:
-  group: local-checks-${{ github.event.pull_request.number || github.ref }}
+  group: candidate-checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 permissions:
   contents: read
 jobs:
+  binaries:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - run: dotnet build src/SecureMesh.Api -p:RestoreLockedMode=true
+      - run: cargo build --locked --manifest-path src/crypto_core/Cargo.toml
+      - name: Preserve the same executables for all six measurements
+        run: |
+          tar -czf "$RUNNER_TEMP/netem-runtime.tgz" src/SecureMesh.Api/bin/Debug/net10.0 \
+            src/crypto_core/target/debug/securemesh-crypto src/crypto_core/target/debug/libsecuremesh_crypto.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netem-runtime
+          path: ${{ runner.temp }}/netem-runtime.tgz
+          retention-days: 1
+  netem:
+    needs: binaries
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        profile: [gprs, severe]
+        seed: [7, 19, 41]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove checked-in measurements before setup
+        run: rm -f reports/evidence/native-netem-{gprs,severe}-{7,19,41}-200.json
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: netem-runtime
+          path: ${{ runner.temp }}
+      - run: tar -xzf "$RUNNER_TEMP/netem-runtime.tgz"
+      - run: bash scripts/bootstrap.sh --services-only
+      - run: bash scripts/install-flutter.sh
+      - name: Measure actual encrypted traffic
+        env:
+          PROFILE: ${{ matrix.profile }}
+          SEED: ${{ matrix.seed }}
+        run: |
+          .local/venv/bin/python tests/chaos-2g/native_run.py --profile "$PROFILE" --seeds "$SEED" --count 200
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trial-${{ matrix.profile }}-${{ matrix.seed }}
+          path: reports/evidence/native-netem-${{ matrix.profile }}-${{ matrix.seed }}-200.json
+          if-no-files-found: error
+      - if: always()
+        run: make down
   linux:
+    needs: netem
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Discard historical trial files before collecting this run
+        run: rm -f reports/evidence/native-netem-{gprs,severe}-{7,19,41}-200.json
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: trial-*
+          merge-multiple: true
+          path: reports/evidence
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -23,26 +88,15 @@ jobs:
         with:
           components: rustfmt
       - run: make bootstrap
-      - name: Install locked Flutter dependencies
-        run: bash scripts/install-flutter.sh
-      - name: Install dependency advisory scanner
-        run: cargo install cargo-audit --version 0.23.0 --locked --root .local/security
-      - name: Build the API for native network trials
-        run: dotnet build src/SecureMesh.Api --no-restore
-      - name: Measure candidate under GPRS packet loss
-        id: gprs
-        run: make native-network-gprs
-      - name: Measure candidate under severe packet loss
-        if: success() || steps.gprs.outcome == 'failure'
-        id: severe
-        run: make native-network-severe
-      - name: Run acceptance and render measured results
-        if: success() || steps.gprs.outcome == 'failure' || steps.severe.outcome == 'failure'
-        run: make verify
+      - run: bash scripts/install-flutter.sh
+      - run: cargo install cargo-audit --version 0.23.0 --locked --root .local/security
+      - run: make verify
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: evidence
-          path: reports/evidence
+          path: |
+            reports/evidence
+            reports/NATIVE_2G_REPORT.md
       - if: always()
         run: make down
