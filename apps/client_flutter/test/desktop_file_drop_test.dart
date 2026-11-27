@@ -13,7 +13,7 @@ void main() {
     () async {
       final dir = await Directory.systemTemp.createTemp('securemesh-drop-test');
       addTearDown(() => dir.delete(recursive: true));
-      final file = await File('${dir.path}/document.txt')
+      final file = await File.fromUri(dir.uri.resolve('document.txt'))
           .writeAsString('private');
       expect(
         (await localDroppedFiles([file.path, file.path])).single.name,
@@ -43,7 +43,9 @@ void main() {
       void drop() => messenger.handlePlatformMessage(
         desktopDropChannel.name,
         const StandardMethodCodec().encodeMethodCall(
-          const MethodCall('drop', ['/tmp/one.txt']),
+          MethodCall('drop', [
+            File.fromUri(Directory.systemTemp.uri.resolve('one.txt')).path,
+          ]),
         ),
         (_) {},
       );
