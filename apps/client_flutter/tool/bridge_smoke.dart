@@ -17,7 +17,8 @@ Future<void> main() async {
   final root = Directory.current.parent.parent;
   await RustLib.init(
     externalLibrary: ExternalLibrary.open(
-      '${root.path}/src/crypto_core/target/debug/libsecuremesh_crypto.so',
+      Platform.environment['SECUREMESH_CRYPTO_LIB'] ??
+          '${root.path}/src/crypto_core/target/debug/libsecuremesh_crypto.so',
     ),
   );
   final directory = Directory('${root.path}/.local/dart-bridge-test')

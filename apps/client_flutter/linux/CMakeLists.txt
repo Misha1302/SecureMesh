@@ -126,3 +126,28 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# The encrypted store is opened through FFI. Distribute the Rust library inside
+# the Linux bundle so its location does not depend on the launch directory.
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  find_program(CARGO_EXECUTABLE cargo)
+  if(NOT CARGO_EXECUTABLE)
+    message(FATAL_ERROR "Cargo is required to build the SecureMesh release library.")
+  endif()
+  if(CMAKE_CROSSCOMPILING)
+    message(FATAL_ERROR "Build the SecureMesh Linux release on its target architecture.")
+  endif()
+  set(CRYPTO_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/../../../src/crypto_core/Cargo.toml")
+  if(DEFINED ENV{CARGO_TARGET_DIR} AND IS_ABSOLUTE "$ENV{CARGO_TARGET_DIR}")
+    set(CRYPTO_TARGET_DIR "$ENV{CARGO_TARGET_DIR}")
+  else()
+    set(CRYPTO_TARGET_DIR "${CMAKE_BINARY_DIR}/cargo")
+  endif()
+  add_custom_target(securemesh_crypto ALL
+    COMMAND "${CARGO_EXECUTABLE}" build --locked --release --lib
+      --manifest-path "${CRYPTO_MANIFEST}" --target-dir "${CRYPTO_TARGET_DIR}"
+    VERBATIM)
+  add_dependencies(${BINARY_NAME} securemesh_crypto)
+  install(FILES "${CRYPTO_TARGET_DIR}/release/libsecuremesh_crypto.so"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+endif()
