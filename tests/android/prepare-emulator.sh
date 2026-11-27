@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Provision a disposable API 28 AOSP emulator with the job's private TLS root.
+# Provision a disposable emulator with the job's private TLS root.
 # The shipped APK, hostname verification and trust configuration are unchanged.
 set -euo pipefail
 [[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" == 1 ]]
-[[ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" == 28 ]]
+api=${1:-28}
+[[ "$api" == 28 || "$api" == 35 ]]
+[[ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" == "$api" ]]
 [[ "$(adb shell getprop ro.debuggable | tr -d '\r')" == 1 ]]
 [[ -n "${RUNNER_TEMP:-}" ]]
 umask 077
@@ -25,15 +27,43 @@ openssl x509 -req -in "$out/server.csr" -CA "$out/root.pem" -CAkey "$out/root.ke
 openssl verify -purpose sslserver -verify_ip 127.0.0.1 -CAfile "$out/root.pem" "$out/server.pem"
 timeout -k 5s 45s adb root
 timeout -k 5s 45s adb wait-for-device
-timeout -k 5s 45s adb remount
 hash=$(openssl x509 -subject_hash_old -in "$out/root.pem" -noout)
-dest="/system/etc/security/cacerts/$hash.0"
-# Fail on a hash collision, never replace a preexisting system root.
-timeout -k 5s 45s adb shell test ! -e "$dest"
-timeout -k 5s 45s adb push "$out/root.pem" "$dest"
-timeout -k 5s 45s adb shell chmod 0644 "$dest"
-printf 'Restoring test CA label\n'
-timeout -k 5s 20s adb shell restorecon "$dest"
+if [[ "$api" == 28 ]]; then
+  timeout -k 5s 45s adb remount
+  dest="/system/etc/security/cacerts/$hash.0"
+  # Fail on a hash collision, never replace a preexisting system root.
+  timeout -k 5s 45s adb shell test ! -e "$dest"
+  timeout -k 5s 45s adb push "$out/root.pem" "$dest"
+  timeout -k 5s 45s adb shell chmod 0644 "$dest"
+  timeout -k 5s 20s adb shell restorecon "$dest"
+else
+  # Conscrypt's sealed APEX store takes precedence on Android 14 and newer.
+  # Keep every original root and add the job CA in the disposable zygote's
+  # mount namespace; the installed APK inherits the system trust store.
+  timeout -k 5s 45s adb push "$out/root.pem" /data/local/tmp/securemesh-interop-root.pem
+  timeout -k 5s 45s adb shell sh -s "$hash" <<'DEVICE'
+set -eu
+hash=$1
+certs=/data/local/tmp/securemesh-interop-cacerts
+apex=/apex/com.android.conscrypt/cacerts
+legacy=/system/etc/security/cacerts
+mkdir -m 0755 "$certs"
+cp "$apex"/* "$certs/"
+test ! -e "$certs/$hash.0"
+cp /data/local/tmp/securemesh-interop-root.pem "$certs/$hash.0"
+chmod 0644 "$certs"/*
+chown -R 0:0 "$certs"
+label=$(ls -Zd "$apex" | cut -d' ' -f1)
+chcon -R "$label" "$certs"
+pids=$(pidof zygote64 zygote)
+test -n "$pids"
+for pid in $pids; do
+  nsenter --mount="/proc/$pid/ns/mnt" -- mount -o bind "$certs" "$apex"
+  nsenter --mount="/proc/$pid/ns/mnt" -- mount -o bind "$certs" "$legacy"
+  nsenter --mount="/proc/$pid/ns/mnt" -- test -r "$apex/$hash.0"
+done
+DEVICE
+fi
 apk="$RUNNER_TEMP/android-candidate/app-release.apk"
 remote=/data/local/tmp/securemesh-interop.apk
 for attempt in 1 2; do

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exchange fresh text through the installed release APK and the native Linux delivery client."""
+import argparse
 import hashlib
 import json
 import os
@@ -53,7 +54,7 @@ class InteropServer(d.Server):
         super().start()
 
 
-def exchange(root):
+def exchange(root, phase):
     android, linux = d.account(root), d.account(root)
     phone, peer = android['device'], linux['device']
     # Two newly generated local keys are independently available to the test
@@ -68,7 +69,24 @@ def exchange(root):
     })
     setup_android(phone)
     report = Path(os.environ['RUNNER_TEMP']) / 'android-interop-evidence'
-    report.mkdir(mode=0o700, exist_ok=True)
+    if phase == 'video':
+        report /= 'video-api35'
+    report.mkdir(mode=0o700, parents=True, exist_ok=True)
+    apk = Path(os.environ['RUNNER_TEMP']) / 'android-candidate/app-release.apk'
+    with apk.open('rb') as artifact:
+        digest = hashlib.file_digest(artifact, 'sha256').hexdigest()
+    evidence = {
+        'apkSha256': digest,
+        'apkSourceCommit': os.environ['APK_SOURCE_SHA'],
+        'apkSourceRun': os.environ['APK_SOURCE_RUN'],
+        'androidApi': adb('shell', 'getprop', 'ro.build.version.sdk').strip(),
+        'sourceCommit': subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+    }
+    (report / 'interop.json').write_text(json.dumps(evidence, indent=2) + '\n')
+    if phase == 'video':
+        capture(root, report, peer, linux['session']['accessToken'], group, d)
+        return
     challenge = 'Android' + secrets.token_hex(12)
     response = 'Linux' + secrets.token_hex(12)
     fixture = dict(database=str(peer.path), passphrase=peer.password,
@@ -99,13 +117,8 @@ def exchange(root):
         if not screenshot.startswith(b'\x89PNG\r\n\x1a\n'):
             raise RuntimeError('Android did not return a PNG screenshot')
         (report / 'android-conversation.png').write_bytes(screenshot)
-        apk = Path(os.environ['RUNNER_TEMP']) / 'android-candidate/app-release.apk'
-        with apk.open('rb') as artifact:
-            digest = hashlib.file_digest(artifact, 'sha256').hexdigest()
         (report / 'interop.json').write_text(json.dumps({
-            'apkSha256': digest, 'apkSourceCommit': os.environ['APK_SOURCE_SHA'],
-            'apkSourceRun': os.environ['APK_SOURCE_RUN'], 'androidApi': adb('shell', 'getprop', 'ro.build.version.sdk').strip(),
-            'sourceCommit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+            **evidence,
             'androidToLinuxDecrypted': True, 'linuxReplyShownOnAndroid': True,
             'linuxReplyAcknowledgedByAndroid': True, 'envelopes': len(sent),
         }, indent=2) + '\n')
@@ -113,7 +126,6 @@ def exchange(root):
             **linux['session'], 'endpoint': d.BASE, 'group': group, 'peerDevice': phone.identity,
             'peerName': android['username'], 'peerKey': phone.public, 'trustConfirmed': True,
         })
-        capture(root, report, peer, linux['session']['accessToken'], group, d)
         print('PASS: installed APK sent and displayed distinct private messages over verified TLS; '
               'two native clients, two committed envelopes, a recipient acknowledgement.')
     finally:
@@ -123,11 +135,14 @@ def exchange(root):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('phase', choices=('files', 'video'))
+    phase = parser.parse_args().phase
     os.umask(0o077)
     d.TLS = ssl.create_default_context(cafile=str(ROOT / '.local/interop/root.pem'))
     with tempfile.TemporaryDirectory(dir=ROOT / '.local') as tmp, InteropServer(legacy_bootstrap=False):
         try:
-            exchange(Path(tmp))
+            exchange(Path(tmp), phase)
         finally:
             adb('shell', 'am', 'force-stop', PACKAGE, check=False)
             adb('shell', 'pm', 'clear', PACKAGE, check=False)

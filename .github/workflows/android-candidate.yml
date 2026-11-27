@@ -173,19 +173,54 @@ jobs:
           pactl load-module module-null-sink sink_name=mesh_speaker rate=48000
           pactl set-default-source mesh_mic.monitor
           pactl set-default-sink mesh_speaker
-      - name: Exchange encrypted text and media between the APK and Linux
-        env:
-          PULSE_SOURCE: mesh_mic.monitor
-          PULSE_SINK: mesh_speaker
+          pulse_socket="$(pactl info | sed -n 's/^Server String: //p')"
+          test -S "$pulse_socket"
+          # The Linux headless QEMU binary lacks the PulseAudio backend.
+          # Run the audio-capable binary on a private virtual X display.
+          display=:90
+          authority="$RUNNER_TEMP/mesh-xauthority"
+          touch "$authority"
+          chmod 0600 "$authority"
+          xauth -f "$authority" add "$display" . "$(openssl rand -hex 16)"
+          Xvfb "$display" -screen 0 1280x800x24 -nolisten tcp -auth "$authority" >"$RUNNER_TEMP/mesh-xvfb.log" 2>&1 &
+          for attempt in {1..20}; do
+            if DISPLAY="$display" XAUTHORITY="$authority" xdotool getdisplaygeometry >/dev/null 2>&1; then break; fi
+            sleep .25
+          done
+          DISPLAY="$display" XAUTHORITY="$authority" xdotool getdisplaygeometry
+          {
+            echo "PULSE_SERVER=unix:$pulse_socket"
+            echo "QEMU_PA_SERVER=unix:$pulse_socket"
+            echo "DISPLAY=$display"
+            echo "XAUTHORITY=$authority"
+          } >> "$GITHUB_ENV"
+      - name: Verify encrypted messages and bidirectional files on Android 28 and Linux
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 28
           target: default
           arch: x86_64
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -writable-system -camera-front imagefile:${{ runner.temp }}/mesh-camera.png -camera-back none -allow-host-audio
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -writable-system -camera-front none -camera-back none -noaudio
           script: |
-            bash tests/android/prepare-emulator.sh
-            xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- .local/venv/bin/python tests/android/interop.py
+            bash tests/android/prepare-emulator.sh 28
+            xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- .local/venv/bin/python tests/android/interop.py files
+      # API 28 requests NV21 from the emulator imagefile camera. The newer
+      # system camera HAL provides the virtual lens frames for the media gate.
+      - name: Record and play authenticated private media on Android 35
+        env:
+          PULSE_SOURCE: mesh_mic.monitor
+          PULSE_SINK: mesh_speaker
+          QEMU_PA_SOURCE: mesh_mic.monitor
+          QEMU_PA_SINK: mesh_speaker
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          emulator-options: -gpu swiftshader_indirect -no-snapshot -no-boot-anim -writable-system -camera-front imagefile:${{ runner.temp }}/mesh-camera.png -camera-back none -audio pa -allow-host-audio
+          script: |
+            bash tests/android/prepare-emulator.sh 35
+            .local/venv/bin/python tests/android/interop.py video
       - name: Retain cross-device evidence and build identities
         if: always()
         uses: actions/upload-artifact@v4

@@ -17,8 +17,14 @@ def run(*args):
 
 
 def exact(*labels):
-    return ui.wait_node(labels[0], lambda n: n.get('enabled') == 'true' and any(
-        n.get(k, '').strip() in labels for k in ('content-desc', 'text')))
+    def matches(node):
+        text = [node.get(key, '').strip() for key in ('content-desc', 'text')]
+        if any(value.startswith(('Video unavailable.', 'Видео недоступно.'))
+               for value in text):
+            raise RuntimeError(f'Android video became unavailable before {labels[0]}')
+        return node.get('enabled') == 'true' and any(value in labels for value in text)
+
+    return ui.wait_node(labels[0], matches)
 
 
 def green_pixels(rgb):
@@ -56,7 +62,16 @@ def capture(root, report, peer, token, group, delivery):
     ui.adb('shell', 'pm', 'grant', ui.PACKAGE, 'android.permission.RECORD_AUDIO')
     if 'OK' not in ui.adb('emu', 'avd', 'hostmicon'):
         raise RuntimeError('Unable to enable the virtual microphone')
-    exercise(root, report, peer, token, group, delivery)
+    try:
+        exercise(root, report, peer, token, group, delivery)
+    except Exception:
+        (report / 'android-video-failure.png').write_bytes(
+            run('adb', 'exec-out', 'screencap', '-p'))
+        (report / 'android-video-logcat.txt').write_text(ui.adb(
+            'logcat', '-d', '-t', '2500', 'CameraX:V', 'Camera2CameraImpl:V',
+            'Recorder:V', 'VideoCapture:V', 'MediaCodec:W', 'AndroidRuntime:E',
+            '*:S', check=False))
+        raise
 
 
 def exercise(root, report, peer, token, group, delivery):
@@ -68,6 +83,7 @@ def exercise(root, report, peer, token, group, delivery):
     try:
         ui.tap(ui.composer_button('video'))
         ui.tap(exact('Record', 'Записать'))
+        exact('Stop', 'Стоп')
         # Wait for the application's own 12-second stop and native preview.
         ui.tap(exact('Send', 'Отправить'))
         if stim.poll() is not None:
@@ -115,7 +131,7 @@ def exercise(root, report, peer, token, group, delivery):
     if green_pixels(rgb) < 1000 or not contains_tone(pcm):
         raise RuntimeError('Decoded media does not reproduce the synthetic lens and microphone')
 
-    ui.adb('shell', 'media', 'volume', '--stream', '3', '--set', '10')
+    ui.adb('shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--set', '10')
     ui.tap(ui.text_node('Play video', 'Смотреть видео'))
     play = exact('Play', 'Смотреть')
     # Monitor ONLY the Android speaker sink: input and output are isolated.
