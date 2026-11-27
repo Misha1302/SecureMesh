@@ -24,3 +24,6 @@ different member account. A sender's own cursor cannot advance it. The server
 relays this delivery indicator; it is not a signed read receipt. Clients cache
 only positive increases in SQLCipher, so retries, reordered pages and an older
 server omitting this additive field cannot regress the displayed state.
+
+The build and generation scripts consume `contracts/runtime/wire.proto`.
+The original brief schema remains in `contracts/wire.proto` for compatibility comparison.
