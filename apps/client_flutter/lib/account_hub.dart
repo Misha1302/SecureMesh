@@ -40,6 +40,29 @@ class _AccountHubState extends State<AccountHub> {
   Map<String, dynamic>? certificate;
   String? actionError, refreshError;
   String? get error => actionError ?? refreshError;
+  String chatQuery = '';
+  bool archiveOpen = false;
+  Set<String> ids(String field) =>
+      (account[field] as List? ?? const []).whereType<String>().toSet();
+
+  Future<void> toggleChat(String field, String id) async {
+    final values = ids(field);
+    if (!values.remove(id)) values.add(id);
+    await save({...account, field: values.toList()});
+  }
+
+  List<dynamic> visibleChats() {
+    final pinned = ids('pinnedChats');
+    final archived = ids('archivedChats');
+    final matches = chats.where((chat) =>
+        archived.contains(chat['id']) == archiveOpen &&
+        (chat['peerName'] as String).toLowerCase().contains(chatQuery));
+    return [
+      ...matches.where((c) => pinned.contains(c['id'])),
+      ...matches.where((c) => !pinned.contains(c['id'])),
+    ];
+  }
+
   bool working = false, fetching = false, trusted = false;
   bool get blocked => working || fetching;
   Timer? timer;
@@ -488,10 +511,49 @@ class _AccountHubState extends State<AccountHub> {
               ),
             ),
           ),
-        for (final c in chats)
+        if (chats.isNotEmpty) ...[
+          TextField(
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              labelText: tr('Поиск по чатам', 'Search chats'),
+            ),
+            onChanged: (value) => setState(() {
+              chatQuery = value.trim().toLowerCase();
+            }),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              icon: Icon(archiveOpen ? Icons.arrow_back : Icons.archive_outlined),
+              label: Text(archiveOpen
+                  ? tr('Все чаты', 'All chats')
+                  : tr('Архив', 'Archive')),
+              onPressed: () => setState(() => archiveOpen = !archiveOpen),
+            ),
+          ),
+          if (visibleChats().isEmpty)
+            Text(tr('Чатов не найдено', 'No matching chats')),
+        ],
+        for (final c in visibleChats())
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.lock_outline),
+            leading: CircleAvatar(
+              child: Text((c['peerName'] as String).isEmpty
+                  ? '?'
+                  : (c['peerName'] as String).characters.first.toUpperCase()),
+            ),
+            trailing: PopupMenuButton<String>(
+              enabled: !blocked,
+              tooltip: tr('Действия с чатом', 'Chat actions'),
+              onSelected: (field) => action(() => toggleChat(field, c['id'] as String)),
+              itemBuilder: (_) => [
+                PopupMenuItem(value: 'pinnedChats', child: Text(
+                  ids('pinnedChats').contains(c['id'])
+                    ? tr('Открепить', 'Unpin') : tr('Закрепить', 'Pin'))),
+                PopupMenuItem(value: 'archivedChats', child: Text(
+                  archiveOpen ? tr('Из архива', 'Unarchive') : tr('В архив', 'Archive chat'))),
+              ],
+            ),
             title: Text(c['peerName'] as String),
             subtitle: const Text('E2EE · OpenMLS'),
             onTap: blocked
