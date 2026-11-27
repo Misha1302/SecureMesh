@@ -32,6 +32,8 @@ class _ClientAppState extends State<ClientApp> {
   final pass = TextEditingController();
   final composer = TextEditingController();
   ConversationDrafts? drafts;
+  bool draftLoadFailed = false;
+  int chatView = 0;
   Future<void> closingStore = Future.value();
   final chatScroll = ScrollController();
   bool showLocalUnlock = (Platform.environment['SECUREMESH_PROFILE'] ?? '')
@@ -95,23 +97,21 @@ class _ClientAppState extends State<ClientApp> {
   Future<void> restoreDraft(String? group) async {
     final active = drafts;
     if (active == null) return;
+    final view = ++chatView;
     final restoring = active.select(group);
-    if (mounted)
+    if (mounted) {
       setState(() {
         messages = [];
+        draftLoadFailed = false;
         unread = false;
         sendError = null;
       });
+    }
     try {
       await restoring;
     } catch (_) {
-      if (mounted && identical(active, drafts) && profile?['group'] == group) {
-        setState(
-          () => sendError = tr(
-            'Не удалось открыть черновик. Откройте чат ещё раз.',
-            'Could not open your draft. Reopen this chat.',
-          ),
-        );
+      if (mounted && identical(active, drafts) && chatView == view) {
+        setState(() => draftLoadFailed = true);
       }
     }
     if (mounted && identical(active, drafts)) setState(() {});
@@ -195,13 +195,14 @@ class _ClientAppState extends State<ClientApp> {
           ) as Map<String, dynamic>;
         },
         () {
-          if (mounted)
+          if (mounted) {
             setState(
               () => sendError = tr(
                 'Не удалось сохранить черновик на устройстве.',
                 'Could not save this draft on your device.',
               ),
             );
+          }
         },
       );
       http = nativeHttpClient();
@@ -334,6 +335,7 @@ class _ClientAppState extends State<ClientApp> {
       return;
     }
     final group = profile!['group'];
+    final view = chatView;
     final epoch = generation;
     final nearEnd =
         follow ||
@@ -341,16 +343,17 @@ class _ClientAppState extends State<ClientApp> {
         chatScroll.position.extentAfter < 96;
     final previous = messages.isEmpty ? null : messages.last["id"];
     final result = await crypto('timeline', {'group': group});
-    if (mounted && epoch == generation && group == profile?['group']) {
+    if (mounted && epoch == generation && view == chatView) {
       setState(() => messages = result['messages'] as List<dynamic>);
       final changed = messages.isNotEmpty && messages.last['id'] != previous;
       if (changed) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted ||
               epoch != generation ||
-              group != profile?['group'] ||
-              !chatScroll.hasClients)
+              view != chatView ||
+              !chatScroll.hasClients) {
             return;
+          }
           if (nearEnd) {
             chatScroll.jumpTo(chatScroll.position.maxScrollExtent);
           } else {
@@ -383,8 +386,9 @@ class _ClientAppState extends State<ClientApp> {
       await crypto('profile_put', {'profile': updated});
       final previousGroup = profile?['group'];
       profile = updated;
-      if (previousGroup != updated['group'])
+      if (previousGroup != updated['group']) {
         await restoreDraft(updated['group'] as String?);
+      }
     });
     // Preserve the queue after a failed write; this caller still receives the failure.
     profileWrites = write.catchError((_) {});
@@ -495,8 +499,9 @@ class _ClientAppState extends State<ClientApp> {
         group == null ||
         active == null ||
         !active.readyFor(group) ||
-        profile?['trustConfirmed'] != true)
+        profile?['trustConfirmed'] != true) {
       return;
+    }
     bool persisted = false;
     setState(() {
       sending = true;
@@ -1116,7 +1121,18 @@ class _ClientAppState extends State<ClientApp> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child: drafts?.readyFor(profile?['group'] as String?) != true
+              child: draftLoadFailed
+                  ? TextButton(
+                      onPressed: () =>
+                          restoreDraft(profile?['group'] as String?),
+                      child: Text(
+                        tr(
+                          'Повторить загрузку черновика',
+                          'Retry loading draft',
+                        ),
+                      ),
+                    )
+                  : drafts?.readyFor(profile?['group'] as String?) != true
                   ? const LinearProgressIndicator()
                   : MessageComposer(
                       controller: composer,
@@ -1126,7 +1142,10 @@ class _ClientAppState extends State<ClientApp> {
             ),
             const SizedBox(width: 12),
             IconButton.filled(
-              onPressed: profile!['trustConfirmed'] == true && !sending
+              onPressed:
+                  profile!['trustConfirmed'] == true &&
+                      drafts?.readyFor(profile?['group'] as String?) == true &&
+                      !sending
                   ? send
                   : null,
               tooltip: tr('Поставить сообщение в очередь', 'Queue message'),
