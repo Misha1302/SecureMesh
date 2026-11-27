@@ -17,6 +17,7 @@ import 'conversation_timeline.dart';
 import 'attachment_transfer.dart';
 import 'attachment_selection.dart';
 import 'clipboard_photo.dart';
+import 'desktop_file_drop.dart';
 import 'voice_note.dart';
 import 'private_call.dart';
 import 'voice_wave.dart';
@@ -1524,6 +1525,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   Future<void> chooseAttachment(
     BuildContext context, {
     bool clipboardPhoto = false,
+    List<dynamic>? droppedPaths,
   }) async {
     final current = attachments;
     if (current == null || current.busy || profile?['trustConfirmed'] != true) {
@@ -1575,6 +1577,14 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             mimeType: 'image/png',
           ),
         ];
+      } else if (droppedPaths != null) {
+        files = await localDroppedFiles(droppedPaths);
+        if (files.isEmpty && context.mounted && active()) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr(
+            'Перетащите от одного до восьми локальных файлов.',
+            'Drop one to eight local files.',
+          ))));
+        }
       } else {
         files = await openFiles();
       }
@@ -2152,51 +2162,56 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             ),
           ),
         ),
-      ConversationComposer(
-        editor: draftLoadFailed
-            ? TextButton(
-                onPressed: () => restoreDraft(profile?['group'] as String?),
-                child: Text(
-                  tr('Повторить загрузку черновика', 'Retry loading draft'),
+      DesktopFileDrop(
+        onFiles: attachments?.busy == false && profile?['trustConfirmed'] == true
+            ? (paths) => chooseAttachment(context, droppedPaths: paths)
+            : null,
+        child: ConversationComposer(
+          editor: draftLoadFailed
+              ? TextButton(
+                  onPressed: () => restoreDraft(profile?['group'] as String?),
+                  child: Text(
+                    tr('Повторить загрузку черновика', 'Retry loading draft'),
+                  ),
+                )
+              : drafts?.readyFor(profile?['group'] as String?) != true
+              ? const LinearProgressIndicator()
+              : MessageComposer(
+                  controller: composer,
+                  tr: tr,
+                  onSubmitted: (_) => send(),
                 ),
-              )
-            : drafts?.readyFor(profile?['group'] as String?) != true
-            ? const LinearProgressIndicator()
-            : MessageComposer(
-                controller: composer,
-                tr: tr,
-                onSubmitted: (_) => send(),
-              ),
-        tr: tr,
-        videoSupported: supportsVideoMessages,
-        onVideo:
-            attachments?.busy == false && profile?['trustConfirmed'] == true
-            ? () => captureVideo(context)
-            : null,
-        onFile: attachments?.busy == false && profile?['trustConfirmed'] == true
-            ? () => chooseAttachment(context)
-            : null,
-        onPastePhoto:
-            clipboardPhotoSupported &&
-                attachments?.busy == false &&
-                profile?['trustConfirmed'] == true
-            ? () => chooseAttachment(context, clipboardPhoto: true)
-            : null,
-        microphoneKey: microphoneButtonKey,
-        onVoiceHold:
-            attachments?.busy == false && profile?['trustConfirmed'] == true
-            ? (hold) => recordVoice(context, hold)
-            : null,
-        onVoice:
-            attachments?.busy == false && profile?['trustConfirmed'] == true
-            ? () => recordVoice(context)
-            : null,
-        onSend:
-            profile!['trustConfirmed'] == true &&
-                drafts?.readyFor(profile?['group'] as String?) == true &&
-                !sending
-            ? send
-            : null,
+          tr: tr,
+          videoSupported: supportsVideoMessages,
+          onVideo:
+              attachments?.busy == false && profile?['trustConfirmed'] == true
+              ? () => captureVideo(context)
+              : null,
+          onFile: attachments?.busy == false && profile?['trustConfirmed'] == true
+              ? () => chooseAttachment(context)
+              : null,
+          onPastePhoto:
+              clipboardPhotoSupported &&
+                  attachments?.busy == false &&
+                  profile?['trustConfirmed'] == true
+              ? () => chooseAttachment(context, clipboardPhoto: true)
+              : null,
+          microphoneKey: microphoneButtonKey,
+          onVoiceHold:
+              attachments?.busy == false && profile?['trustConfirmed'] == true
+              ? (hold) => recordVoice(context, hold)
+              : null,
+          onVoice:
+              attachments?.busy == false && profile?['trustConfirmed'] == true
+              ? () => recordVoice(context)
+              : null,
+          onSend:
+              profile!['trustConfirmed'] == true &&
+                  drafts?.readyFor(profile?['group'] as String?) == true &&
+                  !sending
+              ? send
+              : null,
+        ),
       ),
     ],
   );

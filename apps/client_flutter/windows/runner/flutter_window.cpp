@@ -1,5 +1,6 @@
 #include "flutter_window.h"
 #include "clipboard_photo.h"
+#include "file_drop.h"
 
 #include <optional>
 
@@ -28,6 +29,7 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   RegisterClipboardPhoto(flutter_controller_->engine()->messenger(), GetHandle());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  DragAcceptFiles(GetHandle(), TRUE);
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
@@ -53,6 +55,10 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == WM_DROPFILES && flutter_controller_) {
+    ReceiveFileDrop(flutter_controller_->engine()->messenger(), reinterpret_cast<HDROP>(wparam));
+    return 0;
+  }
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =

@@ -1,5 +1,6 @@
 #include "my_application.h"
 #include "clipboard_photo.h"
+#include "file_drop.h"
 
 #include <flutter_linux/flutter_linux.h>
 
@@ -57,6 +58,7 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
   register_clipboard_photo(view);
+  register_file_drop(view);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
