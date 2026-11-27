@@ -120,6 +120,8 @@ def main():
         assert staged not in a.call('outbox')['messages']
         assert a.call('commit_saved', **ack)['already_saved']
         a.call('saved', reject=True, **{**ack, 'seq': 16})
+        a.call('ingest', reject=True, **{**staged, 'sender': a.identity, 'seq': 1})
+        assert a.call('cursor', group=group)['seq'] == 0
         b.call('process', group=group, ciphertext=staged['ciphertext'])
         next_message = a.call('queue', group=group, id=str(uuid.uuid4()), text='durable epoch')
         assert next_message['epoch'] == confirmed['epoch']

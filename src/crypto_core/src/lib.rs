@@ -102,6 +102,49 @@ fn check_group(db: &Connection, group: &MlsGroup) -> Result<()> {
     Ok(())
 }
 
+fn save_outgoing(
+    db: &Connection,
+    p: &Provider,
+    gid: &str,
+    id: &str,
+    seq: i64,
+    commit_only: bool,
+) -> Result<Value> {
+    ensure!(seq > 0, "invalid sequence");
+    let (kind, status, old_seq): (i64, String, Option<i64>) = db.query_row(
+        "SELECT json_extract(envelope,'$.kind'),status,seq FROM outgoing WHERE group_id=? AND id=?",
+        params![gid, id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    ensure!(!commit_only || kind == 3, "expected MLS commit");
+    let already_saved = status == "saved";
+    ensure!(
+        status == "queued" || already_saved,
+        "unexpected outbox state"
+    );
+    ensure!(!already_saved || old_seq == Some(seq), "sequence changed");
+    let mut result = json!({"saved":true,"already_saved":already_saved});
+    if kind == 3 {
+        // Older clients could persist the ACK before merging the pending commit.
+        let pending_key = format!("pending:{gid}");
+        if meta(db, &pending_key)? == id {
+            let mut group = load_group(p, gid)?;
+            group.merge_pending_commit(p)?;
+            set_meta(db, &pending_key, "")?;
+            result["epoch"] = json!(group.epoch().as_u64());
+        } else {
+            ensure!(already_saved, "pending commit mismatch");
+        }
+    }
+    if !already_saved {
+        db.execute(
+            "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
+            params![seq, gid, id],
+        )?;
+    }
+    Ok(result)
+}
+
 fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     let op = s(req, "op")?;
     if op == "init" {
@@ -292,41 +335,14 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             set_meta(db, &format!("pending:{gid}"), id)?;
             Ok(envelope)
         }
-        "saved" | "commit_saved" => {
-            let gid = s(req, "group")?;
-            let id = s(req, "id")?;
-            let seq = req["seq"].as_i64().context("sequence")?;
-            ensure!(seq > 0, "invalid sequence");
-            let (kind, status, old_seq): (i64, String, Option<i64>) = db.query_row(
-                "SELECT json_extract(envelope,'$.kind'),status,seq FROM outgoing WHERE group_id=? AND id=?",
-                params![gid, id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-            ensure!(op == "saved" || kind == 3, "expected MLS commit");
-            let already_saved = status == "saved";
-            ensure!(status == "queued" || already_saved, "unexpected outbox state");
-            ensure!(!already_saved || old_seq == Some(seq), "sequence changed");
-            let mut result = json!({"saved":true,"already_saved":already_saved});
-            if kind == 3 {
-                // Older clients could persist the ACK before merging the pending commit.
-                let pending_key = format!("pending:{gid}");
-                if meta(db, &pending_key)? == id {
-                    let mut group = load_group(p, gid)?;
-                    group.merge_pending_commit(p)?;
-                    set_meta(db, &pending_key, "")?;
-                    result["epoch"] = json!(group.epoch().as_u64());
-                } else {
-                    ensure!(already_saved, "pending commit mismatch");
-                }
-            }
-            if !already_saved {
-                db.execute(
-                    "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
-                    params![seq, gid, id],
-                )?;
-            }
-            Ok(result)
-        }
+        "saved" | "commit_saved" => save_outgoing(
+            db,
+            p,
+            s(req, "group")?,
+            s(req, "id")?,
+            req["seq"].as_i64().context("sequence")?,
+            op == "commit_saved",
+        ),
         "commit_rejected" => {
             let gid = s(req, "group")?;
             let id = s(req, "id")?;
@@ -470,7 +486,6 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 matches!(req["kind"].as_i64(), Some(1 | 3)),
                 "unsupported ingest kind"
             );
-            let group = load_group(p, gid)?;
             let result = if s(req, "sender")? == identity {
                 let own: String = db.query_row(
                     "SELECT envelope FROM outgoing WHERE group_id=? AND id=?",
@@ -494,19 +509,10 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                         "own ciphertext mismatch"
                     );
                 }
-                if req["kind"].as_i64() == Some(3)
-                    && meta(db, &format!("pending:{gid}"))? == s(req, "id")?
-                {
-                    let mut group = group;
-                    group.merge_pending_commit(p)?;
-                    set_meta(db, &format!("pending:{gid}"), "")?;
-                }
-                db.execute(
-                    "UPDATE outgoing SET status='saved',seq=? WHERE group_id=? AND id=?",
-                    params![seq, gid, s(req, "id")?],
-                )?;
+                save_outgoing(db, p, gid, s(req, "id")?, seq, false)?;
                 json!({"own":true})
             } else {
+                let group = load_group(p, gid)?;
                 ensure!(
                     req["epoch"].as_u64() == Some(group.epoch().as_u64()),
                     "epoch mismatch"
