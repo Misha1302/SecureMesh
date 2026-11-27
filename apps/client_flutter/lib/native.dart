@@ -10,6 +10,7 @@ import 'local_client.dart';
 import 'session.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
+import 'linux_notifications.dart';
 import 'message_markup.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
@@ -25,7 +26,44 @@ class ClientApp extends StatefulWidget {
   State<ClientApp> createState() => _ClientAppState();
 }
 
-class _ClientAppState extends State<ClientApp> {
+class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
+  bool? notificationBackend;
+  bool changingNotifications = false;
+  bool notificationSaveFailed = false;
+  late final desktopNotifications = LinuxNotifications(
+    allowed: () {
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      return Platform.isLinux &&
+          mounted &&
+          store != null &&
+          profile?['desktopNotifications'] == true &&
+          !changingNotifications &&
+          (lifecycle == AppLifecycleState.inactive ||
+              lifecycle == AppLifecycleState.hidden ||
+              lifecycle == AppLifecycleState.paused);
+    },
+    russian: () => ru,
+    availability: (available) {
+      if (mounted && store != null && notificationBackend != available) {
+        setState(() => notificationBackend = available);
+      }
+    },
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.detached) {
+      desktopNotifications.cancel();
+    }
+  }
+
   final path = TextEditingController(
     text: Platform.environment['SECUREMESH_PROFILE'] ?? '',
   );
@@ -119,6 +157,8 @@ class _ClientAppState extends State<ClientApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    desktopNotifications.cancel();
     timer?.cancel();
     delivery?.close();
     transport?.close();
@@ -219,7 +259,14 @@ class _ClientAppState extends State<ClientApp> {
         http: http!,
         https: (route, {data}) => api(route, data: data),
       );
-      delivery = NativeDelivery(crypto: crypto, transport: transport!);
+      delivery = NativeDelivery(
+        crypto: crypto,
+        transport: transport!,
+        onIncomingText: Platform.isLinux ? desktopNotifications.incoming : null,
+      );
+      if (Platform.isLinux && saved['desktopNotifications'] == true) {
+        unawaited(desktopNotifications.probe());
+      }
       pass.clear();
       await restoreDraft(saved['group'] as String?);
       if (!mounted || !identical(unlocked, store)) return;
@@ -367,6 +414,7 @@ class _ClientAppState extends State<ClientApp> {
   Future<void> persistProfile(
     Map<String, dynamic> value, {
     bool sessionOnly = false,
+    bool? notificationPreference,
   }) {
     final epoch = generation;
     final write = profileWrites.then((_) async {
@@ -383,6 +431,9 @@ class _ClientAppState extends State<ClientApp> {
               ])
                 key: profile![key],
             };
+      // Preserve a newer privacy choice across concurrent profile/session writes.
+      updated['desktopNotifications'] =
+          notificationPreference ?? (profile!['desktopNotifications'] == true);
       await crypto('profile_put', {'profile': updated});
       final previousGroup = profile?['group'];
       profile = updated;
@@ -534,6 +585,9 @@ class _ClientAppState extends State<ClientApp> {
 
   void lock() {
     generation++;
+    desktopNotifications.cancel();
+    changingNotifications = notificationSaveFailed = false;
+    notificationBackend = null;
     timer?.cancel();
     delivery?.close();
     transport?.close();
@@ -1173,6 +1227,30 @@ class _ClientAppState extends State<ClientApp> {
     }
   }
 
+  Future<void> setNotifications(bool enabled) async {
+    final epoch = generation;
+    if (changingNotifications || store == null) return;
+    desktopNotifications.cancel();
+    setState(() {
+      changingNotifications = true;
+      notificationSaveFailed = false;
+    });
+    try {
+      await persistProfile(
+        {},
+        sessionOnly: true,
+        notificationPreference: enabled,
+      );
+      if (generation == epoch && enabled) await desktopNotifications.probe();
+    } catch (_) {
+      if (mounted && generation == epoch) notificationSaveFailed = true;
+    } finally {
+      if (mounted && generation == epoch) {
+        setState(() => changingNotifications = false);
+      }
+    }
+  }
+
   Widget settings(BuildContext context) => ListView(
     padding: const EdgeInsets.all(24),
     children: [
@@ -1194,6 +1272,29 @@ class _ClientAppState extends State<ClientApp> {
                   DisplayNameEditor(api: ownerSession.request, russian: ru),
             );
           },
+        ),
+      if (Platform.isLinux)
+        SwitchListTile(
+          title: Text(tr('Уведомления о сообщениях', 'Message notifications')),
+          subtitle: Text(
+            notificationSaveFailed
+                ? tr(
+                    'Не удалось сохранить настройку. Повторите попытку.',
+                    'Could not save this setting. Try again.',
+                  )
+                : notificationBackend == false &&
+                      profile?['desktopNotifications'] == true
+                ? tr(
+                    'Сервис уведомлений рабочего стола недоступен.',
+                    'Desktop notification service is unavailable.',
+                  )
+                : tr(
+                    'Для открытого чата, пока окно в фоне. Имя и текст скрыты.',
+                    'For the open chat while this window is in the background. Names and message text stay hidden.',
+                  ),
+          ),
+          value: profile?['desktopNotifications'] == true,
+          onChanged: changingNotifications ? null : setNotifications,
         ),
       SwitchListTile(
         title: const Text('Русский / English'),

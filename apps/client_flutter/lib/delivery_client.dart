@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'linux_notifications.dart' show isNewIncomingText;
 import 'transport.dart';
 
 typedef CryptoCommand = Future<Map<String, dynamic>> Function(
@@ -31,7 +32,12 @@ class DeliveryProgress {
 /// The native UI and executable network tests share this exact delivery cycle.
 /// No timer owns message durability: the encrypted store owns outbox and cursor.
 class NativeDelivery {
-  NativeDelivery({required this.crypto, required this.transport});
+  NativeDelivery({
+    required this.crypto,
+    required this.transport,
+    this.onIncomingText,
+  });
+  final void Function()? onIncomingText;
   final CryptoCommand crypto;
   final MeshTransport transport;
   Future<void>? _receipt;
@@ -150,7 +156,7 @@ class NativeDelivery {
       for (var i = 0; i < messages.length; i++) {
         if (_closed) return;
         final message = messages[i] as Map;
-        await crypto('ingest', {
+        final committed = await crypto('ingest', {
           'group': group,
           'id': message['clientMessageId'],
           'sender': message['senderDeviceId'],
@@ -161,6 +167,9 @@ class NativeDelivery {
           'digest': message['ciphertextSha256'],
           'cursor': i == messages.length - 1 ? page['nextCursor'] : '',
         });
+        if (!_closed && isNewIncomingText(committed, message['envelopeKind'])) {
+          onIncomingText?.call();
+        }
       }
       final processed = page['peerProcessedSequence'];
       if (processed is int && processed > (_peerProcessed[group] ?? 0)) {
