@@ -30,6 +30,7 @@ class AccountSession {
     String route, {
     Map<String, dynamic>? data,
     String? method,
+    String? notFoundCode,
     bool retried = false,
   }) => authorized(
     (token) => meshHttp(
@@ -39,6 +40,7 @@ class AccountSession {
       data: data,
       method: method,
       token: token,
+      notFoundCode: notFoundCode,
     ),
     retried: retried,
   );

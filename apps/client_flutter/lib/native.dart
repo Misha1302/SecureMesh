@@ -10,6 +10,7 @@ import 'package:material_ui/material_ui.dart';
 import 'src/rust/api.dart';
 import 'local_client.dart';
 import 'session.dart';
+import 'session_inactivity.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
 import 'conversation_composer.dart';
@@ -198,6 +199,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   HttpClient? http;
   MeshTransport? transport;
   AccountSession? session;
+  SessionInactivity? sessionInactivity;
   NativeDelivery? delivery;
   Map<String, dynamic>? profile;
   List<dynamic> messages = [];
@@ -480,6 +482,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         profile: () => profile!,
         persist: (value) => persistProfile(value, sessionOnly: true),
       );
+      sessionInactivity = SessionInactivity(session!.request);
       transport = MeshTransport(
         endpoint: Uri.parse(profile!['endpoint'] as String),
         device: profile!['deviceId'] as String,
@@ -513,6 +516,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       opening?.dispose();
       transport?.close();
       session?.close();
+      sessionInactivity = null;
       delivery?.close();
       transport = null;
       http?.close(force: true);
@@ -971,8 +975,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           (failure.status == 401 || failure.status == 403)) {
         connectionState = 'auth';
         error = tr(
-          'Доступ отозван. Нужен повторный вход через API; очередь сохранена.',
-          'Access revoked. Sign in again through the API; your queue is saved.',
+          'Сеанс истёк или доступ отозван. Нужен повторный вход через API. Очередь сохранена.',
+          'Your session expired or access was revoked. Sign in again through the API. Your queue is saved.',
         );
       } else if (failure is ApiFailure) {
         connectionState = 'server';
@@ -1088,6 +1092,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     delivery?.close();
     transport?.close();
     session?.close();
+    sessionInactivity = null;
     transport = null;
     http?.close(force: true);
     releaseLocalStore();
@@ -1339,6 +1344,14 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     themeMode: theme,
     theme: messengerTheme(Brightness.light),
     darkTheme: messengerTheme(Brightness.dark),
+    builder: (context, child) => SessionActivityBoundary(
+      onActivity: () {
+        if (store != null && profile?['trustState'] != 'DEVICE_PENDING_TRUST') {
+          unawaited(sessionInactivity?.recordActivity());
+        }
+      },
+      child: child!,
+    ),
     home: Builder(
       builder: (ctx) {
         final width = MediaQuery.sizeOf(ctx).width;
@@ -2915,6 +2928,13 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           ),
         ],
         SettingsSection.devices => [
+          if (sessionInactivity case final SessionInactivity policy
+              when profile?['trustState'] != 'DEVICE_PENDING_TRUST')
+            SessionInactivityTile(
+              key: ObjectKey(policy),
+              policy: policy,
+              russian: ru,
+            ),
           if (deviceError != null)
             ListTile(
               title: Text(deviceError!),
