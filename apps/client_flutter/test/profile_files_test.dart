@@ -12,7 +12,10 @@ void main() {
       await File('${dir.path}/temporary.db-wal').writeAsString('sidecar');
       await File('${dir.path}/empty.db').create();
       final initial = (await localProfiles(location: dir)).single;
-      expect(initial.file.path, file.path);
+      expect(
+        await FileSystemEntity.identical(initial.file.path, file.path),
+        isTrue,
+      );
       expect(initial.title(true), contains('012345'));
       await setProfileLabel(file, dir, 'Рабочий 🌱');
       expect(
