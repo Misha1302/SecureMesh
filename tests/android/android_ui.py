@@ -82,9 +82,9 @@ def type_challenge(value):
     field = wait_node('chat input', lambda n: n.get('class') == 'android.widget.EditText')
     x1, y1, x2, y2 = bounds(field)
     # The suffix formatting button occupies the trailing part of a narrow field.
-    adb('shell', 'input', 'tap', str(x1 + max(2, min(12, (x2 - x1) // 8))), str((y1 + y2) // 2))
+    adb('shell', 'input', 'tap', str(x1 + (x2 - x1) // 3), str((y1 + y2) // 2))
     wait_node('focused chat input', lambda n: n.get('class') == 'android.widget.EditText' and n.get('focused') == 'true')
-    adb('shell', 'input', 'text', value)
+    adb('shell', 'input', 'text', value.replace(' ', '%s'))
     wait_node('entered synthetic challenge', lambda n: n.get('class') == 'android.widget.EditText' and
               any(value in n.get(k, '') for k in ('text', 'content-desc')))
     if 'mInputShown=true' in adb('shell', 'dumpsys', 'input_method'):

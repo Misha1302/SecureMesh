@@ -119,7 +119,11 @@ class ConversationComposer extends StatelessWidget {
                         ],
                         onSelected: (i) => media[i].$3?.call(),
                       ),
-                    Expanded(child: input),
+                    // Keep the IME connection when compact actions move into the input row.
+                    Expanded(
+                      key: const ValueKey('message-editor'),
+                      child: input,
+                    ),
                     if (narrow && keyboard) buttons.last,
                     const SizedBox(width: 4),
                     sendButton,

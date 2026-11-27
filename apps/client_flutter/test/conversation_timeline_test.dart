@@ -175,9 +175,21 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pumpAndSettle();
       expect(actions, ['file', 'voice', 'video', 'send']);
+      await tester.tap(field);
+      final editable = tester.state<EditableTextState>(
+        find.byType(EditableText),
+      );
+      expect(editable.widget.focusNode.hasFocus, isTrue);
       tester.view.viewInsets = const FakeViewPadding(bottom: 240);
       addTearDown(tester.view.resetViewInsets);
       await tester.pumpAndSettle();
+      expect(
+        tester.state<EditableTextState>(find.byType(EditableText)),
+        same(editable),
+      );
+      expect(editable.widget.focusNode.hasFocus, isTrue);
+      tester.testTextInput.enterText('still typing');
+      expect(controller.text, 'still typing');
       await tester.tap(find.byTooltip('Attachments'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Record video message'));
