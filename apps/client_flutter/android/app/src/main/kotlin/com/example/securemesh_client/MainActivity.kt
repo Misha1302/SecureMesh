@@ -7,6 +7,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private val archivePicker by lazy { ProfileArchivePicker(this) }
     private val clipboardPhoto by lazy { ClipboardPhoto(this) }
     private val biometrics by lazy { ProfileBiometrics(this) }
     private val notifications by lazy { MessageNotifications(this) }
@@ -15,6 +16,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
+        MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/profile-archive").setMethodCallHandler(archivePicker::handle)
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/clipboard-photo").setMethodCallHandler(clipboardPhoto::read)
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/message_notifications").setMethodCallHandler(notifications::handle)
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/profile_biometrics")
@@ -49,6 +51,10 @@ class MainActivity : FlutterActivity() {
     @Deprecated("FlutterActivity uses the activity-result compatibility API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == ProfileArchivePicker.requestCode) {
+            archivePicker.returned(resultCode, data?.data)
+            return
+        }
         if (requestCode != exportRequest) return
         val (bytes, result) = pending ?: return
         pending = null
@@ -83,6 +89,7 @@ class MainActivity : FlutterActivity() {
             result.success(false)
         }
         pending = null
+        archivePicker.cancel()
         super.onDestroy()
     }
 
@@ -93,6 +100,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(engine: FlutterEngine) {
+        archivePicker.cancel()
+        MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/profile-archive").setMethodCallHandler(null)
         clipboardPhoto.cancel()
         MethodChannel(engine.dartExecutor.binaryMessenger, "securemesh/clipboard-photo").setMethodCallHandler(null)
         biometrics.cancel()

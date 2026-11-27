@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'earlier_history.dart';
@@ -76,41 +77,52 @@ class _ArchivePageState extends State<_ArchivePage>
     Directory? work;
     XFile? picked;
     try {
-      picked = await openFile(
-        acceptedTypeGroups: [
-          const XTypeGroup(
-            label: 'SecureMesh (.db)',
-            extensions: ['db'],
-            mimeTypes: ['*/*'],
-            uniformTypeIdentifiers: ['public.data'],
-          ),
-        ],
-      );
-      if (picked == null || !mounted) return;
-      if (!picked.name.toLowerCase().endsWith('.db')) {
-        throw const FormatException('extension');
-      }
-      for (final suffix in ['-wal', '-shm', '-journal']) {
-        if (await File('${picked.path}$suffix').exists()) {
-          throw const FormatException('sidecar');
+      late final File copy;
+      if (Platform.isAndroid) {
+        const channel = MethodChannel('securemesh/profile-archive');
+        final staged = await channel.invokeMethod<String>('pick');
+        if (staged == null) return;
+        copy = File(staged);
+        work = copy.parent;
+      } else {
+        picked = await openFile(
+          acceptedTypeGroups: [
+            const XTypeGroup(
+              label: 'SecureMesh (.db)',
+              extensions: ['db'],
+              mimeTypes: ['*/*'],
+              uniformTypeIdentifiers: ['public.data'],
+            ),
+          ],
+        );
+        if (picked == null || !mounted) return;
+        if (!picked.name.toLowerCase().endsWith('.db')) {
+          throw const FormatException('extension');
         }
-      }
-      final length = await picked.length();
-      if (length < 4096 || length > limit) throw const FormatException('size');
-      work = await Directory.systemTemp.createTemp('securemesh-archive-');
-      final copy = File('${work.path}/snapshot.db');
-      final output = copy.openWrite();
-      var copied = 0;
-      try {
-        await for (final data in picked.openRead()) {
-          copied += data.length;
-          if (copied > length) throw const FormatException('size');
-          await output.addStream(Stream.value(data));
+        for (final suffix in ['-wal', '-shm', '-journal']) {
+          if (await File('${picked.path}$suffix').exists()) {
+            throw const FormatException('sidecar');
+          }
         }
-      } finally {
-        await output.close();
+        final length = await picked.length();
+        if (length < 4096 || length > limit) {
+          throw const FormatException('size');
+        }
+        work = await Directory.systemTemp.createTemp('securemesh-archive-');
+        copy = File('${work.path}/snapshot.db');
+        final output = copy.openWrite();
+        var copied = 0;
+        try {
+          await for (final data in picked.openRead()) {
+            copied += data.length;
+            if (copied > length) throw const FormatException('size');
+            await output.addStream(Stream.value(data));
+          }
+        } finally {
+          await output.close();
+        }
+        if (copied != length) throw const FormatException('size');
       }
-      if (copied != length) throw const FormatException('size');
       if (!mounted) return;
       final previous = scratch;
       scratch = work;
@@ -137,9 +149,9 @@ class _ArchivePageState extends State<_ArchivePage>
       }
     } finally {
       if (work != null) await _discard(work);
-      // Both mobile file_selector implementations return imported copies.
+      // UIDocumentPicker delivers an imported copy on iOS.
       // Desktop pickers return the original document, which must be preserved.
-      if (picked != null && (Platform.isAndroid || Platform.isIOS)) {
+      if (picked != null && Platform.isIOS) {
         await _discard(File(picked.path));
       }
       if (mounted) setState(() => busy = false);
