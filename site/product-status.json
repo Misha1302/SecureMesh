@@ -1,0 +1,98 @@
+{
+  "updated": "27.11.2026",
+  "version": "0.1.0 · iPhone alpha 1",
+  "releaseUrl": "https://github.com/Misha1302/SecureMesh/releases/tag/v0.1.0-ios-alpha.1",
+  "releaseCommit": "15695667be182e0e7c7b1856b4d7966304b67489",
+  "releaseCI": "https://github.com/Misha1302/SecureMesh/actions/runs/45909648698",
+  "productionApproved": false,
+  "platforms": [
+    {
+      "name": "iPhone / iOS 15+",
+      "status": "experimental",
+      "label": "Неподписанная сборка arm64",
+      "detail": "IPA содержит Flutter-клиент и нативное ядро Rust. Для установки нужны подпись Apple и provisioning profile. Запуск на физическом iPhone не подтверждён.",
+      "links": [
+        {
+          "label": "Скачать IPA (unsigned)",
+          "url": "https://github.com/Misha1302/SecureMesh/releases/download/v0.1.0-ios-alpha.1/SecureMesh-iPhone-arm64-unsigned.ipa"
+        },
+        {
+          "label": "SHA256SUMS",
+          "url": "https://github.com/Misha1302/SecureMesh/releases/download/v0.1.0-ios-alpha.1/SHA256SUMS"
+        }
+      ]
+    },
+    {
+      "name": "Linux",
+      "status": "experimental",
+      "label": "Тестовый клиент",
+      "detail": "Есть лабораторные GUI и сетевые испытания. Публичного установщика в Releases пока нет.",
+      "links": [
+        {
+          "label": "Сборка из исходников",
+          "url": "#linux-build"
+        }
+      ]
+    },
+    {
+      "name": "Android",
+      "status": "development",
+      "label": "В разработке",
+      "detail": "Публичный APK и испытания на устройстве не подтверждены.",
+      "links": []
+    },
+    {
+      "name": "Windows",
+      "status": "planned",
+      "label": "Запланировано",
+      "detail": "Поддерживаемая версия и установщик пока не подтверждены.",
+      "links": []
+    },
+    {
+      "name": "Браузер",
+      "status": "development",
+      "label": "Приватные чаты недоступны",
+      "detail": "Необходима отдельная проверка браузерного криптографического ядра.",
+      "links": []
+    }
+  ],
+  "features": [
+    {
+      "name": "Защищённые личные сообщения",
+      "status": "experimental",
+      "detail": "Нативный Linux-клиент, OpenMLS, независимая сверка ключей."
+    },
+    {
+      "name": "Хранение истории и ключей на устройстве",
+      "status": "experimental",
+      "detail": "SQLCipher; восстановление утерянной истории пока не реализовано."
+    },
+    {
+      "name": "Медленные сети",
+      "status": "experimental",
+      "detail": "Исторические лабораторные испытания GPRS; результаты не распространяются автоматически на iOS."
+    },
+    {
+      "name": "Группы, каналы, медиа и звонки",
+      "status": "planned",
+      "detail": "Полноценные пользовательские сценарии не подтверждены."
+    },
+    {
+      "name": "Синхронизация истории между устройствами",
+      "status": "development",
+      "detail": "Есть механизм доверия устройств, но перенос истории и полноценный multi-device MLS не завершены."
+    }
+  ],
+  "changes": [
+    {
+      "date": "27.11.2026",
+      "title": "iPhone alpha 1",
+      "detail": "Опубликована неподписанная arm64 IPA. Сборка и статические проверки прошли; запуск на устройстве не подтверждён."
+    },
+    {
+      "date": "26.11.2026",
+      "title": "Регистрация и подключение",
+      "detail": "Подсказки в клиенте, проверка HTTPS-адреса, опциональная отправка подтверждений через Resend SMTP."
+    }
+  ]
+}

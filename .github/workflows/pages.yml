@@ -27,10 +27,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected=$(printf '100644 blob .nojekyll\n100644 blob index.html')
+          expected=$(printf '100644 blob .nojekyll\n100644 blob index.html\n100644 blob product-status.json\n100644 blob render.py')
           actual=$(git ls-tree --format='%(objectmode) %(objecttype) %(path)' HEAD:site)
           [[ "$actual" == "$expected" ]]
-          tar -C site -cf "$RUNNER_TEMP/artifact.tar" ./.nojekyll ./index.html
+          mkdir -p "$RUNNER_TEMP/public-site"
+          python3 site/render.py "$RUNNER_TEMP/public-site/index.html"
+          cp site/.nojekyll "$RUNNER_TEMP/public-site/.nojekyll"
+          tar -C "$RUNNER_TEMP/public-site" -cf "$RUNNER_TEMP/artifact.tar" ./.nojekyll ./index.html
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: github-pages
