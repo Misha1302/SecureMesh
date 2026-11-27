@@ -3,8 +3,12 @@ mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be
 pub mod api;
 mod attachments;
 mod calls;
+mod conversation_media;
+mod conversation_previews;
 mod directory;
 mod enrollment;
+mod favorites;
+mod history_page;
 mod history_search;
 mod onboarding;
 mod roster;
@@ -572,6 +576,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                     params![gid, id],
                 )?;
             }
+            conversation_previews::record(db, &mut payload, true)?;
             db.execute(
                 "INSERT INTO authored VALUES(?,?,?)",
                 params![gid, id, serde_json::to_string(&payload)?],
@@ -613,6 +618,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                         return calls::receive(db, &g, gid, &identity, &sender_id, &event);
                     }
                     attachments::receive(db, gid, &mut event)?;
+                    conversation_previews::record(db, &mut event, false)?;
                     db.execute(
                         "INSERT INTO incoming(group_id,id,event) VALUES(?,?,?)",
                         params![gid, s(&event, "id")?, serde_json::to_string(&event)?],
@@ -842,7 +848,28 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             )?;
             Ok(json!({"saved":true}))
         }
-        "search_history" => history_search::search(db, s(req, "group")?, s(req, "query")?),
+        "conversation_previews" => conversation_previews::list(db),
+        "conversation_seen" => {
+            let changed = db.execute("UPDATE conversation_previews SET unread=0 WHERE group_id=? AND last_incoming=? AND unread>0", params![s(req,"group")?,s(req,"id")?])?;
+            Ok(json!({"updated":changed}))
+        }
+        "search_history" => history_search::search(
+            db,
+            s(req, "group")?,
+            s(req, "query")?,
+            match (&req["fromMs"], &req["untilMs"]) {
+                (Value::Null, Value::Null) => None,
+                (start, end) => Some((
+                    start.as_i64().context("invalid start")?,
+                    end.as_i64().context("invalid end")?,
+                )),
+            },
+        ),
+        "pin_message_local" => favorites::pin(db, req),
+        "favorites_set" => favorites::set(db, req),
+        "favorites_list" => favorites::list(db, req),
+        "history_page" => history_page::read(db, req),
+        "conversation_media" => conversation_media::list(db, req),
         "timeline" => {
             let gid = s(req, "group")?;
             let peer_seq = db
@@ -853,17 +880,32 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 )
                 .optional()?
                 .unwrap_or(0);
+            let limit = req
+                .get("limit")
+                .map(|v| {
+                    v.as_i64()
+                        .filter(|n| (1..=1000).contains(n))
+                        .context("invalid timeline limit")
+                })
+                .transpose()?
+                .unwrap_or(1000);
+            let (mut own_before, mut incoming_before) = (0_i64, 0_i64);
             let mut entries = Vec::new();
-            let mut q=db.prepare("SELECT a.event,o.status,o.seq FROM authored a JOIN outgoing o ON o.group_id=a.group_id AND o.id=a.id WHERE a.group_id=? ORDER BY a.rowid DESC LIMIT 1000")?;
-            let rows = q.query_map([gid], |r| {
+            let mut q=db.prepare("SELECT a.event,o.status,o.seq,a.rowid FROM authored a JOIN outgoing o ON o.group_id=a.group_id AND o.id=a.id WHERE a.group_id=? ORDER BY a.rowid DESC LIMIT ?")?;
+            let rows = q.query_map(params![gid, limit + 1], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, i64>(3)?,
                 ))
             })?;
-            for row in rows {
-                let (event, status, seq) = row?;
+            for (index, row) in rows.enumerate() {
+                let (event, status, seq, rowid) = row?;
+                if index == limit as usize {
+                    own_before = rowid;
+                    break;
+                }
                 let mut event = attachments::view(serde_json::from_str(&event)?);
                 event["status"] = if status == "saved" && seq.is_some_and(|s| s <= peer_seq) {
                     json!("delivered")
@@ -877,12 +919,20 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             // The query limits to the newest authored rows. Keep creation order
             // among pending messages with no server sequence in the stable sort.
             entries.reverse();
-            let mut q=db.prepare("SELECT i.event,r.seq FROM incoming i LEFT JOIN received r ON r.group_id=i.group_id AND json_extract(r.envelope,'$.id')=i.id WHERE i.group_id=? ORDER BY i.rowid DESC LIMIT 1000")?;
-            let rows = q.query_map([gid], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+            let mut q=db.prepare("SELECT i.event,(SELECT min(r.seq) FROM received r WHERE r.group_id=i.group_id AND json_extract(r.envelope,'$.id')=i.id),i.rowid FROM incoming i WHERE i.group_id=? ORDER BY i.rowid DESC LIMIT ?")?;
+            let rows = q.query_map(params![gid, limit + 1], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
             })?;
-            for row in rows {
-                let (event, seq) = row?;
+            for (index, row) in rows.enumerate() {
+                let (event, seq, rowid) = row?;
+                if index == limit as usize {
+                    incoming_before = rowid;
+                    break;
+                }
                 let mut event = attachments::view(serde_json::from_str(&event)?);
                 event["status"] = json!("received");
                 event["seq"] = json!(seq);
@@ -890,7 +940,20 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 entries.push(event);
             }
             entries.sort_by_key(|event| event["seq"].as_i64().unwrap_or(i64::MAX));
-            Ok(json!({"messages":entries}))
+            let last_incoming: Option<String> = db
+                .query_row(
+                    "SELECT last_incoming FROM conversation_previews WHERE group_id=? AND unread>0",
+                    [gid],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            let older = (own_before > 0 || incoming_before > 0).then(
+                || json!({"group":gid,"ownThrough":own_before,"incomingThrough":incoming_before}),
+            );
+            Ok(
+                json!({"messages":entries,"unseenThrough":last_incoming,"older":older,"pinned":favorites::pinned(db,gid)?}),
+            )
         }
         _ => bail!("unknown operation"),
     }
@@ -923,6 +986,9 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
     db.busy_timeout(std::time::Duration::from_secs(5))?;
     profile_schema::migrate(&mut db)?;
     calls::schema(&db)?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS conversation_previews(
+        group_id TEXT PRIMARY KEY,preview TEXT NOT NULL,own INTEGER NOT NULL,local_ms INTEGER NOT NULL,
+        unread INTEGER NOT NULL,last_incoming TEXT)")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pins(identity TEXT PRIMARY KEY,public_key BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS outgoing(group_id TEXT,id TEXT,envelope TEXT NOT NULL,status TEXT NOT NULL,seq INTEGER,PRIMARY KEY(group_id,id));
@@ -946,6 +1012,11 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
         "CREATE INDEX IF NOT EXISTS authored_search_group ON authored(group_id);
                       CREATE INDEX IF NOT EXISTS incoming_search_group ON incoming(group_id);",
     )?;
+    history_page::create_indices(&db)?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS message_favorites(
+        position INTEGER PRIMARY KEY AUTOINCREMENT,group_id TEXT NOT NULL,own INTEGER NOT NULL,
+        message_id TEXT NOT NULL,UNIQUE(group_id,own,message_id));
+        CREATE TABLE IF NOT EXISTS chat_message_pin(group_id TEXT PRIMARY KEY,message_id TEXT NOT NULL,own INTEGER NOT NULL)")?;
     let migration = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let has_reply: bool = migration.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_drafts') WHERE name='reply_ref')",
@@ -959,7 +1030,16 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
 }
 
 pub(crate) fn transact(db: &Connection, req: &Value) -> Result<String> {
-    if req["op"].as_str() == Some("search_history") {
+    if matches!(
+        req["op"].as_str(),
+        Some(
+            "search_history"
+                | "timeline"
+                | "history_page"
+                | "conversation_media"
+                | "favorites_list"
+        )
+    ) {
         db.execute_batch("BEGIN DEFERRED")?;
     } else {
         db.execute_batch("BEGIN IMMEDIATE")?;

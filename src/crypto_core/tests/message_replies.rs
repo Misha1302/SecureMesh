@@ -90,6 +90,33 @@ fn two_devices_exchange_reply_after_reopening_the_draft() {
             .unwrap();
         assert_eq!(row["replyTo"], target);
     }
+    let summary = command(&alice, json!({"op":"conversation_previews"}));
+    let latest = &summary["previews"]["AB"];
+    assert_eq!(latest["text"], "my answer");
+    assert_eq!(latest["unread"], 1);
+    let ms = latest["localTimeMs"].as_i64().unwrap();
+    let on_day = command(
+        &alice,
+        json!({"op":"search_history","group":"AB","query":"answer","fromMs":ms,"untilMs":ms+1}),
+    );
+    assert_eq!(on_day["messages"].as_array().unwrap().len(), 1);
+    let previous = command(
+        &alice,
+        json!({"op":"search_history","group":"AB","query":"","fromMs":0,"untilMs":1}),
+    );
+    assert!(previous["messages"].as_array().unwrap().is_empty());
+    assert!(latest["localTimeMs"].as_i64().unwrap() > 0);
+    for (seen, updated) in [(id.as_str(), 0), (reply["id"].as_str().unwrap(), 1)] {
+        let result = command(
+            &alice,
+            json!({"op":"conversation_seen","group":"AB","id":seen}),
+        );
+        assert_eq!(result["updated"], updated);
+    }
+    assert_eq!(
+        command(&alice, json!({"op":"conversation_previews"}))["previews"]["AB"]["unread"],
+        0
+    );
     drop((alice, bob));
     fs::remove_dir_all(root).unwrap();
 }

@@ -35,12 +35,23 @@ fn snippet(body: &str, folded_byte_offset: usize) -> String {
     result
 }
 
-pub(super) fn search(db: &Connection, group: &str, query: &str) -> Result<Value> {
+pub(super) fn search(
+    db: &Connection,
+    group: &str,
+    query: &str,
+    day: Option<(i64, i64)>,
+) -> Result<Value> {
     let query = query.trim();
     ensure!(
-        !query.is_empty() && query.chars().count() <= 128,
+        (!query.is_empty() || day.is_some()) && query.chars().count() <= 128,
         "invalid search length"
     );
+    if let Some((start, end)) = day {
+        ensure!(
+            start >= 0 && end > start && end - start <= 26 * 60 * 60 * 1000,
+            "invalid local day"
+        );
+    }
     let query = query.to_lowercase();
     // SQLite's built-in lower() and LIKE are ASCII-only. Apply Unicode lowercase
     // in Rust, streaming only this group's rows. The two tables have independent
@@ -48,12 +59,14 @@ pub(super) fn search(db: &Connection, group: &str, query: &str) -> Result<Value>
     let mut sql = db.prepare(
         "SELECT rowid AS local_id,id,1 AS own,json_extract(event,'$.text') AS body
          FROM authored WHERE group_id=?1 AND json_type(event,'$.text')='text'
+         AND (?2 IS NULL OR (json_type(event,'$.localTimeMs')='integer' AND json_extract(event,'$.localTimeMs') >= ?2 AND json_extract(event,'$.localTimeMs') < ?3))
          UNION ALL
          SELECT rowid AS local_id,id,0 AS own,json_extract(event,'$.text') AS body
          FROM incoming WHERE group_id=?1 AND json_type(event,'$.text')='text'
+         AND (?2 IS NULL OR (json_type(event,'$.localTimeMs')='integer' AND json_extract(event,'$.localTimeMs') >= ?2 AND json_extract(event,'$.localTimeMs') < ?3))
          ORDER BY local_id DESC",
     )?;
-    let mut rows = sql.query([group])?;
+    let mut rows = sql.query(rusqlite::params![group, day.map(|r| r.0), day.map(|r| r.1)])?;
     let mut results = Vec::new();
     let mut more = false;
     while let Some(row) = rows.next()? {

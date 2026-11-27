@@ -20,6 +20,7 @@ check profile-schema cargo test --locked --manifest-path src/crypto_core/Cargo.t
 check encrypted-drafts cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test conversation_drafts
 check encrypted-replies cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test message_replies
 check private-call-signals cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test call_signals
+check private-chat-views cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test favorites --test history_pages --test media_directory
 check private-history-search cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test history_search
 check reordered-delivery python3 tests/crypto/reordered_delivery.py
 check crypto python3 tests/crypto/process_spike.py
