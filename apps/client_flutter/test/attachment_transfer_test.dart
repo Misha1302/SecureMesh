@@ -100,6 +100,7 @@ void main() {
     expect(upload.pending.length, 1);
     await upload.resume(explicit: true, weak: true);
     expect(committed, 1);
+    expect(upload.status, isNull);
     expect(upload.pending, isEmpty);
     expect(ops.where((x) => x == 'attachment_queue'), hasLength(1));
     upload.dispose();

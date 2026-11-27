@@ -1315,7 +1315,10 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           children: [
             TextButton.icon(
               icon: const Icon(Icons.download_outlined),
-              label: Text(tr('Сохранить', 'Save')),
+              label: Text(
+                tr('Сохранить', 'Save'),
+                semanticsLabel: tr('Сохранить $name', 'Save $name'),
+              ),
               onPressed: enabled
                   ? () => current.download(id, meta, exportAttachment)
                   : null,
@@ -1488,104 +1491,67 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   ) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      ListTile(
-        leading: IconButton(
-          tooltip: tr('Все чаты', 'All chats'),
-          onPressed: busy || sending
-              ? null
-              : () async {
-                  timer?.cancel();
-                  final updated = {
-                    ...profile!,
-                    if (profile!['trustConfirmed'] == true)
-                      'lastDeliveryGroup': profile!['group'],
-                  }..remove('group');
-                  await persistProfile(updated);
-                  if (mounted) {
-                    setState(() => messages = []);
-                    unawaited(pump());
-                  }
-                },
-          icon: const Icon(Icons.arrow_back),
-        ),
-        title: Text(profile!['peerName'] as String),
-        subtitle: Text(
-          profile!['trustConfirmed'] == true
-              ? tr(
-                  'Приватный чат · ключи проверены',
-                  'Private chat · keys verified',
-                )
-              : tr('Приватный чат · OpenMLS', 'Private chat · OpenMLS'),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            PopupMenuButton<bool>(
-              tooltip: tr('Позвонить', 'Call'),
-              icon: const Icon(Icons.call_outlined),
-              enabled:
-                  online &&
-                  profile?['trustConfirmed'] == true &&
-                  directCall?.active != true,
-              itemBuilder: (_) => [
-                PopupMenuItem(
-                  value: false,
-                  child: Text(tr('Аудиозвонок', 'Audio call')),
-                ),
-                PopupMenuItem(
-                  value: true,
-                  child: Text(tr('Видеозвонок', 'Video call')),
-                ),
-              ],
-              onSelected: (video) async {
-                final group = profile!['group'] as String;
-                final name = profile!['peerName'] as String;
-                final view = chatView;
-                if (await confirmDirectCall(context, video, name, tr) &&
-                    context.mounted &&
-                    view == chatView &&
-                    profile?['group'] == group) {
-                  await bindCall(group)?.invite(video);
+      ConversationHeader(
+        peerName: profile!['peerName'] as String,
+        verified: profile!['trustConfirmed'] == true,
+        canCall:
+            online &&
+            profile?['trustConfirmed'] == true &&
+            directCall?.active != true,
+        tr: tr,
+        onBack: busy || sending
+            ? null
+            : () async {
+                timer?.cancel();
+                final updated = {
+                  ...profile!,
+                  if (profile!['trustConfirmed'] == true)
+                    'lastDeliveryGroup': profile!['group'],
+                }..remove('group');
+                await persistProfile(updated);
+                if (mounted) {
+                  setState(() => messages = []);
+                  unawaited(pump());
                 }
               },
+        onCall: (video) async {
+          final group = profile!['group'] as String;
+          final name = profile!['peerName'] as String;
+          final view = chatView;
+          if (await confirmDirectCall(context, video, name, tr) &&
+              context.mounted &&
+              view == chatView &&
+              profile?['group'] == group) {
+            await bindCall(group)?.invite(video);
+          }
+        },
+        onSearch: () {
+          final group = profile!['group'] as String;
+          final view = chatView;
+          final peerName = profile!['peerName'] as String;
+          Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => HistorySearch(
+                tr: tr,
+                peerName: peerName,
+                search: (query) async {
+                  if (view != chatView || profile?['group'] != group) {
+                    throw CryptoFailure();
+                  }
+                  final result = await crypto('search_history', {
+                    'group': group,
+                    'query': query,
+                  });
+                  if (view != chatView || profile?['group'] != group) {
+                    throw CryptoFailure();
+                  }
+                  return result;
+                },
+              ),
             ),
-            IconButton(
-              tooltip: tr('Поиск в переписке', 'Search conversation'),
-              icon: const Icon(Icons.search),
-              onPressed: () {
-                final group = profile!['group'] as String;
-                final view = chatView;
-                final peerName = profile!['peerName'] as String;
-                Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) => HistorySearch(
-                      tr: tr,
-                      peerName: peerName,
-                      search: (query) async {
-                        if (view != chatView || profile?['group'] != group) {
-                          throw CryptoFailure();
-                        }
-                        final result = await crypto('search_history', {
-                          'group': group,
-                          'query': query,
-                        });
-                        if (view != chatView || profile?['group'] != group) {
-                          throw CryptoFailure();
-                        }
-                        return result;
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-            IconButton(
-              tooltip: tr('Проверить ключи', 'Verify keys'),
-              onPressed: () => verifyKeys(context),
-              icon: const Icon(Icons.key_outlined),
-            ),
-          ],
-        ),
+          );
+        },
+        onVerify: () => verifyKeys(context),
       ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -1743,8 +1709,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                                       )
                                     : m['status'] == 'delivered'
                                     ? tr(
-                                        'Доставлено на устройство',
-                                        'Delivered to device',
+                                        'Доставлено по данным сервера',
+                                        'Delivery reported by server',
                                       )
                                     : own
                                     ? tr(
@@ -2229,4 +2195,129 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       ),
     ],
   );
+}
+
+enum _ChatAction { audio, video, search, verify }
+
+class ConversationHeader extends StatelessWidget {
+  const ConversationHeader({
+    super.key,
+    required this.peerName,
+    required this.verified,
+    required this.canCall,
+    required this.tr,
+    required this.onBack,
+    required this.onCall,
+    required this.onSearch,
+    required this.onVerify,
+  });
+
+  final String peerName;
+  final bool verified, canCall;
+  final String Function(String, String) tr;
+  final VoidCallback? onBack;
+  final ValueChanged<bool> onCall;
+  final VoidCallback onSearch, onVerify;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = verified
+        ? tr('Приватный чат · ключи проверены', 'Private chat · keys verified')
+        : tr('Приватный чат · OpenMLS', 'Private chat · OpenMLS');
+    final audio = tr('Аудиозвонок', 'Audio call');
+    final video = tr('Видеозвонок', 'Video call');
+    final search = tr('Поиск в переписке', 'Search conversation');
+    final verify = tr('Проверить ключи', 'Verify keys');
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 480;
+        return ListTile(
+          contentPadding: EdgeInsets.symmetric(horizontal: compact ? 4 : 16),
+          horizontalTitleGap: compact ? 4 : 16,
+          leading: IconButton(
+            tooltip: tr('Все чаты', 'All chats'),
+            onPressed: onBack,
+            icon: const Icon(Icons.arrow_back),
+          ),
+          title: Tooltip(
+            message: peerName,
+            excludeFromSemantics: true,
+            child: Text(peerName, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+          subtitle: compact && verified
+              ? Tooltip(
+                  message: status,
+                  excludeFromSemantics: true,
+                  child: Text(
+                    tr('Ключи проверены', 'Keys verified'),
+                    semanticsLabel: status,
+                  ),
+                )
+              : Text(status),
+          trailing: compact
+              ? PopupMenuButton<_ChatAction>(
+                  tooltip: tr('Действия чата', 'Chat actions'),
+                  icon: const Icon(Icons.more_vert),
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: _ChatAction.search,
+                      child: Text(search),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatAction.audio,
+                      enabled: canCall,
+                      child: Text(audio),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatAction.video,
+                      enabled: canCall,
+                      child: Text(video),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatAction.verify,
+                      child: Text(verify),
+                    ),
+                  ],
+                  onSelected: (action) {
+                    switch (action) {
+                      case _ChatAction.search:
+                        onSearch();
+                      case _ChatAction.audio:
+                        onCall(false);
+                      case _ChatAction.video:
+                        onCall(true);
+                      case _ChatAction.verify:
+                        onVerify();
+                    }
+                  },
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    PopupMenuButton<bool>(
+                      tooltip: tr('Позвонить', 'Call'),
+                      icon: const Icon(Icons.call_outlined),
+                      enabled: canCall,
+                      itemBuilder: (_) => [
+                        PopupMenuItem(value: false, child: Text(audio)),
+                        PopupMenuItem(value: true, child: Text(video)),
+                      ],
+                      onSelected: onCall,
+                    ),
+                    IconButton(
+                      tooltip: search,
+                      icon: const Icon(Icons.search),
+                      onPressed: onSearch,
+                    ),
+                    IconButton(
+                      tooltip: verify,
+                      icon: const Icon(Icons.key_outlined),
+                      onPressed: onVerify,
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
 }

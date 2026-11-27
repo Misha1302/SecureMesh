@@ -190,6 +190,7 @@ class PrivateAttachments extends ChangeNotifier {
       await crypto('attachment_queue', args);
       _active();
       pending = pending.where((e) => e['id'] != id).toList();
+      status = null;
       queued();
     });
   }

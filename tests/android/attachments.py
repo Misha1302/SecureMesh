@@ -41,32 +41,34 @@ def exchange_files(repo, root, report, peer, linux_profile):
         return lambda n: any(n.get(k, '').strip().casefold() in allowed for k in ('text', 'content-desc'))
 
     def save_received_file(filename):
-        end = time.monotonic() + 45
+        action = exact('Save ' + filename, 'Сохранить ' + filename)
+        end = time.monotonic() + 60
+        previous = None
+        toward_newer = True
         while time.monotonic() < end:
             try:
                 nodes = [n for n in ui.snapshot() if n.get('package') == ui.PACKAGE]
             except ElementTree.ParseError:
                 continue
-            def labels(node):
-                return [line.strip().casefold() for attr in ('text', 'content-desc', 'hint')
-                        for line in node.get(attr, '').splitlines()]
-            files = [n for n in nodes if any(filename.casefold() in x for x in labels(n))]
-            if files:
-                _, top, _, bottom = ui.bounds(files[-1])
-                choices = [n for n in nodes if n.get('enabled') == 'true'
-                           and {'save', 'сохранить'}.intersection(labels(n))
-                           and ui.bounds(n)[1] >= top]
-                if choices:
-                    return min(choices, key=lambda n: abs(ui.bounds(n)[1] - bottom))
-                # The filename may be visible just above the composer while the
-                # button underneath it is still clipped by the scroll viewport.
-                view = next((n for n in nodes if n.get('scrollable') == 'true'
-                             and ui.bounds(n)[1] <= top <= ui.bounds(n)[3]), None)
-                if view is not None:
-                    x1, y1, x2, y2 = ui.bounds(view)
-                    x, h = (x1 + x2) // 2, y2 - y1
-                    ui.adb('shell', 'input', 'swipe', str(x), str(y1 + 3*h//4),
-                           str(x), str(y1 + h//2), '300')
+            for node in nodes:
+                if action(node) and node.get('enabled') == 'true' and node.get('clickable') == 'true':
+                    return node
+            # The newest bubble can be taller than the timeline. Search its
+            # scroll viewport in both directions without tapping another file.
+            views = [n for n in nodes if n.get('scrollable') == 'true'
+                     and n.get('class') != 'android.widget.EditText']
+            if len(views) == 1:
+                left, top, right, bottom = ui.bounds(views[0])
+                visible = tuple((n.get('bounds'), n.get('text'), n.get('content-desc'))
+                                for n in nodes if top <= ui.bounds(n)[1] < bottom)
+                if previous == visible:
+                    toward_newer = not toward_newer
+                previous = visible
+                x = (left + right) // 2
+                near_top = top + (bottom - top) // 4
+                near_bottom = bottom - (bottom - top) // 4
+                start, finish = (near_bottom, near_top) if toward_newer else (near_top, near_bottom)
+                ui.adb('shell', 'input', 'swipe', str(x), str(start), str(x), str(finish), '400')
             time.sleep(.4)
         raise RuntimeError('Missing export action for received attachment')
 
@@ -89,7 +91,6 @@ def exchange_files(repo, root, report, peer, linux_profile):
         ui.tap(ui.wait_node('Android file confirmation', exact('Отправить', 'Send')))
         linux.receive(root / 'desktop-output.bin', upload.read_bytes())
         linux.send(reply)
-        ui.text_node(reply.name, timeout=75)
         ui.tap(save_received_file(reply.name))
         navigate_downloads()
         ui.tap(picker_node('system export confirmation', exact('Save', 'Сохранить')))

@@ -21,7 +21,7 @@ Still missing: multi-device MLS leaf enrollment and server-authorized group chan
 Native DM sync pages may carry peerProcessedSequence (protobuf field 5). It is
 the greatest contiguous cursor acknowledged by a trusted, active device of a
 different member account. A sender's own cursor cannot advance it. The server
-relays this delivery indicator; it is not a signed read receipt. Clients cache
+computes this delivery indicator. A compromised server can advance the watermark. The UI attributes the delivery report to the server. There is no recipient-signed delivery proof or read receipt. Clients cache
 only positive increases in SQLCipher, so retries, reordered pages and an older
 server omitting this additive field cannot regress the displayed state.
 
