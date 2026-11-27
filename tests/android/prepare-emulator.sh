@@ -23,14 +23,30 @@ EXT
 openssl x509 -req -in "$out/server.csr" -CA "$out/root.pem" -CAkey "$out/root.key" \
   -CAcreateserial -days 1 -extfile "$out/server.extensions" -out "$out/server.pem"
 openssl verify -purpose sslserver -verify_ip 127.0.0.1 -CAfile "$out/root.pem" "$out/server.pem"
-adb root
-adb wait-for-device
-adb remount
+timeout -k 5s 45s adb root
+timeout -k 5s 45s adb wait-for-device
+timeout -k 5s 45s adb remount
 hash=$(openssl x509 -subject_hash_old -in "$out/root.pem" -noout)
 dest="/system/etc/security/cacerts/$hash.0"
 # Fail on a hash collision, never replace a preexisting system root.
-adb shell test ! -e "$dest"
-adb push "$out/root.pem" "$dest"
-adb shell chmod 0644 "$dest"
-adb shell restorecon "$dest"
-adb install "$RUNNER_TEMP/android-candidate/app-release.apk"
+timeout -k 5s 45s adb shell test ! -e "$dest"
+timeout -k 5s 45s adb push "$out/root.pem" "$dest"
+timeout -k 5s 45s adb shell chmod 0644 "$dest"
+printf 'Restoring test CA label\n'
+timeout -k 5s 20s adb shell restorecon "$dest"
+apk="$RUNNER_TEMP/android-candidate/app-release.apk"
+remote=/data/local/tmp/securemesh-interop.apk
+for attempt in 1 2; do
+  printf 'Uploading release APK (attempt %s)\n' "$attempt"
+  if timeout -k 5s 90s adb push "$apk" "$remote" &&
+     timeout -k 5s 120s adb shell pm install -r "$remote" &&
+     timeout -k 5s 10s adb shell pm path com.example.securemesh_client | grep -q '^package:'; then
+    timeout -k 5s 10s adb shell rm -f "$remote"
+    exit 0
+  fi
+  timeout -k 2s 5s adb devices -l || true
+  timeout -k 2s 5s adb shell service check package || true
+  timeout -k 2s 10s adb logcat -d -t 120 PackageManager:I PackageInstaller:I installd:I ActivityManager:W AndroidRuntime:E '*:S' || true
+  timeout -k 2s 15s adb wait-for-device || true
+done
+exit 1
