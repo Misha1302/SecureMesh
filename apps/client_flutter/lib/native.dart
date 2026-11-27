@@ -30,6 +30,9 @@ class _ClientAppState extends State<ClientApp> {
   final pass = TextEditingController();
   final composer = TextEditingController();
   final chatScroll = ScrollController();
+  bool showLocalUnlock = (Platform.environment['SECUREMESH_PROFILE'] ?? '')
+      .trim()
+      .isNotEmpty;
   bool sending = false, unread = false;
   int generation = 0;
   String connectionState = "offline";
@@ -178,12 +181,14 @@ class _ClientAppState extends State<ClientApp> {
 
   Future<void> showAccount(
     BuildContext pageContext, {
+    bool signIn = false,
     String? resumePath,
     String? resumePassphrase,
   }) => Navigator.of(pageContext).push<void>(
     MaterialPageRoute<void>(
       builder: (_) => AccountOnboarding(
         russian: ru,
+        signIn: signIn,
         resumePath: resumePath,
         resumePassphrase: resumePassphrase,
         onReady: (created, secret) async {
@@ -457,6 +462,7 @@ class _ClientAppState extends State<ClientApp> {
     store?.dispose();
     setState(() {
       store = null;
+      showLocalUnlock = true;
       profile = null;
       messages = [];
       devices = [];
@@ -561,14 +567,14 @@ class _ClientAppState extends State<ClientApp> {
       useMaterial3: true,
       materialTapTargetSize: MaterialTapTargetSize.padded,
       visualDensity: VisualDensity.standard,
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF16685B)),
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3390EC)),
     ),
     darkTheme: ThemeData(
       useMaterial3: true,
       materialTapTargetSize: MaterialTapTargetSize.padded,
       visualDensity: VisualDensity.standard,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF16685B),
+        seedColor: const Color(0xFF3390EC),
         brightness: Brightness.dark,
       ),
     ),
@@ -577,15 +583,23 @@ class _ClientAppState extends State<ClientApp> {
         appBar: AppBar(
           title: const Text('SecureMesh'),
           actions: [
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Center(child: Text(tr('Локальная альфа', 'Local alpha'))),
-            ),
+            if (store == null)
+              TextButton(
+                onPressed: loading ? null : () => setState(() => ru = !ru),
+                child: const Text('RU / EN'),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Center(
+                  child: Text(tr('Локальная альфа', 'Local alpha')),
+                ),
+              ),
           ],
         ),
         body: SafeArea(
           child: store == null
-              ? unlockScreen(ctx)
+              ? (showLocalUnlock ? unlockScreen(ctx) : welcomeScreen(ctx))
               : LayoutBuilder(
                   builder: (context, size) => Row(
                     children: [
@@ -626,6 +640,15 @@ class _ClientAppState extends State<ClientApp> {
                                           'peerName': name,
                                           'peerKey': key,
                                           'trustConfirmed': true,
+                                          'verifiedChats': {
+                                            ...?profile!['verifiedChats']
+                                                as Map?,
+                                            group: {
+                                              'device': peer,
+                                              'key': key,
+                                              'name': name,
+                                            },
+                                          },
                                         };
                                         await persistProfile(selected);
                                         await reload();
@@ -662,6 +685,64 @@ class _ClientAppState extends State<ClientApp> {
       ),
     ),
   );
+  Widget welcomeScreen(BuildContext context) => Center(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              tr('Добро пожаловать в SecureMesh', 'Welcome to SecureMesh'),
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: () => showAccount(context),
+              child: Text(tr('Создать аккаунт', 'Create account')),
+            ),
+            OutlinedButton(
+              onPressed: () => showAccount(context, signIn: true),
+              child: Text(
+                tr('Войти на этом устройстве', 'Sign in on this device'),
+              ),
+            ),
+            TextButton(
+              onPressed: () => setState(() => showLocalUnlock = true),
+              child: Text(
+                tr('Открыть сохранённый профиль', 'Open a saved profile'),
+              ),
+            ),
+            TextButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: Text(tr('Как вернуть доступ', 'Regain access')),
+                  content: SingleChildScrollView(
+                    child: Text(
+                      tr(
+                        'Если профиль сохранился, откройте его с паролем хранилища. На новом устройстве войдите в аккаунт и подтвердите подключение со старого устройства. Старая история при подключении не переносится. Если все ключи потеряны, сервер не сможет восстановить переписку.',
+                        'If you still have your profile, open it with its store passphrase. To link a new device, sign in and approve it from your existing device. Linking does not transfer earlier messages. If all keys are lost, the server cannot recover your conversations.',
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(tr('Закрыть', 'Close')),
+                    ),
+                  ],
+                ),
+              ),
+              child: Text(tr('Как вернуть доступ', 'Regain access')),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
   Widget unlockScreen(BuildContext context) => Center(
     child: SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -743,10 +824,14 @@ class _ClientAppState extends State<ClientApp> {
                 ),
               const SizedBox(height: 24),
               TextButton(
-                onPressed: loading ? null : () => showAccount(context),
-                child: Text(
-                  tr('Создать аккаунт или войти', 'Create account or sign in'),
-                ),
+                onPressed: loading || choosing
+                    ? null
+                    : () => setState(() {
+                        pass.clear();
+                        error = null;
+                        showLocalUnlock = false;
+                      }),
+                child: Text(tr('К выбору способа входа', 'Back to welcome')),
               ),
             ],
           ),

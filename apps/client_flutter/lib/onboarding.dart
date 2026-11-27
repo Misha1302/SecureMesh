@@ -15,11 +15,12 @@ class AccountOnboarding extends StatefulWidget {
     super.key,
     required this.onReady,
     this.russian = true,
+    this.signIn = false,
     this.resumePath,
     this.resumePassphrase,
   }) : assert((resumePath == null) == (resumePassphrase == null));
   final Future<void> Function(String path, String passphrase) onReady;
-  final bool russian;
+  final bool russian, signIn;
   final String? resumePath, resumePassphrase;
   @override
   State<AccountOnboarding> createState() => _AccountOnboardingState();
@@ -50,6 +51,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   void initState() {
     super.initState();
     ru = widget.russian;
+    if (widget.signIn) step = 2;
     if (widget.resumePath != null) {
       busy = true;
       resuming = true;

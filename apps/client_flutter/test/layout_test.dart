@@ -52,27 +52,39 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
-  testWidgets('native unlock remains usable at 320 dp with enlarged text', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 844);
-    tester.view.devicePixelRatio = 1;
-    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    await tester.pumpWidget(const ClientApp());
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    expect(find.text('Открыть профиль'), findsOneWidget);
-    expect(find.text('Пароль хранилища'), findsOneWidget);
-    await tester.ensureVisible(find.text('Создать аккаунт или войти'));
-    await tester.tap(find.text('Создать аккаунт или войти'));
-    await tester.pumpAndSettle();
-    expect(find.text('Электронная почта'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-  });
+  testWidgets(
+    'welcome opens registration, device sign-in and legacy unlock at 320 dp',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 844);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await tester.pumpWidget(const ClientApp());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('Файл профиля'), findsNothing);
+      await tester.tap(find.text('Открыть сохранённый профиль'));
+      await tester.pumpAndSettle();
+      expect(find.text('Открыть профиль'), findsOneWidget);
+      expect(find.text('Пароль хранилища'), findsOneWidget);
+      await tester.ensureVisible(find.text('К выбору способа входа'));
+      await tester.tap(find.text('К выбору способа входа'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Войти на этом устройстве'));
+      await tester.pumpAndSettle();
+      expect(find.text('Пароль локального хранилища'), findsOneWidget);
+      expect(find.text('Электронная почта'), findsNothing);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Создать аккаунт'));
+      await tester.pumpAndSettle();
+      expect(find.text('Электронная почта'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   testWidgets('browser explicitly gates private chat at compact width', (
     tester,
   ) async {

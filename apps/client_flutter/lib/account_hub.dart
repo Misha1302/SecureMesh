@@ -184,7 +184,35 @@ class _AccountHubState extends State<AccountHub> {
     }
   }
 
-  Future<bool> compare(String peer, String key) async {
+  Future<bool> compare(
+    String peer,
+    String key, {
+    String? group,
+    String? name,
+  }) async {
+    final saved = (account['verifiedChats'] as Map?)?[group] as Map?;
+    final pin = await widget.crypto('peer_key_status', {
+      'identity': peer,
+      'public_key': key,
+    });
+    if (!mounted) return false;
+    final status = pin['status'];
+    if (status == 'changed' ||
+        (saved != null && (saved['device'] != peer || saved['key'] != key))) {
+      setState(
+        () => actionError = tr(
+          'Ключ или устройство собеседника изменились. Чат заблокирован. Свяжитесь с собеседником другим способом.',
+          'Your contact’s key or device changed. This chat is blocked. Contact them through another channel.',
+        ),
+      );
+      return false;
+    }
+    if (status == 'matches' && saved != null && saved['name'] == name) {
+      return true;
+    }
+    if (status != 'unknown' && status != 'matches') {
+      throw StateError('UNKNOWN_PEER_KEY_STATUS');
+    }
     final own = await widget.crypto('identity');
     if (!mounted) return false;
     var checked = false;
@@ -331,6 +359,32 @@ class _AccountHubState extends State<AccountHub> {
     );
   }
 
+  Widget localKeyButton() => TextButton.icon(
+    icon: const Icon(Icons.key),
+    label: Text(tr('Показать ключ этого устройства', 'Show this device’s key')),
+    onPressed: blocked
+        ? null
+        : () => action(() async {
+            final identity = await widget.crypto('identity');
+            if (!mounted) return;
+            await showDialog<void>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: Text(tr('Ключ этого устройства', 'This device’s key')),
+                content: SingleChildScrollView(
+                  child: SelectableText(identity['public_key'] as String),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(tr('Закрыть', 'Close')),
+                  ),
+                ],
+              ),
+            );
+          }),
+  );
+
   Future<void> startEnrollment() async {
     final request = await widget.api('/v1/devices/enrollment', data: {}) as Map;
     final proof = await widget.crypto('enrollment_proof', {
@@ -462,6 +516,7 @@ class _AccountHubState extends State<AccountHub> {
           )
         else ...[
           SelectableText(account['enrollmentId'] as String),
+          localKeyButton(),
           TextButton(
             onPressed: blocked ? null : () => action(startEnrollment),
             child: Text(
@@ -582,6 +637,8 @@ class _AccountHubState extends State<AccountHub> {
                     if (await compare(
                       c['peerDevice'] as String,
                       c['peerKey'] as String,
+                      group: c['id'] as String,
+                      name: c['peerName'] as String,
                     )) {
                       await widget.openChat(
                         c['id'] as String,
@@ -658,6 +715,7 @@ class _AccountHubState extends State<AccountHub> {
           tr('Подключить другое устройство', 'Approve another device'),
           style: Theme.of(context).textTheme.titleLarge,
         ),
+        localKeyButton(),
         const SizedBox(height: 12),
         TextField(
           controller: enrollmentId,
