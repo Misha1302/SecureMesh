@@ -36,6 +36,10 @@ def run(before, after):
         assert receiver.call('history', group=group) == history
         assert receiver.call('process', group=group,
                              ciphertext=pending['ciphertext'])['text'] == 'pending during upgrade'
+        assert sender.call('draft_get', group=group)['text'] == ''
+        sender.call('draft_put', group=group, text='черновик до отката')
+        sender.call('saved', group=group, id=previous['id'], seq=1)
+        sender.call('peer_processed', group=group, seq=1)
         updated = receiver.call('queue', group=group, id=str(uuid.uuid4()), text='mixed-version message')
 
         spike.BIN = before
@@ -44,6 +48,13 @@ def run(before, after):
         assert receiver.call('identity')['public_key'] == receiver.public
         assert {m['text'] for m in receiver.call('history', group=group)['events']} >= {
             'before upgrade', 'pending during upgrade'}
+
+        spike.BIN = after
+        assert sender.call('draft_get', group=group)['text'] == 'черновик до отката'
+        timeline = {row['id']: row['status'] for row in
+                    sender.call('timeline', group=group)['messages']}
+        assert timeline[previous['id']] == 'delivered'
+        assert timeline[pending['id']] == 'queued'
 
     print('PASS: pre-upgrade identity, pins, encrypted history and immutable outbox preserved; '
           'queued message survives upgrade; original binary can reopen the store and read new MLS traffic.')
