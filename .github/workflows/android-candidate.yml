@@ -62,3 +62,9 @@ jobs:
             grep -q 'Status: ok' "$RUNNER_TEMP/activity.txt"
             sleep 3
             adb shell pidof com.example.securemesh_client
+      - name: Retain emulator-tested APK for laboratory use
+        uses: actions/upload-artifact@v4
+        with:
+          name: securemesh-android-ephemeral-test-key
+          path: apps/client_flutter/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
