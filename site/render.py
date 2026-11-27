@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent
 START = "<!-- PRODUCT_STATUS_START -->"
 END = "<!-- PRODUCT_STATUS_END -->"
+IMAGES = ("android-chat.png", "linux-chat.png", "welcome.png")
 LABELS = {"available": "Доступно", "experimental": "Экспериментально", "development": "В разработке", "planned": "Запланировано"}
 def e(value):
     return html.escape(str(value), quote=True)
@@ -37,17 +38,42 @@ def render(d):
 <section id="updates"><div class="eyebrow">Журнал обновлений</div><h2>Что нового</h2><div class="grid">{changes}</div><p class="quiet">Реестр обновлён: {e(d["updated"])}. <a href="{link(d["releaseUrl"])}">Последний релиз</a> · <a href="https://github.com/Misha1302/SecureMesh/blob/main/STATUS.md">Технический статус проекта</a>.</p></section>'''
 def main():
     d = json.loads((ROOT / "product-status.json").read_text(encoding="utf-8"))
-    page = (ROOT / "index.html").read_text(encoding="utf-8")
+    output = Path(sys.argv[1])
+    output.mkdir(parents=True, exist_ok=True)
+    names = ("index.html", "guide.html", "security.html", "architecture.html", "network.html", "status.html")
+    pages = {name: (ROOT / name).read_text(encoding="utf-8") for name in names}
+    page = pages["status.html"]
     if page.count(START) != 1 or page.count(END) != 1:
         raise ValueError("Expected one registry block")
     before, rest = page.split(START, 1)
     _, after = rest.split(END, 1)
-    result = before + START + "\n" + render(d) + "\n" + END + after
-    ids = re.findall(r'\bid="([^"]+)"', result)
-    if len(ids) != len(set(ids)) or set(re.findall(r'href="#([^"]+)"', result)) - set(ids):
-        raise ValueError("Duplicate ID or broken internal link")
-    if re.search(r'<(?:script|form|iframe)\b', result, re.I):
-        raise ValueError("Active content is not allowed")
-    Path(sys.argv[1]).write_text(result, encoding="utf-8")
+    pages["status.html"] = before + START + "\n" + render(d) + "\n" + END + after
+    # Keep the published site static and validate all cross-page fragment links.
+    ids = {}
+    for name, result in pages.items():
+        found = re.findall(r'\bid="([^"]+)"', result)
+        if len(found) != len(set(found)):
+            raise ValueError(f"Duplicate ID in {name}")
+        ids[name] = set(found)
+        if re.search(r'<(?:script|form|iframe)\b|\son[a-z]+\s*=', result, re.I):
+            raise ValueError(f"Active content is not allowed in {name}")
+    for name, result in pages.items():
+        for src in re.findall(r'\bsrc="([^"]+)"', result):
+            if html.unescape(src) not in IMAGES:
+                raise ValueError(f"Unapproved asset in {name}: {src}")
+        for href in re.findall(r'\bhref="([^"]+)"', result):
+            parsed = urlsplit(html.unescape(href))
+            if parsed.scheme or parsed.netloc:
+                if parsed.scheme not in ("https", "data"):
+                    raise ValueError(f"Unexpected URL scheme: {href}")
+                continue
+            target = parsed.path or name
+            if target in ("style.css", *IMAGES) and not parsed.fragment and not parsed.query:
+                continue
+            if target not in ids or (parsed.fragment and parsed.fragment not in ids[target]):
+                raise ValueError(f"Broken link in {name}: {href}")
+        (output / name).write_text(result, encoding="utf-8")
+    for name in ("style.css", ".nojekyll", *IMAGES):
+        (output / name).write_bytes((ROOT / name).read_bytes())
 if __name__ == "__main__":
     main()
