@@ -1,0 +1,28 @@
+{
+  "profile": "shaped TCP laboratory run (no packet loss)",
+  "seed": 7,
+  "messages_each_direction": 20,
+  "delivery_p50": 6.190439000000001,
+  "delivery_p95": 7.974036000000002,
+  "delivery_p99": 8.482312999999998,
+  "duplicates": 0,
+  "missing_ids": 0,
+  "elapsed_seconds": 26.571237,
+  "retries": 0,
+  "recent_errors": [],
+  "https_requests": 0,
+  "wss_application_bytes_sent": [
+    17473,
+    18218
+  ],
+  "wss_application_bytes_received": [
+    23418,
+    22942
+  ],
+  "platform": "Linux native Dart; production NativeDelivery/MeshTransport/FRB/OpenMLS/SQLCipher",
+  "protocol": "two real Dart clients via warmed WSS/HTTPS on isolated loopback",
+  "emulator": "Toxiproxy 2.13.0, 750ms one-way and 2 KB/s per TCP direction per connection, no packet-loss injection",
+  "exit_code": 0,
+  "source_head": "3c8a8e659e4513f9e16ed88590eb5a5ad2dc7f63",
+  "network_conditions": "Toxiproxy 2.13.0; 750 ms per direction; 2 KiB/s per direction per connection; warm WebSocket."
+}

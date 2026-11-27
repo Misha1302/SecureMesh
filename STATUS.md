@@ -1,4 +1,8 @@
-# SecureMesh — V2 implementation checkpoint
+# SecureMesh — состояние проекта
+
+Текущий кандидат и проверка платформ — в [отчёте модернизации](docs/SECUREMESH_MODERNIZATION_STATUS.md).
+
+## Исторический срез V2
 
 Implementation: PARTIAL / NOT_READY
 PRODUCTION_APPROVED=false

@@ -1,0 +1,25 @@
+00:00 +0: loading apps/client_flutter/test/conversation_drafts_test.dart
+00:00 +0: apps/client_flutter/test/conversation_drafts_test.dart: late reads cannot expose the previous recipient and edits survive switching
+00:00 +1: apps/client_flutter/test/conversation_drafts_test.dart: queue completion preserves edits made in flight and lock drains pending saves
+00:00 +2: loading apps/client_flutter/test/display_name_test.dart
+00:06 +2: apps/client_flutter/test/display_name_test.dart: Directory labels tolerate legacy and malformed values
+00:06 +3: apps/client_flutter/test/display_name_test.dart: Settings load and update the optional public label
+00:07 +4: loading apps/client_flutter/test/peer_identity_test.dart
+00:08 +4: apps/client_flutter/test/peer_identity_test.dart: opening a chat with matching identity
+00:09 +5: apps/client_flutter/test/peer_identity_test.dart: opening a chat with renamed identity
+00:10 +6: apps/client_flutter/test/peer_identity_test.dart: opening a chat with new identity
+00:10 +7: apps/client_flutter/test/peer_identity_test.dart: opening a chat with changed identity
+00:10 +8: apps/client_flutter/test/peer_identity_test.dart: opening a chat with swapped identity
+00:10 +9: loading apps/client_flutter/test/layout_test.dart
+00:12 +9: apps/client_flutter/test/layout_test.dart: registration and login fit 320 dp, support EN and reject empty inputs before network
+00:13 +10: apps/client_flutter/test/layout_test.dart: welcome opens registration, device sign-in and legacy unlock at 320 dp
+00:13 +11: apps/client_flutter/test/layout_test.dart: browser explicitly gates private chat at compact width
+00:14 +12: loading apps/client_flutter/test/chat_organization_test.dart
+00:14 +12: apps/client_flutter/test/chat_organization_test.dart: search, pin, archive and restore survive reopening the hub
+00:17 +13: loading apps/client_flutter/test/message_markup_test.dart
+00:18 +13: apps/client_flutter/test/message_markup_test.dart: format preserves selection and numbers multiline selections
+00:18 +14: apps/client_flutter/test/message_markup_test.dart: formatting does not bypass the composer length limit
+00:18 +15: apps/client_flutter/test/message_markup_test.dart: desktop shortcut and toolbar format the selected composer text
+00:19 +16: apps/client_flutter/test/message_markup_test.dart: links are inspectable, spoilers hidden, HTML is literal text
+00:19 +17: apps/client_flutter/test/message_markup_test.dart: fenced code stays literal and has a copy action
+00:19 +18: All tests passed!

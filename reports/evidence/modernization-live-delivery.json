@@ -1,0 +1,104 @@
+{
+  "source_commit": "924d0bc884530ff7f8c9747ff5536e26b7c9d39a",
+  "environment": {
+    "api_sdk": "10.0.111",
+    "postgresql": "17.12",
+    "mailpit": "1.27.10",
+    "rust": "1.93.1",
+    "tls": "locally generated loopback certificate",
+    "database": "isolated local cluster",
+    "crypto": "OpenMLS + SQLCipher"
+  },
+  "harness": "Ran repository tests with Docker Compose PostgreSQL client invocations replaced in temporary test copies by the same PostgreSQL executables against the local cluster. API, TLS, email, native client and database operations used real implementations. Dart invoked via SDK executable. No test assertions changed.",
+  "api_build": "0 warnings, 0 errors",
+  "rust_build": "cargo build --locked",
+  "crypto_test": "PASS: independent keys; Welcome; two-process Unicode message; add/remove/rekey; revoked member denied; replay rejected; pinned key substitution rejected; SQLCipher wrong key denied; durable immutable outbox; process abort rollback; restart decrypt.",
+  "tests": [
+    {
+      "test": "tests/integration/epochs.py",
+      "source_sha256": "cfc37fc23e1aacfcf79a058bcff1c9e3ec0b7da8695fddd2edc539e7aaff63f7",
+      "status": "PASS",
+      "checks": [
+        "PASS: two real MLS commits race at epoch 1; exactly one accepted; lost ACK retry preserves commit; winner merges only after durable save; loser discards confirmed-rejected pending commit, processes winner, rebases at epoch 2; both clients resume encrypted text at epoch 3 with contiguous cursors. Group membership workflow remains separate."
+      ]
+    },
+    {
+      "test": "tests/integration/delivery.py",
+      "source_sha256": "c99f958552a7abf56d4943e4af67b9bd7c063ddd9bf96a96e036f76842df16b1",
+      "status": "PASS",
+      "checks": [
+        "PASS: verified email + one-use token; Argon2 login; independent Ed25519 device proof; untrusted device denied; refresh rotation/reuse; real MLS HTTPS/WSS exchange; persistent offline queue; lost ACK/idempotent concurrent retries; digest/epoch conflict; encrypted receiver crash recovery; paginated scoped cursors; API restart; device revocation on active WSS; membership/IDOR denial; log secret checks; atomic message/outbox counts."
+      ]
+    },
+    {
+      "test": "tests/integration/directory.py",
+      "source_sha256": "0a56a28640f76cd62e405036fc0996e116363336b384a5a7ec98342bb5680b6e",
+      "status": "PASS",
+      "checks": [
+        "PASS: real OpenMLS public KeyPackage validation; credential/key/signature substitution denied; trusted publication; explicit recipient consent; atomic one-use lease/race/idempotency; signed recipient-scoped Welcome; legacy bootstrap disabled; crash before local join COMMIT recovers; redelivery cannot roll back MLS; TLS two-way ciphertext delivery and membership IDOR; late bootstrap ACK retry after lease expiry; no private keys in server helper."
+      ]
+    },
+    {
+      "test": "tests/integration/enrollment.py",
+      "source_sha256": "9504c7f51b964590a752c0a1554d46c87f01a5e0c0bd10982b9e5b4a3b0921db",
+      "status": "PASS",
+      "checks": [
+        "PASS: pending login isolation; independent device keys; owner/key-bound two-device signatures; pinned approver and explicit confirmation; durable immutable approval retry; activation proof only after local grant verification; invalid activation/proof/substitution/account/replay/expiry/IDOR/self-approval/race/revoked-approver denied; no automatic MLS/history access. Camera QR and MLS multi-device enrollment/rekey still unimplemented."
+      ]
+    },
+    {
+      "test": "tests/integration/enrollment_quota.py",
+      "source_sha256": "c7e92036433e3894980ff91f485d4e4028794ff9cec3315447e94d23957b73e6",
+      "status": "PASS",
+      "checks": [
+        "PASS: 32 real new enrollment issuances across expired-row cleanup; same pending request retry does not consume quota; 33rd denied by ENROLLMENT_LIMIT, including after API restart; next rolling-day window allows issuance; candidate stays pending. Expiry/window timestamps advanced only in an owned isolated DB; no mocked API/crypto."
+      ]
+    },
+    {
+      "test": "tests/integration/onboarding_recovery.py",
+      "source_sha256": "13ae1c3d3efc26c5c868eb669d1a013674ec3670258d9f00d0c5b9e39bced5d3",
+      "status": "PASS",
+      "checks": [
+        "PASS: server challenge purpose/ID/device/username substitutions denied before signing/login POST; zero server sessions",
+        "PASS: lost accepted login reply + SIGKILL + wrong-password retry preserves same trusted key and one server device",
+        "PASS: durable session + SIGKILL resumes without password/new login; foreign binding and pre-COMMIT abort rejected; pending device remains private-data denied",
+        "PASS: expired saved session requests password with same key; SIGKILL after profile COMMIT reopens without another login",
+        "PASS: wrong local passphrase denied; invalid initializer rolls back identity+journal; legacy initialized store remains compatible"
+      ]
+    },
+    {
+      "test": "tests/integration/native_session.py",
+      "source_sha256": "58e25b82bbe304f3c2f7d0639c841cf870fc55cdf3131b2371ad05859b152a1a",
+      "status": "PASS",
+      "checks": [
+        "PASS: eight actual concurrent Dart API calls share one rotating refresh; new tokens persisted in SQLCipher before use; closed session denied.",
+        "PostgreSQL confirms one rotation and no refresh-family reuse revocation."
+      ]
+    },
+    {
+      "test": "tests/integration/migrations.py",
+      "source_sha256": "be77e50b93ea2d99bb88113ead6c5c53a2876024723451c7d351bbfefc34b00d",
+      "status": "PASS",
+      "checks": [
+        "PASS: fresh owned PostgreSQL database; all six EF migrations; real registration and first/pending device proof; restart preserves pending status; migration reapplication idempotent. Existing development database upgrade exercised by enrollment/directory suites; destructive downgrade deliberately refused."
+      ]
+    },
+    {
+      "test": "tests/integration/restore_v2.py",
+      "source_sha256": "1b6e5e6d8e8c512d1259dc892e57535565582a7cd8b3e3f5c90ae9a2b4d63a9b",
+      "status": "PASS",
+      "checks": [
+        "PASS: actual V2 schema with six migrations, consented KeyPackage/Welcome DM and durable message/outbox restored into an isolated database; API login/session/DM listing and original SQLCipher/OpenMLS recipient decrypt/cursor/receipt work. Source DB remained available. Object/media restore not covered."
+      ]
+    },
+    {
+      "test": "tests/integration/native_transport.py",
+      "source_sha256": "df729582f5ccd9728de06e809bca55121eb7d66820db4b8757030475aa3c8657",
+      "status": "PASS",
+      "checks": [
+        "PASS: actual native Dart WSS/protobuf + Rust/OpenMLS/SQLCipher + TLS API/PG; production delivery cycle pipelines three immutable sends with sync and bounded receipts; half-open/blocked HTTPS fallback; lost ACK idempotence; WSS recovery; malformed ACK denied with outbox retained; paginated decrypt/cursors; both clients contain all 11 IDs once. Not a GUI or GPRS timing run.",
+        "PASS: native child terminated within 45 seconds including lost close frames; no hanging process accepted as success."
+      ]
+    }
+  ]
+}
