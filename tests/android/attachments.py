@@ -28,8 +28,11 @@ def confirm_system_export(filename, timeout=30):
             return
         named = any(node.get('class') == 'android.widget.EditText' and
                     node.get('text') == filename for node in picker)
+        # API 28's DocumentsUI SaveFragment uses a TextView for its
+        # android:id/button1 action. Other versions expose a Button role.
         buttons = [node for node in picker if
-                   node.get('class') == 'android.widget.Button' and
+                   (node.get('resource-id') == 'android:id/button1' or
+                    node.get('class') == 'android.widget.Button') and
                    node.get('enabled') == 'true' and node.get('clickable') == 'true' and
                    node.get('text', '').strip().casefold() in {'save', 'сохранить'}]
         # Wait for the navigation drawer to settle. If a tap was absorbed by
