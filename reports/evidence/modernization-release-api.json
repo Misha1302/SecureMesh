@@ -1,0 +1,49 @@
+{
+  "application_commit": "6d38d07637d2fea486893bfc715a01bbce529c21",
+  "backup_regression_commit": "a411fd3d51c6b5da2d4bf3e34d8e4681d6db6d00",
+  "configuration": "dotnet build --configuration Release --no-restore; locked restore, 0 warnings, 0 errors",
+  "transport_source": "contracts/runtime/wire.proto",
+  "utf8_postgresql": "17.12",
+  "source_sha256": {
+    "contracts/runtime/wire.proto": "7f940118863b2302206b221ac71b8414bf30568f81f17d9eccf96911a3a836d2",
+    "src/SecureMesh.Api/bin/Release/net10.0/SecureMesh.Api.dll": "d70043f360da8273fcd4c8f6159c9d7c283941b3305c02c24ca92ce0c0aa1467",
+    "apps/client_flutter/lib/transport.dart": "f9affe6c9ad5845c60382a0f77c346eb8fc5a38b96e849dcade168ca8d9bfbbe",
+    "apps/client_flutter/lib/delivery_client.dart": "12b9649745d448475cb5dcd5cf714dc73325d296705123e492473cf20fefad1d",
+    "tests/integration/restore_v2.py": "da0a60b64e6203480b9e5cc85e5fd51ce4680494d6bc6d9336763ef92340b892"
+  },
+  "suites": {
+    "directory": {
+      "status": "PASS",
+      "checks": [
+        "PASS: real OpenMLS public KeyPackage validation; credential/key/signature substitution denied; trusted publication; explicit recipient consent; atomic one-use lease/race/idempotency; signed recipient-scoped Welcome; legacy bootstrap disabled; crash before local join COMMIT recovers; redelivery cannot roll back MLS; TLS two-way ciphertext delivery and membership IDOR; late bootstrap ACK retry after lease expiry; no private keys in server helper."
+      ]
+    },
+    "delivery": {
+      "status": "PASS",
+      "checks": [
+        "PASS: verified email + one-use token; Argon2 login; independent Ed25519 device proof; untrusted device denied; refresh rotation/reuse; real MLS HTTPS/WSS exchange; persistent offline queue; lost ACK/idempotent concurrent retries; digest/epoch conflict; encrypted receiver crash recovery; paginated scoped cursors; API restart; device revocation on active WSS; membership/IDOR denial; log secret checks; atomic message/outbox counts."
+      ]
+    },
+    "native_session": {
+      "status": "PASS",
+      "checks": [
+        "PASS: eight actual concurrent Dart API calls share one rotating refresh; new tokens persisted in SQLCipher before use; closed session denied.",
+        "PostgreSQL confirms one rotation and no refresh-family reuse revocation."
+      ]
+    },
+    "native_transport": {
+      "status": "PASS",
+      "checks": [
+        "PASS: actual native Dart WSS/protobuf + Rust/OpenMLS/SQLCipher + TLS API/PG; production delivery cycle pipelines three immutable sends with sync and bounded receipts; half-open/blocked HTTPS fallback; lost ACK idempotence; WSS recovery; malformed ACK denied with outbox retained; paginated decrypt/cursors; both clients contain all 11 IDs once. Not a GUI or GPRS timing run.",
+        "PASS: native child terminated within 45 seconds including lost close frames; no hanging process accepted as success."
+      ]
+    },
+    "restore_v2": {
+      "status": "PASS",
+      "checks": [
+        "PASS: actual V2 schema with seven migrations, consented KeyPackage/Welcome DM and durable message/outbox restored into an isolated database; API login/session/DM listing and original SQLCipher/OpenMLS recipient decrypt/cursor/receipt work. Source DB remained available. Object/media restore not covered."
+      ],
+      "additional_assertions": "A decompressed pg_dump data export contained the exact original MLS ciphertext, and excluded a random private text marker in ASCII, hex and Base64. The authorized original recipient decrypted that marker after restore."
+    }
+  }
+}
