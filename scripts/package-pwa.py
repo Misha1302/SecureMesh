@@ -3,18 +3,25 @@
 
 import argparse
 import hashlib
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 
 
-SOURCE = Path(__file__).resolve().parents[1] / "site" / "app"
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "site" / "app"
+BROWSER_BUILD = ROOT / "src" / "browser_crypto" / "build.sh"
+BROWSER_ASSETS = (
+    "crypto/securemesh_browser_crypto.js",
+    "crypto/securemesh_browser_crypto_bg.wasm",
+)
 ASSETS = (
     "account.js",
     "app.css",
     "app.js",
     "apple-touch-icon.png",
-    "crypto/securemesh_browser_crypto.js",
-    "crypto/securemesh_browser_crypto_bg.wasm",
+    *BROWSER_ASSETS,
     "icon-192.png",
     "icon-512.png",
     "icon-maskable-512.png",
@@ -37,6 +44,25 @@ def digest(data: bytes) -> str:
 
 def checksum_lines(files: dict[str, bytes]) -> str:
     return "".join(f"{digest(data)}  app/{name}\n" for name, data in files.items())
+
+
+def verify_browser_crypto(files: dict[str, bytes], staging: Path) -> None:
+    generated = staging / "generated"
+    environment = os.environ | {
+        "CARGO_TARGET_DIR": str(staging / "target"),
+        "RUSTUP_TOOLCHAIN": "1.100.0",
+    }
+    subprocess.run([BROWSER_BUILD, generated], cwd=ROOT, env=environment, check=True)
+
+    for name in BROWSER_ASSETS:
+        rebuilt = (generated / Path(name).name).read_bytes()
+        if rebuilt != files[name]:
+            raise ValueError(
+                f"Browser crypto rebuild mismatch for {name}. "
+                f"Source SHA-256: {digest(files[name])}. Rebuilt SHA-256: {digest(rebuilt)}."
+            )
+        files[name] = rebuilt
+        print(f"Verified browser crypto rebuild: {name}")
 
 
 def package(destination: Path) -> None:
@@ -64,12 +90,14 @@ def package(destination: Path) -> None:
     if worker.count(CACHE_MARKER) != 1:
         raise ValueError("Expected exactly one service worker cache version marker")
 
-    cache_id = digest(checksum_lines(files).encode("ascii"))[:24].encode("ascii")
-    files["sw.js"] = worker.replace(CACHE_MARKER, CACHE_MARKER + b"-" + cache_id)
-
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
-        staging = Path(temporary) / "bundle"
+        temporary_path = Path(temporary)
+        verify_browser_crypto(files, temporary_path)
+
+        cache_id = digest(checksum_lines(files).encode("ascii"))[:24].encode("ascii")
+        files["sw.js"] = worker.replace(CACHE_MARKER, CACHE_MARKER + b"-" + cache_id)
+        staging = temporary_path / "bundle"
         for name, data in files.items():
             target = staging / "app" / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +112,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         package(args.output)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"{error}\n")
 
 
