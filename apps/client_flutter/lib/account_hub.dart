@@ -356,13 +356,41 @@ class _AccountHubState extends State<AccountHub> {
   Future<void> join(Map welcome) async {
     final peer = welcome['sender'] as String,
         key = welcome['senderKey'] as String;
+    final invitation = requests
+        .where((r) => r['id'] == welcome['invitation'])
+        .firstOrNull;
+    if (invitation != null &&
+        (invitation['outgoing'] != false ||
+            invitation['accepted'] != true ||
+            invitation['senderDevice'] != peer ||
+            invitation['senderKey'] != key)) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(tr('Чат заблокирован', 'Chat blocked')),
+          content: Text(
+            tr(
+              'Данные отправителя не совпадают с принятым запросом. Проверьте их с собеседником.',
+              'The sender does not match the accepted invitation. Check the details with your contact.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(tr('Закрыть', 'Close')),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     if (!await compare(peer, key)) return;
     await widget.crypto('directory_join', Map<String, dynamic>.from(welcome));
     await widget.api('/v1/crypto/welcomes/${welcome['group']}/ack', data: {});
     await widget.openChat(
       welcome['group'] as String,
       peer,
-      tr('Собеседник', 'Contact'),
+      invitation?['username'] as String? ?? tr('Собеседник', 'Contact'),
       key,
     );
   }
