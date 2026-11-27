@@ -127,6 +127,13 @@ components:
 
 # Design System: SecureMesh native interface
 
+## Current native UI
+
+Android conversations occupy the full content area. Back returns to the inbox. At widths of 980 dp or more, the directory and conversation share a split view. Both themes use the native Material text scale and padded touch targets. Local settings control chat font size and background. The following earlier implementation notes describe previous revisions wherever their screens differ from the current app.
+
+Device verification compares the entered or optically scanned fingerprint with the selected device key before confirmation becomes available. A contact’s display name, username, picture or mere presence in the server directory has no role in that comparison.
+
+
 ## Overview
 
 **Creative North Star: "Visible durable state"**
