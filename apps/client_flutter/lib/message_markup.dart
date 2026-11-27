@@ -289,6 +289,8 @@ class MessageMarkup extends StatelessWidget {
   Widget build(BuildContext context) {
     if (text.length > 16000) return SelectableText(text);
     final lines = text.split('\n');
+    // A pathological message must not allocate a widget per newline.
+    if (lines.length > 200) return SelectableText(text);
     final blocks = <Widget>[];
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
