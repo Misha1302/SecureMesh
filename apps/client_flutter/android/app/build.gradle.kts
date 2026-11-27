@@ -32,7 +32,7 @@ android {
     }
 
     defaultConfig {
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.example.securemesh_client.BiometricFallbackInstrumentation"
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.securemesh_client"
         // You can update the following values to match your application needs.
@@ -51,6 +51,7 @@ android {
         release {
             signingConfig = signingConfigs.findByName("distribution")
             testProguardFile("instrumentation-rules.pro")
+            proguardFile("biometric-bridge.pro")
         }
     }
 }
@@ -87,9 +88,3 @@ val buildReleaseCrypto by tasks.registering(Exec::class) {
         "build", "--locked", "--release", "--lib")
 }
 tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn(buildReleaseCrypto) }
-
-dependencies {
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
-    androidTestImplementation("com.google.errorprone:error_prone_annotations:2.36.0")
-}

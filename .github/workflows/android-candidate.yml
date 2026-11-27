@@ -15,6 +15,8 @@ permissions:
 
 jobs:
   package-and-launch:
+    outputs:
+      apk_artifact: ${{ steps.laboratory_apk.outputs.artifact-id }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +55,11 @@ jobs:
             -storepass:env SECUREMESH_STORE_PASSWORD -alias "$SECUREMESH_KEY_ALIAS" | sha256sum | cut -d' ' -f1)
           export SECUREMESH_SIGNER_SHA256
           scripts/build-android-release.sh
-          (cd apps/client_flutter/android && ./gradlew :app:assembleReleaseAndroidTest)
+          if (cd apps/client_flutter/android && ./gradlew :app:assembleReleaseAndroidTest); then
+            touch "$RUNNER_TEMP/biometric-test-built"
+          else
+            echo '::error::Biometric instrumentation APK did not compile. The required biometric check will fail.'
+          fi
       - name: Allow emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -70,20 +76,39 @@ jobs:
             adb shell am start -W -n com.example.securemesh_client/.MainActivity | tee "$RUNNER_TEMP/activity.txt"
             grep -q 'Status: ok' "$RUNNER_TEMP/activity.txt"
             sleep 3
-            adb shell pidof com.example.securemesh_client
+            adb shell pidof com.example.securemesh_client > "$RUNNER_TEMP/securemesh-pid"
+            grep -Eq '[0-9]+' "$RUNNER_TEMP/securemesh-pid"
+            test -f "$RUNNER_TEMP/biometric-test-built"
             adb install -t apps/client_flutter/build/app/outputs/apk/androidTest/release/app-release-androidTest.apk
-            adb shell am instrument -w -r -e class com.example.securemesh_client.BiometricUnavailableTest com.example.securemesh_client.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/biometric-instrumentation.txt"
+            adb shell am instrument -w -r com.example.securemesh_client.test/com.example.securemesh_client.BiometricFallbackInstrumentation | tee "$RUNNER_TEMP/biometric-instrumentation.txt"
             adb logcat -b crash -d -t 250
-            grep -Fq 'OK (1 test)' "$RUNNER_TEMP/biometric-instrumentation.txt"
+      - name: Check the installed app remained alive after launch
+        id: apk_launch
+        if: ${{ !cancelled() }}
+        run: |
+          if grep -q 'Status: ok' "$RUNNER_TEMP/activity.txt" && grep -Eq '[0-9]+' "$RUNNER_TEMP/securemesh-pid"; then
+            echo 'verified=true' >> "$GITHUB_OUTPUT"
+          else
+            exit 1
+          fi
       - name: Retain emulator-tested APK for laboratory use
+        id: laboratory_apk
+        if: ${{ !cancelled() && steps.apk_launch.outputs.verified == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: securemesh-android-ephemeral-test-key
           path: apps/client_flutter/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
+      - name: Require OS biometric fallback and profile isolation
+        if: ${{ !cancelled() && steps.apk_launch.outputs.verified == 'true' }}
+        run: |
+          test -f "$RUNNER_TEMP/biometric-test-built"
+          tr -d '\r' < "$RUNNER_TEMP/biometric-instrumentation.txt" | grep -Fxq 'INSTRUMENTATION_RESULT: fallback=verified'
+
   android-linux-interop:
     needs: package-and-launch
+    if: ${{ !cancelled() && needs.package-and-launch.outputs.apk_artifact != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
