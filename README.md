@@ -1,5 +1,7 @@
 # SecureMesh — local development checkpoint
 
+Для первого изменения в проекте см. [руководство участника](CONTRIBUTING.md).
+
 ## SecureMesh V3: обязательные требования (19.11.2026)
 
 Нормативное дополнение к неизменяемым исходным ТЗ/V2: [платформы, UX и полный функционал](docs/v3/PRODUCT_REQUIREMENTS_RU.md), [архитектурное исследование](docs/v3/ARCHITECTURE_RESEARCH_RU.md), [TDD/E2E стратегия](docs/v3/TEST_STRATEGY_RU.md), [матрица из 44 сценариев](docs/v3/ACCEPTANCE_MATRIX.csv), [аудит противоречий](docs/v3/CONFLICTS_AND_DECISIONS_RU.md), [полный автономный промпт Codex](docs/v3/CODEX_AUTONOMOUS_PROMPT_RU.md).
