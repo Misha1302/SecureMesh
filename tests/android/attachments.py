@@ -66,7 +66,7 @@ def exchange_files(repo, root, report, peer, linux_profile):
         ui.adb('push', str(upload), '/sdcard/Download/' + upload.name)
         ui.adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE',
                '-d', 'file:///sdcard/Download/' + upload.name)
-        ui.tap(ui.text_node('Прикрепить файл', 'Attach file'))
+        ui.tap(ui.composer_button('file'))
         navigate_downloads()
         ui.tap(picker_node('Android input file', exact(upload.name)))
         ui.tap(ui.wait_node('Android file confirmation', exact('Отправить', 'Send')))

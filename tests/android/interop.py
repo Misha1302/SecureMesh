@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / 'tests/integration'))
 import delivery as d
 from directory import establish
 
+from android_ui import chat_diagnostics, composer_button, type_challenge
 from android_ui import PACKAGE, PROFILE, adb, tap, text_node, type_field, wait_node
 from attachments import attachments
 from video_capture import capture
@@ -66,6 +67,8 @@ def exchange(root):
         'peerKey': peer.public, 'trustConfirmed': True,
     })
     setup_android(phone)
+    report = Path(os.environ['RUNNER_TEMP']) / 'android-interop-evidence'
+    report.mkdir(mode=0o700, exist_ok=True)
     challenge = 'Android' + secrets.token_hex(12)
     response = 'Linux' + secrets.token_hex(12)
     fixture = dict(database=str(peer.path), passphrase=peer.password,
@@ -79,18 +82,19 @@ def exchange(root):
     try:
         linux_peer.stdin.write(json.dumps(fixture))
         linux_peer.stdin.close()
-        type_field(wait_node('message composer', lambda n: n.get('class') == 'android.widget.EditText'),
-                   challenge)
-        tap(text_node('Поставить сообщение в очередь', 'Queue message'))
-        text_node(response, timeout=180)
+        try:
+            type_challenge(challenge)
+            tap(composer_button('send'))
+            text_node(response, timeout=180)
+        except Exception:
+            chat_diagnostics(report, challenge, response)
+            raise
         if linux_peer.wait(timeout=60) != 0:
             raise RuntimeError('Linux peer did not confirm Android receipt')
         page = d.request('/v1/sync?conversationId=' + group, token=linux['session']['accessToken'])
         sent = page['messages']
         if len(sent) != 2 or {m['senderDeviceId'] for m in sent} != {peer.identity, phone.identity}:
             raise RuntimeError('Expected one stored envelope per device')
-        report = Path(os.environ['RUNNER_TEMP']) / 'android-interop-evidence'
-        report.mkdir(mode=0o700, exist_ok=True)
         screenshot = subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'], timeout=15)
         if not screenshot.startswith(b'\x89PNG\r\n\x1a\n'):
             raise RuntimeError('Android did not return a PNG screenshot')
@@ -99,7 +103,8 @@ def exchange(root):
         with apk.open('rb') as artifact:
             digest = hashlib.file_digest(artifact, 'sha256').hexdigest()
         (report / 'interop.json').write_text(json.dumps({
-            'apkSha256': digest, 'androidApi': adb('shell', 'getprop', 'ro.build.version.sdk').strip(),
+            'apkSha256': digest, 'apkSourceCommit': os.environ['APK_SOURCE_SHA'],
+            'apkSourceRun': os.environ['APK_SOURCE_RUN'], 'androidApi': adb('shell', 'getprop', 'ro.build.version.sdk').strip(),
             'sourceCommit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
             'androidToLinuxDecrypted': True, 'linuxReplyShownOnAndroid': True,
             'linuxReplyAcknowledgedByAndroid': True, 'envelopes': len(sent),

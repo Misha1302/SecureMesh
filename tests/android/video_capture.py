@@ -66,7 +66,7 @@ def exercise(root, report, peer, token, group, delivery):
         'mesh_mic', 'synthetic-camera-audio',
     ])
     try:
-        ui.tap(ui.text_node('Record video message', 'Записать видеосообщение'))
+        ui.tap(ui.composer_button('video'))
         ui.tap(exact('Record', 'Записать'))
         # Wait for the application's own 12-second stop and native preview.
         ui.tap(exact('Send', 'Отправить'))
