@@ -21,6 +21,7 @@ check encrypted-drafts cargo test --locked --manifest-path src/crypto_core/Cargo
 check encrypted-replies cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test message_replies
 check private-call-signals cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test call_signals
 check private-history-search cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test history_search
+check reordered-delivery python3 tests/crypto/reordered_delivery.py
 check crypto python3 tests/crypto/process_spike.py
 check device-roster python3 tests/crypto/device_roster.py
 check smoke python3 tests/integration/smoke.py

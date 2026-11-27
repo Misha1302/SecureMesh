@@ -11,6 +11,16 @@ from desktop import Desktop
 
 
 def attachments(repo, root, report, peer, linux_profile):
+    try:
+        return exchange_files(repo, root, report, peer, linux_profile)
+    except Exception:
+        # Only synthetic fixture accounts and files are ever created on this emulator.
+        with (report / 'android-file-failure.png').open('wb') as evidence:
+            subprocess.run(['adb', 'exec-out', 'screencap', '-p'], stdout=evidence, timeout=15)
+        raise
+
+
+def exchange_files(repo, root, report, peer, linux_profile):
     docs = {'com.android.documentsui', 'com.google.android.documentsui'}
 
     def picker_node(description, match, timeout=30):

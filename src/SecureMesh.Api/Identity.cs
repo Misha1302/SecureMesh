@@ -54,7 +54,10 @@ public static class Identity
             var id=Guid.NewGuid();
             var payload=Encoding.UTF8.GetBytes($"SecureMesh/device/v1\n{id:D}\n{input.DeviceId:D}\n{input.Username}\n{Sql.Token()}");
             await using var c=await db.OpenConnectionAsync();
-            await using var cmd=Sql.Cmd(c,"INSERT INTO auth_challenges VALUES($1,$2,$3,$4,now()+interval '2 minutes')",id,input.Username,input.DeviceId,payload);
+            await using var cmd=Sql.Cmd(c,"""
+                WITH owner AS (SELECT id FROM users WHERE username=$2 FOR SHARE)
+                INSERT INTO auth_challenges SELECT $1,$2,$3,$4,now()+interval '2 minutes' FROM owner
+                """,id,input.Username,input.DeviceId,payload);
             await cmd.ExecuteNonQueryAsync();
             return Results.Ok(new { challengeId=id, payload=Convert.ToBase64String(payload) });
         });
@@ -69,7 +72,8 @@ public static class Identity
             if(!await Passwords.Verify(input.Password,phc) || user==Guid.Empty || !verified) throw new ApiError(401,"INVALID_CREDENTIALS");
             await using var tx=await c.BeginTransactionAsync();
             // Serialize device enrollment for the account; concurrent first-login cannot enroll hidden devices.
-            await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 FOR UPDATE",user)) await cmd.ExecuteScalarAsync();
+            await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 AND username=$2 AND verified FOR UPDATE",user,input.Username))
+                if(await cmd.ExecuteScalarAsync() is null) throw new ApiError(401,"INVALID_CREDENTIALS");
             byte[] payload;
             await using(var cmd=Sql.Cmd(c,"DELETE FROM auth_challenges WHERE id=$1 AND username=$2 AND device_id=$3 AND expires_at>now() RETURNING payload",input.ChallengeId,input.Username,input.DeviceId))
                 payload=await cmd.ExecuteScalarAsync() as byte[] ?? throw new ApiError(401,"DEVICE_PROOF_REQUIRED");
@@ -83,6 +87,8 @@ public static class Identity
             if(existing is not null && (owner!=user || revoked || !CryptographicOperations.FixedTimeEquals(existing,publicKey))) throw new ApiError(403,"DEVICE_KEY_CHANGED");
             if(existing is null)
             {
+                await using var retired=Sql.Cmd(c,"SELECT 1 FROM device_identifiers WHERE id=$1",input.DeviceId);
+                if(await retired.ExecuteScalarAsync() is not null) throw new ApiError(403,"DEVICE_KEY_CHANGED");
                 await using var count=Sql.Cmd(c,"SELECT count(*) FROM devices WHERE user_id=$1",user);
                 var first = (long)(await count.ExecuteScalarAsync())! == 0;
                 await using var quota=Sql.Cmd(c,"SELECT count(*) FROM devices WHERE user_id=$1 AND NOT revoked",user);
@@ -124,9 +130,13 @@ public static class Identity
             var actor = await Sql.Authenticate(ctx, db, false);
             await using var c = await db.OpenConnectionAsync();
             await using var cmd = Sql.Cmd(c, "SELECT display_name FROM users WHERE id=$1", actor.UserId);
-            var name = await cmd.ExecuteScalarAsync() as string;
+            await using var user = await cmd.ExecuteReaderAsync();
+            if (!await user.ReadAsync()) throw new ApiError(401,"AUTH_REQUIRED");
+            var name = user.IsDBNull(0) ? null : user.GetString(0);
+            var labAccountRemoval = actor.Trusted && app.Environment.IsDevelopment()
+                && app.Configuration.GetValue<bool>("EnableLabAccountRemoval");
             return Results.Ok(new { userId=actor.UserId, deviceId=actor.DeviceId,
-                trustState=actor.Trusted ? "DEVICE_TRUSTED" : "DEVICE_PENDING_TRUST", displayName=name });
+                trustState=actor.Trusted ? "DEVICE_TRUSTED" : "DEVICE_PENDING_TRUST", displayName=name, labAccountRemoval });
         });
         app.MapPut("/v1/users/me/display-name", async (DisplayNameUpdate input, HttpContext ctx, NpgsqlDataSource db) =>
         {

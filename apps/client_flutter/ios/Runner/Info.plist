@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>NSCameraUsageDescription</key>
-    <string>Record a video message when you choose the camera in a chat.</string>
+    <string>Use your camera when you record a video message or accept a video call.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Record sound when you choose a voice or video message.</string>
+    <string>Use your microphone for voice or video messages and calls you choose to join.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

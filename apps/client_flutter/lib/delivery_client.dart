@@ -36,8 +36,10 @@ class NativeDelivery {
     required this.crypto,
     required this.transport,
     this.onIncomingText,
+    this.onCallSignal,
   });
   final void Function()? onIncomingText;
+  final void Function(String group)? onCallSignal;
   final CryptoCommand crypto;
   final MeshTransport transport;
   Future<void>? _receipt;
@@ -69,7 +71,8 @@ class NativeDelivery {
         _errorStack = null;
         Error.throwWithStackTrace(error, stack);
       }
-      final pending = (await crypto('outbox'))['messages'] as List;
+      final pending =
+          (await crypto('outbox', {'dispatch': true}))['messages'] as List;
       // Refill available write slots independently of a slow sync or another
       // write's ACK. Waiting for a whole batch makes one TCP retransmission
       // stall all future writes and builds an unbounded queue on 2G.
@@ -179,6 +182,10 @@ class NativeDelivery {
           'digest': message['ciphertextSha256'],
           'cursor': i == messages.length - 1 ? page['nextCursor'] : '',
         });
+        if (committed['event'] case {'type': 'call_control', 'accepted': true}
+            when !_closed) {
+          onCallSignal?.call(group);
+        }
         if (!_closed && isNewIncomingText(committed, message['envelopeKind'])) {
           onIncomingText?.call();
         }

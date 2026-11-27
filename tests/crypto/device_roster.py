@@ -87,12 +87,19 @@ def check(devices):
     assert peer.call('ingest', **transition)['event']['epoch'] == 2
     assert peer.call('ingest', **transition)['duplicate']
 
-    candidate.call('join', group=group, welcome=added['welcome'],
-                   expected_members=[device.identity for device in devices])
+    join=dict(transition=added,confirmed=True,expected_members=[device.identity for device in devices])
+    for changed in [dict(confirmed=False),dict(expected_members=[owner.identity,candidate.identity]),
+                    dict(transition=added|dict(seq=3)),dict(transition=added|dict(signature=proof['candidate_signature']))]:
+        candidate.call('roster_join',reject=True,**(join|changed))
+    Device.call(candidate,'roster_join',reject=True,**join,crash_before_commit=True)
+    assert candidate.call('cursor',group=group)['seq']==0
+    assert candidate.call('roster_join',**join)['epoch']==2
+    assert candidate.call('roster_join',**join)['already_joined']
+    assert candidate.call('cursor',group=group)['seq']==2
     candidate.call('process', reject=True, group=group, ciphertext=before['ciphertext'])
     after = owner.call('queue', group=group, id=uid(), text='after joining')
     assert peer.call('ingest', **after, seq=3, sender=owner.identity)['event']['text'] == 'after joining'
-    assert candidate.call('process', group=group, ciphertext=after['ciphertext'])['text'] == 'after joining'
+    assert candidate.call('ingest', **after, seq=3,sender=owner.identity)['event']['text']=='after joining'
 
     owner.call('ingest', **after, seq=3,sender=owner.identity)
     remove=dict(group=group,epoch=2,action='remove',device=candidate.identity)

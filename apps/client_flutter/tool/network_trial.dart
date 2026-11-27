@@ -79,10 +79,33 @@ Future<void> main(List<String> args) async {
         },
       );
       transports.add(transport);
+      final highestOrdinal = <String, int>{};
       pumps.add(
         NativeDelivery(
           transport: transport,
-          crypto: (op, [args = const {}]) => command(store, op, args),
+          crypto: (op, [args = const {}]) async {
+            if (op != 'ingest') return command(store, op, args);
+            final sender = args['sender'] as String;
+            final ordinal = sent[args['id']]?['ordinal'] as int?;
+            try {
+              final result = await command(store, op, args);
+              if (ordinal != null) {
+                highestOrdinal[sender] = max(
+                  highestOrdinal[sender] ?? -1,
+                  ordinal,
+                );
+              }
+              return result;
+            } catch (_) {
+              // Only fixture counters. Never print event contents, keys or tokens.
+              stderr.writeln(
+                'Native trial ingest rejected: serverSeq=${args['seq']} '
+                'senderOrdinal=$ordinal previousHighest=${highestOrdinal[sender]} '
+                'own=${sender == device['id']}',
+              );
+              rethrow;
+            }
+          },
         ),
       );
       await transport.sync(group, '');
@@ -120,6 +143,7 @@ Future<void> main(List<String> args) async {
         sent[id] = {
           'id': id,
           'sender': (fixture['devices'] as List)[index]['id'],
+          'ordinal': i,
           'start': now(),
           'characters': characters,
           'utf8_bytes': utf8.encode(text).length,

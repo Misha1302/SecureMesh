@@ -41,6 +41,12 @@ public static partial class PrivateBlobs
         app.MapDelete(Route, Delete);
     }
 
+    private static async Task RequireWritable(NpgsqlConnection c, Guid group, CancellationToken ct)
+    {
+        await using var cmd = Sql.Cmd(c, "SELECT account_removed FROM conversations WHERE id=$1 FOR SHARE", group);
+        if (await cmd.ExecuteScalarAsync(ct) is not false) throw new ApiError(409, "CONVERSATION_READ_ONLY");
+    }
+
     private static async Task LockMember(NpgsqlConnection c, Guid group, Guid device, CancellationToken ct)
     {
         await using var cmd = Sql.Cmd(c, """
@@ -74,6 +80,7 @@ public static partial class PrivateBlobs
             await using var c = await db.OpenConnectionAsync(ct);
             await using var tx = await c.BeginTransactionAsync(ct);
             await LockMember(c, group, actor.DeviceId, ct);
+            await RequireWritable(c, group, ct);
             await LockUploads(c, ct);
             await using (var existing = Sql.Cmd(c, "SELECT owner_id,digest FROM private_blobs WHERE conversation_id=$1 AND blob_id=$2", group, id))
             await using (var reader = await existing.ExecuteReaderAsync(ct))

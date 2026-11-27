@@ -108,6 +108,7 @@ public static partial class PrivateBlobs
             await using var c = await db.OpenConnectionAsync(ct);
             await using var tx = await c.BeginTransactionAsync(ct);
             await LockMember(c, group, actor.DeviceId, ct);
+            await RequireWritable(c, group, ct);
             await LockUploads(c, ct);
             var upload = await Lookup(c, group, id, ct);
             int next = upload?.Offset ?? 0;

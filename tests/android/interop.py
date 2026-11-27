@@ -17,6 +17,7 @@ from directory import establish
 
 from android_ui import PACKAGE, PROFILE, adb, tap, text_node, type_field, wait_node
 from attachments import attachments
+from video_capture import capture
 
 
 def setup_android(store):
@@ -107,6 +108,7 @@ def exchange(root):
             **linux['session'], 'endpoint': d.BASE, 'group': group, 'peerDevice': phone.identity,
             'peerName': android['username'], 'peerKey': phone.public, 'trustConfirmed': True,
         })
+        capture(root, report, peer, linux['session']['accessToken'], group, d)
         print('PASS: installed APK sent and displayed distinct private messages over verified TLS; '
               'two native clients, two committed envelopes, a recipient acknowledgement.')
     finally:

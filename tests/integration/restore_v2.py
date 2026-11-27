@@ -42,7 +42,7 @@ def main():
             compose('exec', '-T', 'db', 'createdb', '-U', 'securemesh', restored); created = True
             with backup.open('rb') as source:
                 subprocess.run(['docker', 'compose', 'exec', '-T', 'db', 'pg_restore', '-U', 'securemesh', '-d', restored, '--no-owner', '--exit-on-error'], cwd=d.ROOT, stdin=source, check=True)
-            assert scalar('SELECT count(*) FROM "__EFMigrationsHistory"', restored) == '12'
+            assert scalar('SELECT count(*) FROM "__EFMigrationsHistory"', restored) == '13'
             assert scalar(f"SELECT count(*) FROM messages WHERE conversation_id='{group}'", restored) == '1'
             assert scalar(f"SELECT count(*) FROM outbox o JOIN messages m ON m.id=o.message_id WHERE m.conversation_id='{group}'", restored) == '1'
             server.env['ConnectionStrings__Database'] = server.env['ConnectionStrings__Database'].replace('Database=securemesh;', 'Database=' + restored + ';')
@@ -56,7 +56,7 @@ def main():
             assert len(events) == 1 and events[0]['id'] == message['id'] and events[0]['text'] == sentinel
             assert b['device'].call('cursor', group=group)['seq'] == 1
             assert scalar(f"SELECT seq FROM cursors WHERE conversation_id='{group}' AND device_id='{b['device'].identity}'", restored) == '1'
-            print('PASS: actual V2 schema with twelve migrations, consented KeyPackage/Welcome DM and durable message/outbox restored into an isolated database; API login/session/DM listing and original SQLCipher/OpenMLS recipient decrypt/cursor/receipt work. Source DB remained available. Object/media restore not covered.')
+            print('PASS: actual V2 schema with thirteen migrations, consented KeyPackage/Welcome DM and durable message/outbox restored into an isolated database; API login/session/DM listing and original SQLCipher/OpenMLS recipient decrypt/cursor/receipt work. Source DB remained available. Object/media restore not covered.')
     finally:
         if created:
             compose('exec', '-T', 'db', 'dropdb', '-U', 'securemesh', restored)

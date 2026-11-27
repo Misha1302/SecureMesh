@@ -2,7 +2,9 @@
 import csv
 import io
 import os
+from pathlib import Path
 import subprocess
+import sys
 import time
 
 
@@ -33,11 +35,18 @@ class Desktop:
             self.key('Return')
             self.word('Connected')
         except BaseException:
-            self.__exit__(None, None, None)
+            self.__exit__(*sys.exc_info())
             raise
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, exc_type, *_):
+        if exc_type and self.process.poll() is None and hasattr(self, 'window') and os.environ.get('RUNNER_TEMP'):
+            report = Path(os.environ['RUNNER_TEMP']) / 'android-interop-evidence'
+            report.mkdir(mode=0o700, exist_ok=True)
+            try:
+                self.screenshot(report / 'linux-file-failure.png')
+            except subprocess.SubprocessError:
+                pass
         self.process.terminate()
         self.process.wait(timeout=10)
 
@@ -87,7 +96,19 @@ class Desktop:
                 self.key('ctrl+a')
                 self.type(str(path))
                 self.key('Return')
-                return
+                # GtkFileChooser can consume the first Enter for path completion.
+                # Confirm again only while focus still belongs to this same dialog.
+                for _ in range(5):
+                    time.sleep(.65)
+                    windows = subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid',
+                                              str(self.process.pid)], capture_output=True,
+                                             text=True, timeout=5).stdout.splitlines()
+                    if dialogs[-1] not in windows:
+                        return
+                    if run('xdotool', 'getwindowfocus', capture_output=True,
+                           text=True).stdout.strip() == dialogs[-1]:
+                        self.key('Return')
+                raise RuntimeError('Linux file chooser did not accept the supplied path')
             time.sleep(.2)
         raise RuntimeError('Linux file chooser did not open')
 
@@ -114,13 +135,29 @@ class Desktop:
         else:
             raise RuntimeError('Could not locate the desktop Attach file action')
         self.chooser_path(path)
-        # The title begins with "Send"; select the lowest matching word, the
-        # confirmation button below the filename.
-        self.word('Cancel')
-        candidates = [(x, y) for t, x, y in self.words() if t == 'send']
-        if not candidates:
-            raise RuntimeError('Linux file confirmation did not offer Send')
-        self.click(max(candidates, key=lambda p: p[1]))
+        # OCR verifies the prompt. Its filled blue action has white lettering
+        # that Tesseract can omit, so locate the button in the dialog itself.
+        title_x, title_y = self.word('Send')
+        self.word('this')
+        left, top = title_x, title_y + 30
+        width, height = 220, 130
+        rgb = run('import', '-window', self.window, '-crop',
+                  f'{width}x{height}+{left}+{top}', '-depth', '8',
+                  'rgb:-', capture_output=True).stdout
+        for y in range(height):
+            start = None
+            for x in range(width):
+                pos = 3 * (width * y + x)
+                red, green, blue = rgb[pos:pos + 3]
+                if blue - red > 25 and blue > green >= red:
+                    if start is None:
+                        start = x
+                else:
+                    if start is not None and x - start > 50:
+                        self.click((left + (x + start) // 2, top + y + 3))
+                        return
+                    start = None
+        raise RuntimeError('Linux file confirmation did not offer its filled Send action')
 
     def screenshot(self, output):
         run('import', '-window', self.window, str(output))

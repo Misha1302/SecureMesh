@@ -22,13 +22,13 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         var digest=SHA256.HashData(input.Ciphertext);
         await using var c=await db.OpenConnectionAsync(ct);
         await using var tx=await c.BeginTransactionAsync(ct);
-        long epoch,seq;
+        long epoch,seq; bool removed;
         // One conversation row serializes sequence allocation and MLS epoch compare-and-swap.
-        await using(var cmd=Sql.Cmd(c,"SELECT epoch,next_seq FROM conversations WHERE id=$1 FOR UPDATE",input.ConversationId))
+        await using(var cmd=Sql.Cmd(c,"SELECT epoch,next_seq,account_removed FROM conversations WHERE id=$1 FOR UPDATE",input.ConversationId))
         await using(var r=await cmd.ExecuteReaderAsync(ct))
         {
             if(!await r.ReadAsync(ct)) throw new ApiError(403,"MEMBERSHIP_REQUIRED");
-            epoch=r.GetInt64(0); seq=r.GetInt64(1);
+            epoch=r.GetInt64(0); seq=r.GetInt64(1); removed=r.GetBoolean(2);
         }
         await Sql.RequireMember(c,input.ConversationId,actor.DeviceId);
         Saved? existing=null;
@@ -43,6 +43,7 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
             }
         }
         if(existing is not null) {await tx.CommitAsync(ct); return existing;}
+        if(removed) throw new ApiError(409,"CONVERSATION_READ_ONLY");
         // Revocation does not remove an MLS leaf. Serialize acceptance with device
         // revocation so no new envelope can be saved for a known stale roster.
         await using(var cmd=Sql.Cmd(c,"""

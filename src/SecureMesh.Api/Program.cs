@@ -44,6 +44,7 @@ app.Use(async(ctx,next)=>
 });
 app.UseRateLimiter();
 app.MapIdentity();
+app.MapAccountRemoval();
 app.MapProfilePhotos();
 app.MapPublicChannels();
 app.MapPrivateBlobs();

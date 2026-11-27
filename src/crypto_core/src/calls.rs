@@ -317,7 +317,16 @@ pub(super) fn execute(
             let (seq, raw) = e?;
             events.push(json!({"seq":seq,"event":serde_json::from_str::<Value>(&raw)?}));
         }
-        return Ok(json!({"events":events}));
+        let session: Option<(String, String)> = db
+            .query_row(
+                "SELECT call,phase FROM call_sessions WHERE g=? AND epoch=? AND until>?",
+                params![gid, i64::try_from(group.epoch().as_u64())?, now],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        return Ok(
+            json!({"events":events,"session":session.as_ref().map(|s|&s.0),"phase":session.as_ref().map(|s|&s.1)}),
+        );
     }
     ensure!(s(req, "op")? == "call_queue", "unsupported call operation");
     let id = s(req, "id")?;

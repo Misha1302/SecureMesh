@@ -14,6 +14,7 @@ import 'delivery_client.dart';
 import 'conversation_drafts.dart';
 import 'attachment_transfer.dart';
 import 'voice_note.dart';
+import 'private_call.dart';
 import 'voice_wave.dart';
 import 'video_message.dart';
 import 'linux_notifications.dart';
@@ -22,6 +23,7 @@ import 'history_search.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
 import 'profile_biometrics.dart';
+import 'account_removal.dart';
 import 'account_hub.dart';
 import 'display_name.dart';
 import 'device_tile.dart';
@@ -76,6 +78,11 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      if (directCall?.active == true) unawaited(directCall!.end());
+    }
     if ((state == AppLifecycleState.hidden ||
             state == AppLifecycleState.paused) &&
         store != null &&
@@ -106,7 +113,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   int generation = 0;
   String connectionState = "offline";
   String? sendError, deviceError;
-  bool revokingDevice = false;
+  bool revokingDevice = false,
+      labRemovalAvailable = false,
+      removingLocal = false;
   int deviceLoad = 0;
   NativeClient? store;
   HttpClient? http;
@@ -147,7 +156,40 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     }
   }
 
+  PrivateCall? directCall;
+  bool get callsForeground =>
+      WidgetsBinding.instance.lifecycleState == null ||
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+  PrivateCall? bindCall(String group) {
+    if (store == null || !callsForeground) return null;
+    final verified = profile?['verifiedChats'] as Map?;
+    final entry = verified?[group] as Map?;
+    final selected =
+        profile?['group'] == group && profile?['trustConfirmed'] == true;
+    final peer = selected ? profile!['peerDevice'] : entry?['device'];
+    final name = selected ? profile!['peerName'] : entry?['name'];
+    if (peer is! String || name is! String) return null;
+    final previous = directCall;
+    if (previous?.group == group && previous?.peer == peer) return previous;
+    if (previous?.active == true) return null;
+    previous?.dispose();
+    final next = PrivateCall(
+      group,
+      peer,
+      name,
+      (op, args) => crypto(op, args),
+      () => unawaited(pump()),
+    );
+    directCall = next;
+    next.addListener(() {
+      if (mounted && identical(next, directCall)) setState(() {});
+    });
+    return next;
+  }
+
   void releaseLocalStore() {
+    directCall?.dispose();
+    directCall = null;
     attachments?.dispose();
     attachments = null;
     final current = store;
@@ -164,6 +206,10 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   Future<void> restoreDraft(String? group) async {
     final active = drafts;
     if (active == null) return;
+    if (directCall != null && directCall!.group != group) {
+      directCall!.dispose();
+      directCall = null;
+    }
     attachments?.dispose();
     attachments = null;
     final currentSession = session;
@@ -226,7 +272,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     BuildContext pageContext, {
     BiometricAction? biometric,
   }) async {
-    if (loading || store != null) return;
+    if (loading || store != null || removingLocal) return;
     NativeClient? opening;
     final selectedPath = path.text.trim();
     var secret = pass.text;
@@ -352,6 +398,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       delivery = NativeDelivery(
         crypto: crypto,
         transport: transport!,
+        onCallSignal: (group) {
+          unawaited(bindCall(group)?.poll());
+        },
         onIncomingText: Platform.isLinux ? desktopNotifications.incoming : null,
       );
       if (Platform.isLinux && saved['desktopNotifications'] == true) {
@@ -578,6 +627,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       online = progress.connected;
       connectionState = online ? 'connected' : 'offline';
       lite = progress.weak || delivery!.receiptError != null;
+      if (callsForeground) unawaited(directCall?.poll());
       if (online && profile?['trustConfirmed'] == true) {
         unawaited(attachments?.resume(explicit: false, weak: lite));
       }
@@ -725,6 +775,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       sendError = null;
       deviceError = null;
       revokingDevice = false;
+      labRemovalAvailable = false;
       online = false;
       lite = false;
       busy = false;
@@ -878,42 +929,50 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                           ],
                         ),
                       Expanded(
-                        child: tab == 0
-                            ? (profile?['group'] == null
-                                  ? AccountHub(
-                                      russian: ru,
-                                      profile: profile!,
-                                      crypto: crypto,
-                                      api: (route, {data}) =>
-                                          api(route, data: data),
-                                      channelApi: session!.request,
-                                      saveProfile: persistProfile,
-                                      openChat: (group, peer, name, key) async {
-                                        final selected = {
-                                          ...profile!,
-                                          'group': group,
-                                          'peerDevice': peer,
-                                          'peerName': name,
-                                          'peerKey': key,
-                                          'trustConfirmed': true,
-                                          'verifiedChats': {
-                                            ...?profile!['verifiedChats']
-                                                as Map?,
-                                            group: {
-                                              'device': peer,
-                                              'key': key,
-                                              'name': name,
+                        child: Column(
+                          children: [
+                            if (directCall case final PrivateCall current)
+                              CallPanel(current, tr),
+                            Expanded(
+                              child: tab == 0
+                                  ? (profile?['group'] == null
+                                        ? AccountHub(
+                                            russian: ru,
+                                            profile: profile!,
+                                            crypto: crypto,
+                                            api: (route, {data}) =>
+                                                api(route, data: data),
+                                            channelApi: session!.request,
+                                            saveProfile: persistProfile,
+                                            openChat: (group, peer, name, key) async {
+                                              final selected = {
+                                                ...profile!,
+                                                'group': group,
+                                                'peerDevice': peer,
+                                                'peerName': name,
+                                                'peerKey': key,
+                                                'trustConfirmed': true,
+                                                'verifiedChats': {
+                                                  ...?profile!['verifiedChats']
+                                                      as Map?,
+                                                  group: {
+                                                    'device': peer,
+                                                    'key': key,
+                                                    'name': name,
+                                                  },
+                                                },
+                                              };
+                                              await persistProfile(selected);
+                                              await reload();
+                                              if (mounted) setState(() {});
+                                              unawaited(pump());
                                             },
-                                          },
-                                        };
-                                        await persistProfile(selected);
-                                        await reload();
-                                        if (mounted) setState(() {});
-                                        unawaited(pump());
-                                      },
-                                    )
-                                  : chat(ctx))
-                            : settings(ctx),
+                                          )
+                                        : chat(ctx))
+                                  : settings(ctx),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -1399,6 +1458,35 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            PopupMenuButton<bool>(
+              tooltip: tr('Позвонить', 'Call'),
+              icon: const Icon(Icons.call_outlined),
+              enabled:
+                  online &&
+                  profile?['trustConfirmed'] == true &&
+                  directCall?.active != true,
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: false,
+                  child: Text(tr('Аудиозвонок', 'Audio call')),
+                ),
+                PopupMenuItem(
+                  value: true,
+                  child: Text(tr('Видеозвонок', 'Video call')),
+                ),
+              ],
+              onSelected: (video) async {
+                final group = profile!['group'] as String;
+                final name = profile!['peerName'] as String;
+                final view = chatView;
+                if (await confirmDirectCall(context, video, name, tr) &&
+                    context.mounted &&
+                    view == chatView &&
+                    profile?['group'] == group) {
+                  await bindCall(group)?.invite(video);
+                }
+              },
+            ),
             IconButton(
               tooltip: tr('Поиск в переписке', 'Search conversation'),
               icon: const Icon(Icons.search),
@@ -1739,9 +1827,18 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     final request = ++deviceLoad;
     try {
       final result = await api('/v1/devices') as List<dynamic>;
+      final self = await api('/v1/users/me') as Map;
+      final available = self['labAccountRemoval'] == true;
+      if (available &&
+          mounted &&
+          epoch == generation &&
+          profile?['labAccountRemoval'] != true) {
+        await persistProfile({...profile!, 'labAccountRemoval': true});
+      }
       if (mounted && epoch == generation && request == deviceLoad) {
         setState(() {
           devices = result;
+          labRemovalAvailable = available;
           deviceError = null;
         });
       }
@@ -1844,6 +1941,71 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> removeLabAccount(BuildContext context) async {
+    final owner = session;
+    final device = profile?['deviceId'];
+    final file = path.text.trim();
+    if (owner == null || device is! String || file.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AccountRemovalDialog(
+        russian: ru,
+        remove: (password) async {
+          await owner.request(
+            '/v1/users/me/removal',
+            data: {'requestId': device, 'password': password},
+          );
+        },
+      ),
+    );
+    if (confirmed != true || !mounted || !identical(session, owner)) return;
+    removingLocal = true;
+    lock();
+    var localCleanupFailed = false;
+    try {
+      await closingStore;
+      if (Platform.isAndroid || Platform.isIOS) {
+        try {
+          await profileBiometrics.invokeMethod<void>('forget', {
+            'path': file,
+            'russian': ru,
+          });
+        } catch (_) {
+          localCleanupFailed = true;
+        }
+      }
+      for (final suffix in ['', '-wal', '-shm', '-journal']) {
+        final target = File(file + suffix);
+        if (await target.exists()) await target.delete();
+      }
+    } catch (_) {
+      localCleanupFailed = true;
+    } finally {
+      removingLocal = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      path.clear();
+      showLocalUnlock = false;
+    });
+    ScaffoldMessenger.of(this.context).showSnackBar(
+      SnackBar(
+        content: Text(
+          localCleanupFailed
+              ? tr(
+                  'Аккаунт удалён. Проверьте локальный файл и биометрический доступ на этом устройстве.',
+                  'Account removed. Check the local profile file and biometric access on this device.',
+                )
+              : tr(
+                  'Тестовый аккаунт и локальный профиль удалены.',
+                  'Lab account and local profile removed.',
+                ),
+        ),
+      ),
+    );
+  }
+
   Widget settings(BuildContext context) => ListView(
     padding: const EdgeInsets.all(24),
     children: [
@@ -1922,6 +2084,13 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           ),
           value: profile?['desktopNotifications'] == true,
           onChanged: changingNotifications ? null : setNotifications,
+        ),
+      if (profile?['trustState'] == 'DEVICE_TRUSTED' &&
+          (labRemovalAvailable || profile?['labAccountRemoval'] == true))
+        ListTile(
+          leading: const Icon(Icons.delete_outline),
+          title: Text(tr('Удалить тестовый аккаунт', 'Delete lab account')),
+          onTap: () => removeLabAccount(context),
         ),
       SwitchListTile(
         title: const Text('Русский / English'),

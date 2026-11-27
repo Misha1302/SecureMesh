@@ -75,6 +75,57 @@ class _AccountHubState extends State<AccountHub> {
     ];
   }
 
+  Iterable<MapEntry<dynamic, dynamic>> get localOnly {
+    final saved = account['verifiedChats'] as Map?;
+    if (saved == null || !directoryLoaded) return const [];
+    final live = chats.map((c) => c['id']).toSet();
+    return saved.entries.where(
+      (item) =>
+          item.key is String && item.value is Map && !live.contains(item.key),
+    );
+  }
+
+  Future<void> readLocalHistory(String group, String name) async {
+    final timeline = await widget.crypto('timeline', {'group': group});
+    if (!mounted) return;
+    final rows = (timeline['messages'] as List)
+        .where((row) => row['text'] is String)
+        .toList();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(name),
+        content: SizedBox(
+          width: 400,
+          child: rows.isEmpty
+              ? Text(
+                  tr(
+                    'На этом устройстве нет сообщений.',
+                    'No messages on this device.',
+                  ),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: rows.length,
+                  itemBuilder: (_, i) => ListTile(
+                    title: SelectableText(rows[i]['text'] as String),
+                    subtitle: Text(
+                      rows[i]['own'] == true ? tr('Вы', 'You') : name,
+                    ),
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('Закрыть', 'Close')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool directoryLoaded = false;
   bool working = false, fetching = false, trusted = false;
   bool get blocked => working || fetching;
   Timer? timer;
@@ -130,6 +181,7 @@ class _AccountHubState extends State<AccountHub> {
             requests = incoming;
             welcomes = pending;
             chats = existing;
+            directoryLoaded = true;
             trusted = true;
             refreshError = null;
           });
@@ -625,7 +677,26 @@ class _AccountHubState extends State<AccountHub> {
           tr('Чаты', 'Chats'),
           style: Theme.of(context).textTheme.titleLarge,
         ),
-        if (chats.isEmpty)
+        for (final item in localOnly)
+          ListTile(
+            leading: const Icon(Icons.history),
+            title: Text(
+              item.value['name']?.toString() ?? tr('Собеседник', 'Contact'),
+            ),
+            subtitle: Text(
+              tr(
+                'Локальная история · только чтение',
+                'Local history · read only',
+              ),
+            ),
+            onTap: () => action(
+              () => readLocalHistory(
+                item.key as String,
+                item.value['name']?.toString() ?? tr('Собеседник', 'Contact'),
+              ),
+            ),
+          ),
+        if (chats.isEmpty && localOnly.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Text(

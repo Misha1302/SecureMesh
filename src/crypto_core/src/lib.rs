@@ -237,6 +237,9 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     let public = B64.decode(meta(db, "public")?)?;
     let signer = SignatureKeyPair::read(p.storage(), &public, SUITE.signature_algorithm())
         .context("missing signer")?;
+    if op == "roster_join" {
+        return roster::join(db, p, req, &identity, &public);
+    }
     if op == "roster_pending" {
         return roster::pending(db, s(req, "group")?);
     }
@@ -772,7 +775,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
         }
         "outbox" => {
             let mut q = db.prepare(
-                "SELECT o.envelope FROM outgoing o LEFT JOIN call_signal_ids c ON c.g=o.group_id AND c.id=o.id AND c.outbound=1
+                "SELECT o.rowid, o.group_id, o.envelope FROM outgoing o LEFT JOIN call_signal_ids c ON c.g=o.group_id AND c.id=o.id AND c.outbound=1
                  WHERE o.status='queued' AND (c.id IS NULL OR (c.until>unixepoch() AND EXISTS(
                    SELECT 1 FROM call_sessions s WHERE s.g=c.g AND s.call=c.call AND s.until>unixepoch())
                    AND NOT EXISTS(SELECT 1 FROM outgoing earlier JOIN call_signal_ids prior ON prior.g=earlier.group_id AND prior.id=earlier.id
@@ -780,10 +783,25 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                      AND earlier.status='queued' AND earlier.rowid<o.rowid)))
                  ORDER BY o.rowid LIMIT 100",
             )?;
-            let rows = q.query_map([], |r| r.get::<_, String>(0))?;
-            let values = rows
-                .map(|r| Ok(serde_json::from_str::<Value>(&r?)?))
-                .collect::<Result<Vec<_>>>()?;
+            let dispatch = req["dispatch"].as_bool().unwrap_or(false);
+            let window = i64::from(SenderRatchetConfiguration::default().out_of_order_tolerance());
+            let mut first_pending = std::collections::HashMap::<String, i64>::new();
+            let mut rows = q.query([])?;
+            let mut values = Vec::new();
+            while let Some(row) = rows.next()? {
+                if dispatch {
+                    // Count all locally authored rows, including writes already
+                    // acknowledged while an older envelope is still retrying.
+                    // Gaps from other groups only make this bound conservative.
+                    let order = row.get::<_, i64>(0)?;
+                    let group = row.get::<_, String>(1)?;
+                    let first = first_pending.entry(group).or_insert(order);
+                    if order - *first >= window.max(1) {
+                        continue;
+                    }
+                }
+                values.push(serde_json::from_str::<Value>(&row.get::<_, String>(2)?)?);
+            }
             Ok(json!({"messages":values}))
         }
         "history" => {

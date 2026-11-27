@@ -1,0 +1,36 @@
+{
+  "date": "2026-11-27",
+  "production_approved": false,
+  "flutter": {
+    "tree": "e5faef0a9eb091133b43604bcc16a50769bc6f96",
+    "command": "flutter test --no-pub --concurrency=1",
+    "passed": 43,
+    "exit": 0
+  },
+  "rust": {
+    "command": "cargo +1.94.1 test --offline --locked",
+    "passed": 8,
+    "exit": 0,
+    "at_local_commit": "317fbab"
+  },
+  "services": "Isolated local PostgreSQL 17/Kestrel .NET 10/Mailpit/TLS. Direct database command adapter for compose exec.",
+  "baseline_suites": {
+    "migrations": 0,
+    "directory": 0,
+    "delivery": 0,
+    "enrollment": 0,
+    "enrollment_quota": 0,
+    "epochs": 0,
+    "restore_v2": 0,
+    "native_transport": 0,
+    "native_session": 0,
+    "onboarding_recovery": 0,
+    "public_channels": 0
+  },
+  "twelve_migration_rerun": {
+    "restore_v2": 0,
+    "private_blobs": 0
+  },
+  "private_blob_test": "Two Dart VMs with SQLCipher and TLS resumed at 32768. Original client decrypted 4 MiB after real PG restore.",
+  "installed_android_linux": "https://github.com/Misha1302/SecureMesh/actions/runs/45965981253/job/140402816829"
+}
