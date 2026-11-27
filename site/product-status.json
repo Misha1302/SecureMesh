@@ -7,18 +7,14 @@
   "productionApproved": false,
   "platforms": [
     {
-      "name": "iPhone / iOS 15+",
+      "name": "Android",
       "status": "experimental",
-      "label": "Неподписанная сборка arm64",
-      "detail": "IPA содержит Flutter-клиент и нативное ядро Rust. Для установки нужны подпись Apple и provisioning profile. Запуск на физическом iPhone не подтверждён.",
+      "label": "APK для испытаний",
+      "detail": "На Xiaomi с Android 15 проверены регистрация и вход на тестовом сервере. На эмуляторе Android и компьютере Linux проверен двусторонний обмен текстом и файлами. APK имеет тестовую подпись.",
       "links": [
         {
-          "label": "Скачать IPA (unsigned)",
-          "url": "https://github.com/Misha1302/SecureMesh/releases/download/v0.1.0-ios-alpha.1/SecureMesh-iPhone-arm64-unsigned.ipa"
-        },
-        {
-          "label": "SHA256SUMS",
-          "url": "https://github.com/Misha1302/SecureMesh/releases/download/v0.1.0-ios-alpha.1/SHA256SUMS"
+          "label": "Проверка обмена",
+          "url": "https://github.com/Misha1302/SecureMesh/actions/runs/45965981253/job/140402816829"
         }
       ]
     },
@@ -35,18 +31,6 @@
       ]
     },
     {
-      "name": "Android",
-      "status": "experimental",
-      "label": "APK для испытаний",
-      "detail": "На эмуляторе Android установленный APK отправил сообщение клиенту Linux, показал ответ и получил подтверждение доставки. Сборка подписана временным тестовым ключом.",
-      "links": [
-        {
-          "label": "Проверка обмена",
-          "url": "https://github.com/Misha1302/SecureMesh/actions/runs/45965981253/job/140402816829"
-        }
-      ]
-    },
-    {
       "name": "Windows",
       "status": "experimental",
       "label": "Тестовая сборка x64",
@@ -55,6 +39,22 @@
         {
           "label": "Сборка платформ",
           "url": "https://github.com/Misha1302/SecureMesh/blob/modernization-integration/docs/PLATFORM_RELEASE_RU.md"
+        }
+      ]
+    },
+    {
+      "name": "iPhone / iOS 15+",
+      "status": "experimental",
+      "label": "Неподписанная сборка arm64",
+      "detail": "IPA содержит Flutter-клиент и нативное ядро Rust. Для установки нужны подпись Apple и provisioning profile. Запуск на физическом iPhone не подтверждён.",
+      "links": [
+        {
+          "label": "Скачать IPA (unsigned)",
+          "url": "https://github.com/Misha1302/SecureMesh/releases/download/v0.1.0-ios-alpha.1/SecureMesh-iPhone-arm64-unsigned.ipa"
+        },
+        {
+          "label": "SHA256SUMS",
+          "url": "https://github.com/Misha1302/SecureMesh/releases/download/v0.1.0-ios-alpha.1/SHA256SUMS"
         }
       ]
     },
@@ -70,7 +70,7 @@
     {
       "name": "Защищённые личные сообщения",
       "status": "experimental",
-      "detail": "Клиенты Android и Linux обменялись личными сообщениями через OpenMLS и подтвердили доставку на устройство."
+      "detail": "В испытании клиенты Android и Linux расшифровали сообщения друг друга. Одна галочка означает, что сервер принял сообщение. Подтверждение прочтения пока недоступно."
     },
     {
       "name": "Хранение истории и ключей на устройстве",
