@@ -8,7 +8,7 @@ val releaseStore = providers.environmentVariable("SECUREMESH_SIGNING_STORE")
 val releaseNativeDir = layout.buildDirectory.dir("generated/securemesh/release/jniLibs")
 
 android {
-    sourceSets.getByName("release").jniLibs.srcDir(releaseNativeDir)
+    sourceSets.getByName("release").jniLibs.srcDir(releaseNativeDir.get().asFile)
 
     signingConfigs {
         if (releaseStore.isPresent) {
