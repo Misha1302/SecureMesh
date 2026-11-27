@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import selectors
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,7 +41,7 @@ def main():
                 fixture=root/'fixture.json';fixture.write_text(json.dumps(dict(profile=args.profile,seed=seed,count=args.count,group=group,output=str(output),progress=str(ROOT/'.local/native-network-progress.json'),cert=str(ROOT/'.local/tls.pem'),library=str(ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so'),devices=[dict(id=who['device'].identity,path=str(who['device'].path),passphrase=who['device'].password,session=who['session'],endpoint=f'https://127.0.0.1:{15990+i}') for i,who in enumerate((a,b))])));fixture.chmod(0o600)
                 source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
                 binary_hashes={str(p.relative_to(ROOT)):hashlib.file_digest(p.open('rb'),'sha256').hexdigest() for p in [ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so',ROOT/'src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll']}
-                source_hashes={str(p.relative_to(ROOT)):hashlib.file_digest(p.open('rb'),'sha256').hexdigest() for p in [ROOT/'apps/client_flutter/lib/delivery_client.dart',ROOT/'apps/client_flutter/lib/transport.dart',ROOT/'apps/client_flutter/lib/session.dart',ROOT/'apps/client_flutter/tool/network_trial.dart']}
+                source_hashes={str(p.relative_to(ROOT)):hashlib.file_digest(p.open('rb'),'sha256').hexdigest() for p in [ROOT/'apps/client_flutter/lib/delivery_client.dart',ROOT/'apps/client_flutter/lib/transport.dart',ROOT/'apps/client_flutter/lib/session.dart',ROOT/'apps/client_flutter/lib/tls_client.dart',ROOT/'apps/client_flutter/tool/network_trial.dart']}
                 with (root/'dart.stderr').open('w') as errors:
                     process=subprocess.Popen([str(ROOT/'.local/flutter/bin/dart'),'run','tool/network_trial.dart',str(fixture)],cwd=ROOT/'apps/client_flutter',env={**os.environ,'PUB_CACHE':str(ROOT/'.local/pub-cache')},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=errors,text=True)
                     try:
@@ -51,12 +52,30 @@ def main():
                         setup={}
                         for i,name in enumerate(('netem-a','netem-b')):setup[name]=docker('exec','-T',name,'sh','/netem/configure.sh',str(rate),str(rtt),str(loss),str(seed+i*100))
                         process.stdin.write('RUN\n');process.stdin.flush()
-                        stdout,_=process.communicate(timeout=1300)
+                        timed_out = False
+                        try:
+                            stdout,_ = process.communicate(timeout=1300)
+                        except subprocess.TimeoutExpired:
+                            timed_out = True
+                            if shutil.which('ss'):
+                                sockets = subprocess.run(['ss', '-ntp'], capture_output=True, text=True)
+                                for line in sockets.stdout.splitlines():
+                                    if f'pid={process.pid},' in line:
+                                        print('Timed out child socket:', line, flush=True)
+                            process.terminate()
+                            try:
+                                stdout,_ = process.communicate(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                stdout,_ = process.communicate()
+
                         if stdout:print(stdout.strip(),flush=True)
                         if output.exists():
-                            result=json.loads(output.read_text());result.update(child_exit_code=process.returncode,rate_kbps_each_direction=rate,rtt_ms=rtt,packet_loss_percent=loss,setup=setup,source_head_at_start=source_head,binary_sha256=binary_hashes,source_sha256=source_hashes)
+                            result=json.loads(output.read_text());result.update(child_exit_code=process.returncode,timed_out=timed_out,rate_kbps_each_direction=rate,rtt_ms=rtt,packet_loss_percent=loss,setup=setup,source_head_at_start=source_head,binary_sha256=binary_hashes,source_sha256=source_hashes)
                             for name in ('netem-a','netem-b'):result[name+'_tc_stats']=docker('exec','-T',name,'tc','-s','qdisc','show','dev','eth0')
                             output.write_text(json.dumps(result,indent=2)+'\n')
+                        if timed_out:
+                            raise TimeoutError(f'{args.profile}/{seed}: Dart did not exit within the 1300s watchdog')
                         if process.returncode!=0:raise RuntimeError(f'Dart native network trial exited {process.returncode}: '+(root/'dart.stderr').read_text())
                     finally:
                         if process.poll() is None:process.terminate();process.wait(timeout=10)

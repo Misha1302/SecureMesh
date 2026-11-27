@@ -27,3 +27,19 @@ server omitting this additive field cannot regress the displayed state.
 
 The build and generation scripts consume `contracts/runtime/wire.proto`.
 The original brief schema remains in `contracts/wire.proto` for compatibility comparison.
+
+
+### References in private text replies
+
+Inside the MLS application payload, a reply optionally includes `replyTo` with the
+original message UUID in `id` and the original authenticated device identity in
+`sender`. Both coordinates are scoped to the same MLS group. They are stored
+with the local encrypted draft and with the authored/received event. Outbox
+retries reuse the original ciphertext. Ordinary text events retain their previous
+wire format. The relay sees the existing envelope and cannot index reply edges.
+Older readers display the new message's text normally.
+
+The client resolves the preview against its own authenticated timeline. If the
+original is outside local history it shows an unavailable-message label.
+Messages containing spoilers use a generic preview. The application does not
+send a copy of the quoted message or fetch it from the relay for preview.

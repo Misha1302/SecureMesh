@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:securemesh_client/src/rust/api.dart';
 import 'package:securemesh_client/src/rust/frb_generated.dart';
+import 'package:securemesh_client/tls_client.dart';
 import 'package:securemesh_client/transport.dart';
 import 'package:securemesh_client/delivery_client.dart';
 
@@ -43,8 +44,10 @@ Future<void> main(List<String> args) async {
       );
       final context = SecurityContext(withTrustedRoots: true)
         ..setTrustedCertificates(fixture['cert'] as String);
-      final http = HttpClient(context: context)
-        ..connectionTimeout = const Duration(seconds: 2);
+      final http = meshTlsClient(
+        context,
+        connectionTimeout: const Duration(seconds: 2),
+      );
       clients.add(http);
       transports.add(
         MeshTransport(

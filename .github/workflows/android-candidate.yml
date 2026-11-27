@@ -112,5 +112,11 @@ jobs:
           script: |
             bash tests/android/prepare-emulator.sh
             .local/venv/bin/python tests/android/interop.py
+      - name: Retain the Android conversation and build identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-linux-interop-evidence
+          path: ${{ runner.temp }}/android-interop-evidence
+          if-no-files-found: error
       - if: always()
         run: make down

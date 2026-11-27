@@ -5,6 +5,63 @@ import 'package:material_ui/material_ui.dart';
 import 'package:securemesh_client/public_web.dart' as public;
 
 void main() {
+  test('account server accepts only HTTPS origins', () {
+    expect(
+      httpsServerOrigin(' https://chat.example.org:8443/ ')?.origin,
+      'https://chat.example.org:8443',
+    );
+    expect(
+      httpsServerOrigin('https://[::1]:5088')?.origin,
+      'https://[::1]:5088',
+    );
+    for (final text in [
+      '',
+      'demo',
+      'http://host',
+      'https://user:pw@host',
+      'https://@host',
+      'https://host/path',
+      'https://host?name=value',
+      'https://host#fragment',
+      'https://host:65536',
+      'https://host:0',
+      'https://host with spaces',
+    ]) {
+      expect(httpsServerOrigin(text), isNull, reason: text);
+    }
+  });
+
+  testWidgets('operator origin visible before signup and editable', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AccountOnboarding(
+          russian: false,
+          defaultServer: 'https://chat.example.org:8443/',
+          onReady: (_, _) async => fail('Unexpected account'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('https://chat.example.org:8443'), findsOneWidget);
+    expect(find.text('HTTPS server'), findsNothing);
+    await tester.tap(find.byTooltip('Change server'));
+    await tester.pumpAndSettle();
+    expect(find.text('HTTPS server'), findsOneWidget);
+    final fields = find.byType(TextFormField);
+    await tester.enterText(fields.first, 'http://localhost');
+    await tester.enterText(fields.at(2), 'broken-address');
+    final submit = find.widgetWithText(FilledButton, 'Create account');
+    await tester.ensureVisible(submit);
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Enter the HTTPS server address'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Enter an email address'), findsOneWidget);
+  });
   testWidgets(
     'registration and login fit 320 dp, support EN and reject empty inputs before network',
     (tester) async {

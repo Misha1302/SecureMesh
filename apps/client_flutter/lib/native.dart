@@ -16,6 +16,7 @@ import 'onboarding.dart';
 import 'profile_files.dart';
 import 'account_hub.dart';
 import 'display_name.dart';
+import 'device_tile.dart';
 import 'transport.dart';
 
 class CryptoFailure implements Exception {}
@@ -27,6 +28,9 @@ class ClientApp extends StatefulWidget {
 }
 
 class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
+  final navigator = GlobalKey<NavigatorState>();
+  bool savingBackgroundLock = false;
+  bool backgroundLockSaveFailed = false;
   bool? notificationBackend;
   bool changingNotifications = false;
   bool notificationSaveFailed = false;
@@ -58,6 +62,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if ((state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.paused) &&
+        store != null &&
+        profile?['lockWhenHidden'] == true) {
+      lock();
+    }
     if (state == AppLifecycleState.resumed ||
         state == AppLifecycleState.detached) {
       desktopNotifications.cancel();
@@ -81,6 +91,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
   int generation = 0;
   String connectionState = "offline";
   String? sendError, deviceError;
+  bool revokingDevice = false;
+  int deviceLoad = 0;
   NativeClient? store;
   HttpClient? http;
   MeshTransport? transport;
@@ -415,6 +427,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     Map<String, dynamic> value, {
     bool sessionOnly = false,
     bool? notificationPreference,
+    bool? backgroundLockPreference,
   }) {
     final epoch = generation;
     final write = profileWrites.then((_) async {
@@ -434,6 +447,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       // Preserve a newer privacy choice across concurrent profile/session writes.
       updated['desktopNotifications'] =
           notificationPreference ?? (profile!['desktopNotifications'] == true);
+      updated['lockWhenHidden'] =
+          backgroundLockPreference ?? (profile!['lockWhenHidden'] == true);
       await crypto('profile_put', {'profile': updated});
       final previousGroup = profile?['group'];
       profile = updated;
@@ -460,6 +475,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     var nextDelay = const Duration(seconds: 3);
     try {
       final progress = await delivery!.tick(profile!['group'] as String);
+      if (!mounted || epoch != generation) return;
       nextDelay = progress.delay;
       failures = 0;
       online = progress.connected;
@@ -585,6 +601,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
 
   void lock() {
     generation++;
+    navigator.currentState?.popUntil((route) => route.isFirst);
+    savingBackgroundLock = backgroundLockSaveFailed = false;
     desktopNotifications.cancel();
     changingNotifications = notificationSaveFailed = false;
     notificationBackend = null;
@@ -606,6 +624,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       error = null;
       sendError = null;
       deviceError = null;
+      revokingDevice = false;
       online = false;
       lite = false;
       busy = false;
@@ -695,6 +714,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
+    navigatorKey: navigator,
     title: 'SecureMesh',
     debugShowCheckedModeBanner: false,
     themeMode: theme,
@@ -974,7 +994,34 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       ),
     ),
   );
-  Widget chat(BuildContext context) => Column(
+  Widget chat(BuildContext context) {
+    final bySenderAndId = {
+      for (final message in messages)
+        (message['sender'], message['id']): message,
+    };
+    String replyPreview(String id, String sender) {
+      final original = bySenderAndId[(sender, id)];
+      if (original == null) {
+        return tr(
+          'Исходное сообщение недоступно',
+          'Original message unavailable',
+        );
+      }
+      final text = original['text'] as String;
+      if (text.contains('||')) {
+        return tr('Сообщение со спойлером', 'Message with a spoiler');
+      }
+      return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    }
+
+    return chatBody(context, replyPreview, drafts?.reply);
+  }
+
+  Widget chatBody(
+    BuildContext context,
+    String Function(String, String) replyPreview,
+    ({String id, String sender})? selectedReply,
+  ) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       ListTile(
@@ -1113,8 +1160,35 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              if (m['replyTo'] case {
+                                'id': String id,
+                                'sender': String sender,
+                              })
+                                Text(
+                                  tr('В ответ на: ', 'In reply to: ') +
+                                      replyPreview(id, sender),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(ctx).textTheme.labelMedium,
+                                ),
                               MessageMarkup(m['text'] as String, tr: tr),
-                              const SizedBox(height: 6),
+                              IconButton(
+                                tooltip: tr('Ответить', 'Reply'),
+                                icon: const Icon(Icons.reply),
+                                onPressed:
+                                    sending ||
+                                        drafts?.readyFor(
+                                              profile?['group'] as String?,
+                                            ) !=
+                                            true
+                                    ? null
+                                    : () => setState(
+                                        () => drafts!.setReply((
+                                          id: m['id'] as String,
+                                          sender: m['sender'] as String,
+                                        )),
+                                      ),
+                              ),
                               Text(
                                 m['status'] == 'queued'
                                     ? tr(
@@ -1156,6 +1230,24 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             },
             icon: const Icon(Icons.arrow_downward),
             label: Text(tr('Новые сообщения', 'New messages')),
+          ),
+        ),
+      if (selectedReply != null)
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.reply),
+          title: Text(tr('Ответ на сообщение', 'Replying to message')),
+          subtitle: Text(
+            replyPreview(selectedReply.id, selectedReply.sender),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: IconButton(
+            tooltip: tr('Отменить ответ', 'Cancel reply'),
+            onPressed: sending
+                ? null
+                : () => setState(() => drafts?.setReply(null)),
+            icon: const Icon(Icons.close),
           ),
         ),
       if (sendError != null)
@@ -1211,12 +1303,18 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     ],
   );
   Future<void> loadDevices() async {
+    final epoch = generation;
+    final request = ++deviceLoad;
     try {
       final result = await api('/v1/devices') as List<dynamic>;
-      if (mounted) setState(() => devices = result);
-      if (mounted) setState(() => deviceError = null);
+      if (mounted && epoch == generation && request == deviceLoad) {
+        setState(() {
+          devices = result;
+          deviceError = null;
+        });
+      }
     } catch (_) {
-      if (mounted) {
+      if (mounted && epoch == generation && request == deviceLoad) {
         setState(
           () => deviceError = tr(
             'Не удалось загрузить устройства.',
@@ -1224,6 +1322,66 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           ),
         );
       }
+    }
+  }
+
+  Future<void> revokeDevice(String id) async {
+    if (revokingDevice || store == null || id == profile?['deviceId']) return;
+    final epoch = generation;
+    setState(() => revokingDevice = true);
+    try {
+      await api('/v1/devices/${Uri.encodeComponent(id)}', method: 'DELETE');
+      if (!mounted || generation != epoch) return;
+      ++deviceLoad;
+      setState(() {
+        devices = [
+          for (final d in devices)
+            if (d['id'] == id) {...d as Map, 'revoked': true} else d,
+        ];
+        deviceError = null;
+      });
+      await loadDevices();
+    } catch (_) {
+      if (mounted && generation == epoch) {
+        setState(
+          () => deviceError = tr(
+            'Отзыв доступа не подтверждён. Обновите список устройств.',
+            'Revocation was not confirmed. Refresh the device list.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted && generation == epoch) {
+        setState(() => revokingDevice = false);
+      }
+    }
+  }
+
+  Future<void> setBackgroundLock(bool enabled) async {
+    if (savingBackgroundLock || store == null) return;
+    final epoch = generation;
+    setState(() {
+      savingBackgroundLock = true;
+      backgroundLockSaveFailed = false;
+    });
+    try {
+      await persistProfile(
+        {},
+        sessionOnly: true,
+        backgroundLockPreference: enabled,
+      );
+      if (!mounted || epoch != generation) return;
+      final state = WidgetsBinding.instance.lifecycleState;
+      if (enabled &&
+          (state == AppLifecycleState.hidden ||
+              state == AppLifecycleState.paused))
+        lock();
+    } catch (_) {
+      if (mounted && epoch == generation)
+        setState(() => backgroundLockSaveFailed = true);
+    } finally {
+      if (mounted && epoch == generation)
+        setState(() => savingBackgroundLock = false);
     }
   }
 
@@ -1273,6 +1431,27 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             );
           },
         ),
+      SwitchListTile(
+        title: Text(
+          tr(
+            'Блокировать при скрытии приложения',
+            'Lock when the app is hidden',
+          ),
+        ),
+        subtitle: Text(
+          backgroundLockSaveFailed
+              ? tr(
+                  'Не удалось сохранить настройку.',
+                  'Could not save this setting.',
+                )
+              : tr(
+                  'Для возврата понадобится пароль локального профиля. Обмен продолжится после разблокировки.',
+                  'Use your local profile passphrase to return. Delivery resumes after unlocking.',
+                ),
+        ),
+        value: profile?['lockWhenHidden'] == true,
+        onChanged: savingBackgroundLock ? null : setBackgroundLock,
+      ),
       if (Platform.isLinux)
         SwitchListTile(
           title: Text(tr('Уведомления о сообщениях', 'Message notifications')),
@@ -1340,31 +1519,14 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
           ),
         ),
       for (final d in devices)
-        ListTile(
-          leading: const Icon(Icons.computer_outlined),
-          title: Text(
-            d['id'] == profile!['deviceId']
-                ? tr('Это устройство', 'This device')
-                : tr('Другое устройство', 'Other device'),
-          ),
-          onTap: () => showDialog<void>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: Text(tr('Идентификатор устройства', 'Device identifier')),
-              content: SelectableText(d['id'] as String),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text(tr('Закрыть', 'Close')),
-                ),
-              ],
-            ),
-          ),
-          subtitle: Text(
-            d['revoked'] == true
-                ? tr('Отозвано', 'Revoked')
-                : tr('Активно', 'Active'),
-          ),
+        DeviceTile(
+          key: ValueKey(d['id']),
+          device: d as Map,
+          current: d['id'] == profile!['deviceId'],
+          russian: ru,
+          onRevoke: revokingDevice
+              ? null
+              : () => revokeDevice(d['id'] as String),
         ),
       const SizedBox(height: 24),
       Text(

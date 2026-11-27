@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exchange fresh text through the installed release APK and the native Linux delivery client."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -133,6 +134,21 @@ def exchange(root):
         sent = page['messages']
         if len(sent) != 2 or {m['senderDeviceId'] for m in sent} != {peer.identity, phone.identity}:
             raise RuntimeError('Expected one stored envelope per device')
+        report = Path(os.environ['RUNNER_TEMP']) / 'android-interop-evidence'
+        report.mkdir(mode=0o700, exist_ok=True)
+        screenshot = subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'], timeout=15)
+        if not screenshot.startswith(b'\x89PNG\r\n\x1a\n'):
+            raise RuntimeError('Android did not return a PNG screenshot')
+        (report / 'android-conversation.png').write_bytes(screenshot)
+        apk = Path(os.environ['RUNNER_TEMP']) / 'android-candidate/app-release.apk'
+        with apk.open('rb') as artifact:
+            digest = hashlib.file_digest(artifact, 'sha256').hexdigest()
+        (report / 'interop.json').write_text(json.dumps({
+            'apkSha256': digest, 'androidApi': adb('shell', 'getprop', 'ro.build.version.sdk').strip(),
+            'sourceCommit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+            'androidToLinuxDecrypted': True, 'linuxReplyShownOnAndroid': True,
+            'linuxReplyAcknowledgedByAndroid': True, 'envelopes': len(sent),
+        }, indent=2) + '\n')
         print('PASS: installed APK sent and displayed distinct private messages over verified TLS; '
               'two native clients, two committed envelopes, a recipient acknowledgement.')
     finally:

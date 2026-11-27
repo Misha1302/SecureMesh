@@ -145,6 +145,24 @@ fn save_outgoing(
     Ok(result)
 }
 
+// Reply references carry only authenticated message coordinates. Text for previews is
+// always resolved from the recipient's own conversation, never from a supplied quote.
+fn local_reply(db: &Connection, group: &str, req: &Value) -> Result<Option<Value>> {
+    if req["replyTo"].is_null() {
+        return Ok(None);
+    }
+    let id = s(&req["replyTo"], "id")?;
+    let sender = s(&req["replyTo"], "sender")?;
+    uuid::Uuid::parse_str(id)?;
+    let found: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM authored WHERE group_id=?1 AND id=?2 AND json_extract(event,'$.sender')=?3
+         UNION ALL SELECT 1 FROM incoming WHERE group_id=?1 AND id=?2 AND json_extract(event,'$.sender')=?3)",
+        params![group, id, sender], |r| r.get(0),
+    )?;
+    ensure!(found, "reply target not in this conversation");
+    Ok(Some(json!({"id":id,"sender":sender})))
+}
+
 fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
     let op = s(req, "op")?;
     if op == "init" {
@@ -365,22 +383,27 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
         }
         "draft_get" => {
             let group = s(req, "group")?;
-            let text: Option<String> = db.query_row(
-                "SELECT body FROM conversation_drafts WHERE group_id=?",
-                [group], |r| r.get(0),
-            ).optional()?;
-            Ok(json!({"text": text.unwrap_or_default()}))
+            let draft = db.query_row(
+                "SELECT body,reply_ref FROM conversation_drafts WHERE group_id=?", [group],
+                |r| Ok((r.get::<_,String>(0)?, r.get::<_,Option<String>>(1)?)),
+            ).optional()?.unwrap_or_default();
+            let mut result = json!({"text":draft.0});
+            if let Some(reply) = draft.1 {
+                result["replyTo"] = serde_json::from_str(&reply)?;
+            }
+            Ok(result)
         }
         "draft_put" => {
             let group = s(req, "group")?;
             let text = s(req, "text")?;
             ensure!(text.len() <= 64000, "draft too large");
-            if text.is_empty() {
+            let reply = local_reply(db, group, req)?.map(|r| r.to_string());
+            if text.is_empty() && reply.is_none() {
                 db.execute("DELETE FROM conversation_drafts WHERE group_id=?", [group])?;
             } else {
                 db.execute(
-                    "INSERT INTO conversation_drafts(group_id,body) VALUES(?,?) ON CONFLICT(group_id) DO UPDATE SET body=excluded.body",
-                    params![group, text],
+                    "INSERT INTO conversation_drafts(group_id,body,reply_ref) VALUES(?,?,?) ON CONFLICT(group_id) DO UPDATE SET body=excluded.body,reply_ref=excluded.reply_ref",
+                    params![group, text, reply],
                 )?;
             }
             Ok(json!({}))
@@ -403,7 +426,11 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             check_group(db, &g)?;
             let text = s(req, "text")?;
             ensure!(text.chars().count() <= 4000, "text too large");
-            let payload = json!({"id":id,"group":gid,"sender":identity,"text":text});
+            let reply = local_reply(db, gid, req)?;
+            let mut payload = json!({"id":id,"group":gid,"sender":identity,"text":text});
+            if let Some(reference) = &reply {
+                payload["replyTo"] = reference.clone();
+            }
             let epoch = g.epoch().as_u64();
             let msg = g.create_message(p, &signer, &serde_json::to_vec(&payload)?)?;
             let result = json!({"id":id,"group":gid,"epoch":epoch,"kind":1,"ciphertext":B64.encode(msg.tls_serialize_detached()?)});
@@ -418,7 +445,7 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             // Clear only the exact draft submitted and only on the first successful
             // queue transaction. A retry with the same message id must preserve a new draft.
             if let Some(draft) = req["submittedDraft"].as_str() {
-                db.execute("DELETE FROM conversation_drafts WHERE group_id=? AND body=?", params![gid, draft])?;
+                db.execute("DELETE FROM conversation_drafts WHERE group_id=? AND body=? AND reply_ref IS ?", params![gid, draft, reply.map(|r| r.to_string())])?;
             }
             Ok(result)
         }
@@ -695,6 +722,15 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS peer_receipts(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS conversation_drafts(group_id TEXT PRIMARY KEY,body TEXT NOT NULL);")?;
+    let migration = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let has_reply: bool = migration.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_drafts') WHERE name='reply_ref')",
+        [], |r| r.get(0),
+    )?;
+    if !has_reply {
+        migration.execute_batch("ALTER TABLE conversation_drafts ADD COLUMN reply_ref TEXT")?;
+    }
+    migration.commit()?;
     Ok(db)
 }
 

@@ -17,6 +17,7 @@ check bundle python3 tools/verify_bundle.py
 check build dotnet build src/SecureMesh.Api --no-restore
 check crypto-build cargo build --locked --manifest-path src/crypto_core/Cargo.toml
 check encrypted-drafts cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test conversation_drafts
+check encrypted-replies cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test message_replies
 check crypto python3 tests/crypto/process_spike.py
 check smoke python3 tests/integration/smoke.py
 check delivery .local/venv/bin/python tests/integration/delivery.py
@@ -39,6 +40,7 @@ if [[ -x .local/flutter/bin/flutter ]]; then
   check pub-license-inventory python3 tools/inventory_pub_licenses.py
   check flutter-check bash -c 'FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$PWD/.local/pub-cache" .local/flutter/bin/flutter analyze --no-pub apps/client_flutter'
   check flutter-layout bash -c 'cd apps/client_flutter && FLUTTER_SUPPRESS_ANALYTICS=true PUB_CACHE="$(pwd)/../../.local/pub-cache" ../../.local/flutter/bin/flutter test --no-pub test'
+  check tls-timeout python3 tests/integration/tls_timeout.py
   check native-transport .local/venv/bin/python tests/integration/native_transport.py
   check native-session .local/venv/bin/python tests/integration/native_session.py
   check onboarding-recovery .local/venv/bin/python tests/integration/onboarding_recovery.py

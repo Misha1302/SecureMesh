@@ -46,6 +46,53 @@ void main() {
     controller.dispose();
   });
 
+  test(
+    'reply selection follows the encrypted draft and is consumed on enqueue',
+    () async {
+      final controller = TextEditingController();
+      final records = <String, Map<String, dynamic>>{};
+      final queued = <Map<String, dynamic>>[];
+      Future<Map<String, dynamic>> command(
+        String op,
+        Map<String, dynamic> args,
+      ) async {
+        final group = args['group'] as String;
+        if (op == 'draft_get') return records[group] ?? {'text': ''};
+        if (op == 'draft_put') records[group] = Map.of(args);
+        if (op == 'queue') {
+          queued.add(Map.of(args));
+          records.remove(group);
+        }
+        return {};
+      }
+
+      final drafts = ConversationDrafts(
+        controller,
+        command,
+        () => fail('write failed'),
+      );
+      await drafts.select('A');
+      const target = (id: '123', sender: 'alice');
+      drafts.setReply(target);
+      controller.text = 'reply text';
+      await drafts.select('B');
+      expect(drafts.reply, isNull);
+      await drafts.select('A');
+      expect(drafts.reply, target);
+      expect(controller.text, 'reply text');
+      drafts.setReply(null);
+      await drafts.select('A');
+      expect(drafts.reply, isNull);
+      drafts.setReply(target);
+      await drafts.enqueue('A', 'new-id');
+      expect(queued.single['replyTo'], {'id': '123', 'sender': 'alice'});
+      expect(drafts.reply, isNull);
+      expect(controller.text, '');
+      await drafts.close();
+      controller.dispose();
+    },
+  );
+
   test('queue completion preserves edits made in flight and lock drains pending saves', () async {
     final controller = TextEditingController();
     final sent = Completer<void>();

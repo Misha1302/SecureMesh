@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 import 'src/rust/frb_generated.dart';
+import 'tls_client.dart';
 import 'transport.dart';
 
 ExternalLibrary _nativeLibrary() {
@@ -52,6 +53,5 @@ HttpClient nativeHttpClient() {
   final context = SecurityContext(withTrustedRoots: true);
   final cert = Platform.environment['SECUREMESH_CERT_FILE'];
   if (cert != null) context.setTrustedCertificates(cert);
-  return HttpClient(context: context)
-    ..connectionTimeout = const Duration(seconds: 12);
+  return meshTlsClient(context);
 }

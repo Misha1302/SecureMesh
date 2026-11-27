@@ -10,24 +10,47 @@ import 'profile_files.dart';
 import 'src/rust/api.dart';
 import 'transport.dart';
 
+Uri? httpsServerOrigin(String text) {
+  final value = text.trim();
+  if (value.isEmpty || value.contains(RegExp(r'[@\s\\]'))) return null;
+  try {
+    final uri = Uri.parse(value);
+    if (uri.scheme != 'https' ||
+        uri.host.isEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment ||
+        (uri.path.isNotEmpty && uri.path != '/') ||
+        uri.port < 1 ||
+        uri.port > 65535) {
+      return null;
+    }
+    return Uri.parse(uri.origin);
+  } on FormatException {
+    return null;
+  }
+}
+
 class AccountOnboarding extends StatefulWidget {
   const AccountOnboarding({
     super.key,
     required this.onReady,
     this.russian = true,
     this.signIn = false,
+    this.defaultServer = const String.fromEnvironment('SECUREMESH_API_ORIGIN'),
     this.resumePath,
     this.resumePassphrase,
   }) : assert((resumePath == null) == (resumePassphrase == null));
   final Future<void> Function(String path, String passphrase) onReady;
   final bool russian, signIn;
+  final String defaultServer;
   final String? resumePath, resumePassphrase;
   @override
   State<AccountOnboarding> createState() => _AccountOnboardingState();
 }
 
 class _AccountOnboardingState extends State<AccountOnboarding> {
-  final endpoint = TextEditingController(text: 'https://127.0.0.1:5088');
+  final endpoint = TextEditingController();
+  bool editingServer = false;
   final username = TextEditingController();
   final email = TextEditingController();
   final password = TextEditingController();
@@ -51,6 +74,10 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
   void initState() {
     super.initState();
     ru = widget.russian;
+    final configured =
+        Platform.environment['SECUREMESH_API_ORIGIN'] ?? widget.defaultServer;
+    endpoint.text = httpsServerOrigin(configured)?.origin ?? '';
+    editingServer = endpoint.text.isEmpty;
     if (widget.signIn) step = 2;
     if (widget.resumePath != null) {
       busy = true;
@@ -121,10 +148,8 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
       error = null;
     });
     try {
-      final base = Uri.parse(endpoint.text.trim());
-      if (base.scheme != 'https' ||
-          base.host.isEmpty ||
-          base.userInfo.isNotEmpty) {
+      final base = httpsServerOrigin(endpoint.text);
+      if (base == null) {
         throw ApiFailure(400, 'TLS_REQUIRED');
       }
       http ??= nativeHttpClient();
@@ -139,7 +164,12 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
             'password': password.text,
           },
         );
-        if (mounted) setState(() => step = 1);
+        if (mounted) {
+          setState(() {
+            step = 1;
+            editingServer = false;
+          });
+        }
       } else if (step == 1) {
         await meshHttp(
           http!,
@@ -293,19 +323,19 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
           );
         }
         if (controller == endpoint) {
-          final uri = Uri.tryParse(v.trim());
-          if (uri == null ||
-              uri.scheme != 'https' ||
-              uri.host.isEmpty ||
-              uri.userInfo.isNotEmpty ||
-              uri.hasQuery ||
-              uri.hasFragment ||
-              (uri.path.isNotEmpty && uri.path != '/')) {
+          if (httpsServerOrigin(v) == null) {
             return tr(
               'Укажите HTTPS-адрес сервера без пути, например https://chat.example.org.',
               'Enter the HTTPS server address without a path, for example https://chat.example.org.',
             );
           }
+        }
+        if (controller == email &&
+            !RegExp(r'^[^@\s<>]+@[^@\s<>]+$').hasMatch(v.trim())) {
+          return tr(
+            'Введите адрес почты, например name@example.org.',
+            'Enter an email address, such as name@example.org.',
+          );
         }
         if (controller == username &&
             !RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(v)) {
@@ -361,8 +391,8 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                       Text(
                         step == 1
                             ? tr(
-                                'Введите код из письма. В локальной версии письмо доступно в Mailpit.',
-                                'Enter the code from your email. Local development mail is available in Mailpit.',
+                                'Проверьте почту ${email.text.trim()} и папку «Спам». Код действует 30 минут.',
+                                'Check ${email.text.trim()} and your spam folder. The code is valid for 30 minutes.',
                               )
                             : step == 2
                             ? resuming || draft != null
@@ -380,15 +410,45 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                               ),
                       ),
                       const SizedBox(height: 24),
-                      field(
-                        endpoint,
-                        tr('Сервер HTTPS', 'HTTPS server'),
-                        help: tr(
-                          'Введите https:// и имя сервера, без пути /health/ready или /v1.',
-                          'Enter https:// and the server name. Leave off paths such as /health/ready or /v1.',
+                      if (editingServer &&
+                          step != 1 &&
+                          !verifiedRegistrationHere &&
+                          !resuming &&
+                          draft == null)
+                        field(
+                          endpoint,
+                          tr('Сервер HTTPS', 'HTTPS server'),
+                          help: tr(
+                            'Введите адрес, полученный от организатора или администратора сервера.',
+                            'Enter the address supplied by your organizer or server administrator.',
+                          ),
+                          example: 'https://chat.example.org',
+                          keyboard: TextInputType.url,
+                        )
+                      else if (endpoint.text.isNotEmpty)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(tr('Сервер аккаунта', 'Account server')),
+                          subtitle: Text(endpoint.text),
+                          trailing:
+                              step != 1 &&
+                                  !verifiedRegistrationHere &&
+                                  !resuming &&
+                                  draft == null
+                              ? IconButton(
+                                  tooltip: tr(
+                                    'Изменить сервер',
+                                    'Change server',
+                                  ),
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: busy
+                                      ? null
+                                      : () => setState(
+                                          () => editingServer = true,
+                                        ),
+                                )
+                              : null,
                         ),
-                        keyboard: TextInputType.url,
-                      ),
                       if (step != 1)
                         field(
                           username,
@@ -499,6 +559,11 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                               ? null
                               : () => setState(() {
                                   step = step == 0 ? 2 : 0;
+                                  if (step == 0 && verifiedRegistrationHere) {
+                                    verifiedRegistrationHere = false;
+                                    password.clear();
+                                    localPassword.clear();
+                                  }
                                   error = null;
                                 }),
                           child: Text(

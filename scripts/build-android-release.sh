@@ -9,7 +9,11 @@ set -euo pipefail
 : "${ANDROID_HOME:?set the Android SDK location}"
 cd "$(dirname "$0")/../apps/client_flutter"
 flutter pub get --enforce-lockfile
-flutter build apk --release --no-pub
+build_options=()
+if [[ -n "${SECUREMESH_API_ORIGIN:-}" ]]; then
+  build_options+=("--dart-define=SECUREMESH_API_ORIGIN=$SECUREMESH_API_ORIGIN")
+fi
+flutter build apk --release --no-pub "${build_options[@]}"
 apk=build/app/outputs/flutter-apk/app-release.apk
 android_tools="$ANDROID_HOME/build-tools/36.0.0/apksigner"
 if [[ ! -x "$android_tools" ]]; then

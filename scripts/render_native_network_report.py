@@ -20,7 +20,7 @@ for profile, rate, rtt, loss in [('gprs', 20, 1500, 3), ('severe', 10, 3000, 10)
         records = data['records']
         counts = Counter(r['sender'] for r in records)
         reasons = []
-        if data.get('child_exit_code') != 0:
+        if data.get('child_exit_code') != 0 or data.get('timed_out'):
             reasons.append('successful native process exit not confirmed')
         if not all(key in data for key in ('rate_kbps_each_direction','rtt_ms','packet_loss_percent','source_sha256','binary_sha256','netem-a_tc_stats','netem-b_tc_stats')):
             failures.append(f'{profile}/{seed}: incomplete parent provenance')
