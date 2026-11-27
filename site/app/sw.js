@@ -11,6 +11,8 @@ const assets = [
   url('profile.css'),
   url('profile.js'),
   url('vault.js'),
+  url('crypto/securemesh_browser_crypto.js'),
+  url('crypto/securemesh_browser_crypto_bg.wasm'),
   url('app.css'),
   url('app.js'),
   url('manifest.webmanifest'),
