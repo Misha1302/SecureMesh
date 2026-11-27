@@ -1,0 +1,41 @@
+name: Package SecureMesh web app
+
+on:
+  pull_request:
+    paths:
+      - 'site/app/**'
+      - 'scripts/package-pwa.py'
+      - '.github/workflows/pwa.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'site/app/**'
+      - 'scripts/package-pwa.py'
+      - '.github/workflows/pwa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            site/app
+            scripts/package-pwa.py
+          sparse-checkout-cone-mode: false
+      - name: Stage dedicated-origin bundle
+        run: python3 scripts/package-pwa.py "$RUNNER_TEMP/securemesh-pwa"
+      - name: Verify staged checksums
+        run: |
+          cd "$RUNNER_TEMP/securemesh-pwa"
+          sha256sum --check --strict SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: securemesh-pwa
+          path: ${{ runner.temp }}/securemesh-pwa/
+          if-no-files-found: error
