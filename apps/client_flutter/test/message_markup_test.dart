@@ -60,6 +60,64 @@ void main() {
     },
   );
 
+  testWidgets('Ctrl+K wraps only the selection and validates the address', (
+    tester,
+  ) async {
+    final controller = TextEditingController(text: 'see guide today');
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageComposer(
+            controller: controller,
+            tr: english,
+            onSubmitted: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byType(TextField));
+    controller.selection = const TextSelection(baseOffset: 9, extentOffset: 4);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, 'guide'), findsOneWidget);
+    final address = find.widgetWithText(TextFormField, 'Address');
+    for (final value in [
+      'javascript:alert(1)',
+      'https://name:password@example.org',
+    ]) {
+      await tester.enterText(address, value);
+      await tester.tap(find.text('Insert'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Enter an HTTP or HTTPS address without credentials.'),
+        findsOneWidget,
+      );
+      expect(controller.text, 'see guide today');
+    }
+    await tester.enterText(address, 'https://example.org/chapter(1)');
+    await tester.tap(find.text('Insert'));
+    await tester.pumpAndSettle();
+    expect(
+      controller.text,
+      'see [guide](https://example.org/chapter%281%29) today',
+    );
+    expect(
+      controller.selection.extentOffset,
+      controller.text.indexOf(' today'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: MessageMarkup(controller.text, tr: english)),
+      ),
+    );
+    await tester.tap(find.widgetWithText(ActionChip, 'guide'));
+    await tester.pumpAndSettle();
+    expect(find.text('https://example.org/chapter%281%29'), findsOneWidget);
+  });
+
   testWidgets('links are inspectable, spoilers hidden, HTML is literal text', (
     tester,
   ) async {

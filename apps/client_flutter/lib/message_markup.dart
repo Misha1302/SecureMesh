@@ -61,6 +61,137 @@ void formatMessage(TextEditingController controller, MessageFormat format) {
   );
 }
 
+final _unsafeLinkText = RegExp(
+  r'[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]',
+);
+bool _validLinkLabel(String label) =>
+    label.trim().isNotEmpty &&
+    label.length <= 256 &&
+    !label.contains(']') &&
+    !_unsafeLinkText.hasMatch(label);
+
+bool _validAddress(String address) {
+  if (address.length > 2048 ||
+      _unsafeLinkText.hasMatch(address) ||
+      RegExp(r'[\s\\()]').hasMatch(address)) {
+    return false;
+  }
+  final uri = Uri.tryParse(address);
+  return uri != null &&
+      (uri.scheme == 'https' || uri.scheme == 'http') &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty;
+}
+
+Future<void> _insertLink(
+  BuildContext context,
+  TextEditingController controller,
+  TranslateMarkup tr,
+) async {
+  final source = controller.value;
+  final selection = source.selection.isValid
+      ? source.selection
+      : TextSelection.collapsed(offset: source.text.length);
+  var label = selection.textInside(source.text);
+  var address = _validAddress(label) ? label : '';
+  final form = GlobalKey<FormState>();
+  final updated = await showDialog<TextEditingValue>(
+    context: context,
+    builder: (dialog) {
+      String target() =>
+          address.trim().replaceAll('(', '%28').replaceAll(')', '%29');
+      String replacement() => '[${label.trim()}](${target()})';
+      String message() => source.text.replaceRange(
+        selection.start,
+        selection.end,
+        replacement(),
+      );
+      void insert() {
+        if (form.currentState!.validate()) {
+          Navigator.pop(
+            dialog,
+            TextEditingValue(
+              text: message(),
+              selection: TextSelection.collapsed(
+                offset: selection.start + replacement().length,
+              ),
+            ),
+          );
+        }
+      }
+
+      return AlertDialog(
+        title: Text(tr('Вставить ссылку', 'Insert link')),
+        scrollable: true,
+        content: Form(
+          key: form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                initialValue: label,
+                autofocus: label.isEmpty,
+                decoration: InputDecoration(
+                  labelText: tr('Текст ссылки', 'Link text'),
+                ),
+                textInputAction: TextInputAction.next,
+                onChanged: (v) => label = v,
+                validator: (_) => _validLinkLabel(label.trim())
+                    ? null
+                    : tr(
+                        'Введите подпись до 256 символов без ] и переносов.',
+                        'Enter a label of up to 256 characters without ] or line breaks.',
+                      ),
+              ),
+              TextFormField(
+                initialValue: address,
+                autofocus: label.isNotEmpty,
+                keyboardType: TextInputType.url,
+                textDirection: TextDirection.ltr,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: tr('Адрес', 'Address'),
+                  hintText: 'https://',
+                ),
+                onChanged: (v) => address = v,
+                onFieldSubmitted: (_) => insert(),
+                validator: (_) {
+                  if (!_validAddress(target())) {
+                    return tr(
+                      'Укажите адрес HTTP или HTTPS без данных для входа.',
+                      'Enter an HTTP or HTTPS address without credentials.',
+                    );
+                  }
+                  return message().characters.length <= 4000
+                      ? null
+                      : tr(
+                          'Сообщение превышает 4000 символов.',
+                          'Message exceeds 4000 characters.',
+                        );
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: Text(tr('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: insert,
+            child: Text(tr('Вставить', 'Insert')),
+          ),
+        ],
+      );
+    },
+  );
+  if (context.mounted && updated != null && controller.text == source.text) {
+    controller.value = updated;
+  }
+}
+
 class MessageComposer extends StatelessWidget {
   const MessageComposer({
     super.key,
@@ -74,6 +205,14 @@ class MessageComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    void apply(MessageFormat format) {
+      if (format == MessageFormat.link) {
+        _insertLink(context, controller, tr);
+      } else {
+        formatMessage(controller, format);
+      }
+    }
+
     return CallbackShortcuts(
       bindings: {
         for (final meta in [false, true])
@@ -81,9 +220,18 @@ class MessageComposer extends StatelessWidget {
             LogicalKeyboardKey.keyB: MessageFormat.bold,
             LogicalKeyboardKey.keyI: MessageFormat.italic,
             LogicalKeyboardKey.keyU: MessageFormat.underline,
+            LogicalKeyboardKey.keyK: MessageFormat.link,
           }.entries)
             SingleActivator(entry.key, control: !meta, meta: meta): () =>
-                formatMessage(controller, entry.value),
+                apply(entry.value),
+        for (final meta in [false, true])
+          SingleActivator(
+            LogicalKeyboardKey.keyX,
+            control: !meta,
+            meta: meta,
+            shift: true,
+          ): () =>
+              apply(MessageFormat.strike),
       },
       child: TextField(
         controller: controller,
@@ -101,7 +249,7 @@ class MessageComposer extends StatelessWidget {
                     label: tr(format.ru, format.en),
                     onPressed: () {
                       state.hideToolbar();
-                      formatMessage(controller, format);
+                      apply(format);
                     },
                   ),
               ],
@@ -113,7 +261,7 @@ class MessageComposer extends StatelessWidget {
           suffixIcon: PopupMenuButton<MessageFormat>(
             tooltip: tr('Форматирование', 'Formatting'),
             icon: const Icon(Icons.text_format),
-            onSelected: (format) => formatMessage(controller, format),
+            onSelected: apply,
             itemBuilder: (_) => [
               for (final format in MessageFormat.values)
                 PopupMenuItem(
@@ -165,8 +313,7 @@ class MessageMarkup extends StatelessWidget {
           ),
         );
       } else if (m[9] != null) {
-        final uri = Uri.tryParse(m[10]!);
-        if (uri == null || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
+        if (!_validAddress(m[10]!) || !_validLinkLabel(m[9]!)) {
           spans.add(TextSpan(text: m[0]));
         } else {
           spans.add(
