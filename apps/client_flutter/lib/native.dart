@@ -9,6 +9,7 @@ import 'src/rust/api.dart';
 import 'local_client.dart';
 import 'session.dart';
 import 'delivery_client.dart';
+import 'conversation_drafts.dart';
 import 'message_markup.dart';
 import 'onboarding.dart';
 import 'profile_files.dart';
@@ -29,6 +30,8 @@ class _ClientAppState extends State<ClientApp> {
   );
   final pass = TextEditingController();
   final composer = TextEditingController();
+  ConversationDrafts? drafts;
+  Future<void> closingStore = Future.value();
   final chatScroll = ScrollController();
   bool showLocalUnlock = (Platform.environment['SECUREMESH_PROFILE'] ?? '')
       .trim()
@@ -76,6 +79,43 @@ class _ClientAppState extends State<ClientApp> {
     }
   }
 
+  void releaseLocalStore() {
+    final current = store;
+    final pending = drafts?.close();
+    drafts = null;
+    store = null;
+    if (pending == null) {
+      current?.dispose();
+    } else {
+      closingStore = pending.whenComplete(() => current?.dispose());
+    }
+  }
+
+  Future<void> restoreDraft(String? group) async {
+    final active = drafts;
+    if (active == null) return;
+    final restoring = active.select(group);
+    if (mounted)
+      setState(() {
+        messages = [];
+        unread = false;
+        sendError = null;
+      });
+    try {
+      await restoring;
+    } catch (_) {
+      if (mounted && identical(active, drafts) && profile?['group'] == group) {
+        setState(
+          () => sendError = tr(
+            'Не удалось открыть черновик. Откройте чат ещё раз.',
+            'Could not open your draft. Reopen this chat.',
+          ),
+        );
+      }
+    }
+    if (mounted && identical(active, drafts)) setState(() {});
+  }
+
   @override
   void dispose() {
     timer?.cancel();
@@ -83,7 +123,7 @@ class _ClientAppState extends State<ClientApp> {
     transport?.close();
     session?.close();
     http?.close(force: true);
-    store?.dispose();
+    releaseLocalStore();
     path.dispose();
     pass.dispose();
     composer.dispose();
@@ -99,6 +139,8 @@ class _ClientAppState extends State<ClientApp> {
       error = null;
     });
     try {
+      await closingStore;
+      if (!mounted) return;
       if (!File(path.text.trim()).existsSync()) {
         throw StateError('PROFILE_FILE_MISSING');
       }
@@ -139,8 +181,28 @@ class _ClientAppState extends State<ClientApp> {
         return;
       }
       profile = saved;
-      store = opening;
+      final unlocked = opening;
+      store = unlocked;
       opening = null;
+      drafts = ConversationDrafts(
+        composer,
+        (operation, args) async {
+          return jsonDecode(
+            await unlocked.execute(
+              request: jsonEncode({'op': operation, ...args}),
+            ),
+          ) as Map<String, dynamic>;
+        },
+        () {
+          if (mounted)
+            setState(
+              () => sendError = tr(
+                'Не удалось сохранить черновик на устройстве.',
+                'Could not save this draft on your device.',
+              ),
+            );
+        },
+      );
       http = nativeHttpClient();
       session = AccountSession(
         http: http!,
@@ -157,6 +219,8 @@ class _ClientAppState extends State<ClientApp> {
       );
       delivery = NativeDelivery(crypto: crypto, transport: transport!);
       pass.clear();
+      await restoreDraft(saved['group'] as String?);
+      if (!mounted || !identical(unlocked, store)) return;
       await reload();
       timer?.cancel();
       if (profile?['group'] != null) unawaited(pump());
@@ -167,7 +231,7 @@ class _ClientAppState extends State<ClientApp> {
       delivery?.close();
       transport = null;
       http?.close(force: true);
-      store?.dispose();
+      releaseLocalStore();
       store = null;
       profile = null;
       error = tr(
@@ -268,18 +332,24 @@ class _ClientAppState extends State<ClientApp> {
       if (mounted) setState(() => messages = []);
       return;
     }
+    final group = profile!['group'];
+    final epoch = generation;
     final nearEnd =
         follow ||
         !chatScroll.hasClients ||
         chatScroll.position.extentAfter < 96;
     final previous = messages.isEmpty ? null : messages.last["id"];
-    final result = await crypto('timeline', {'group': profile!['group']});
-    if (mounted) {
+    final result = await crypto('timeline', {'group': group});
+    if (mounted && epoch == generation && group == profile?['group']) {
       setState(() => messages = result['messages'] as List<dynamic>);
       final changed = messages.isNotEmpty && messages.last['id'] != previous;
       if (changed) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || !chatScroll.hasClients) return;
+          if (!mounted ||
+              epoch != generation ||
+              group != profile?['group'] ||
+              !chatScroll.hasClients)
+            return;
           if (nearEnd) {
             chatScroll.jumpTo(chatScroll.position.maxScrollExtent);
           } else {
@@ -310,7 +380,10 @@ class _ClientAppState extends State<ClientApp> {
                 key: profile![key],
             };
       await crypto('profile_put', {'profile': updated});
+      final previousGroup = profile?['group'];
       profile = updated;
+      if (previousGroup != updated['group'])
+        await restoreDraft(updated['group'] as String?);
     });
     // Preserve the queue after a failed write; this caller still receives the failure.
     profileWrites = write.catchError((_) {});
@@ -412,28 +485,30 @@ class _ClientAppState extends State<ClientApp> {
   }
 
   Future<void> send() async {
-    final draft = composer.text;
-    final text = draft.trim();
+    final text = composer.text.trim();
     final epoch = generation;
-    if (sending || text.isEmpty || profile?['trustConfirmed'] != true) return;
+    final group = profile?['group'] as String?;
+    final active = drafts;
+    if (sending ||
+        text.isEmpty ||
+        group == null ||
+        active == null ||
+        !active.readyFor(group) ||
+        profile?['trustConfirmed'] != true)
+      return;
     bool persisted = false;
     setState(() {
       sending = true;
       sendError = null;
     });
     try {
-      await crypto('queue', {
-        'group': profile!['group'],
-        'id': messageId(),
-        'text': text,
-      });
+      await active.enqueue(group, messageId());
       persisted = true;
-      if (epoch != generation) return;
-      if (composer.text == draft) composer.clear();
+      if (epoch != generation || profile?['group'] != group) return;
       unawaited(pump());
       await reload(follow: true);
     } catch (_) {
-      if (mounted && epoch == generation) {
+      if (mounted && epoch == generation && profile?['group'] == group) {
         setState(
           () => sendError = persisted
               ? tr(
@@ -459,7 +534,7 @@ class _ClientAppState extends State<ClientApp> {
     session?.close();
     transport = null;
     http?.close(force: true);
-    store?.dispose();
+    releaseLocalStore();
     setState(() {
       store = null;
       showLocalUnlock = true;
@@ -1040,11 +1115,13 @@ class _ClientAppState extends State<ClientApp> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child: MessageComposer(
-                controller: composer,
-                tr: tr,
-                onSubmitted: (_) => send(),
-              ),
+              child: drafts?.readyFor(profile?['group'] as String?) != true
+                  ? const LinearProgressIndicator()
+                  : MessageComposer(
+                      controller: composer,
+                      tr: tr,
+                      onSubmitted: (_) => send(),
+                    ),
             ),
             const SizedBox(width: 12),
             IconButton.filled(

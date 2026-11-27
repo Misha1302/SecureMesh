@@ -363,6 +363,28 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             set_meta(db, &format!("pending:{gid}"), "")?;
             Ok(json!({"epoch":group.epoch().as_u64()}))
         }
+        "draft_get" => {
+            let group = s(req, "group")?;
+            let text: Option<String> = db.query_row(
+                "SELECT body FROM conversation_drafts WHERE group_id=?",
+                [group], |r| r.get(0),
+            ).optional()?;
+            Ok(json!({"text": text.unwrap_or_default()}))
+        }
+        "draft_put" => {
+            let group = s(req, "group")?;
+            let text = s(req, "text")?;
+            ensure!(text.len() <= 64000, "draft too large");
+            if text.is_empty() {
+                db.execute("DELETE FROM conversation_drafts WHERE group_id=?", [group])?;
+            } else {
+                db.execute(
+                    "INSERT INTO conversation_drafts(group_id,body) VALUES(?,?) ON CONFLICT(group_id) DO UPDATE SET body=excluded.body",
+                    params![group, text],
+                )?;
+            }
+            Ok(json!({}))
+        }
         "queue" => {
             let gid = s(req, "group")?;
             let id = s(req, "id")?;
@@ -393,6 +415,11 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                 "INSERT INTO authored VALUES(?,?,?)",
                 params![gid, id, serde_json::to_string(&payload)?],
             )?;
+            // Clear only the exact draft submitted and only on the first successful
+            // queue transaction. A retry with the same message id must preserve a new draft.
+            if let Some(draft) = req["submittedDraft"].as_str() {
+                db.execute("DELETE FROM conversation_drafts WHERE group_id=? AND body=?", params![gid, draft])?;
+            }
             Ok(result)
         }
         "process" => {
@@ -667,6 +694,7 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS local_cursors(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL,cursor TEXT NOT NULL);")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS peer_receipts(group_id TEXT PRIMARY KEY,seq INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS authored(group_id TEXT,id TEXT,event TEXT NOT NULL,PRIMARY KEY(group_id,id));")?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS conversation_drafts(group_id TEXT PRIMARY KEY,body TEXT NOT NULL);")?;
     Ok(db)
 }
 
