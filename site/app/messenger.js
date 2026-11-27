@@ -2,6 +2,16 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const usernamePattern = /^[a-z0-9_]{3,32}$/;
 const empty = Object.freeze({});
 const pageSize = 6;
+const backgroundPullInterval = 9_000;
+const activePollInterval = 2_500;
+
+function jitter(delay) {
+  return Math.round(delay * (0.85 + Math.random() * 0.3));
+}
+
+function nextAfter(ids, previous) {
+  return ids.length ? ids[(ids.indexOf(previous) + 1) % ids.length] : undefined;
+}
 
 function requireValue(condition, code, message) {
   if (!condition) throw Object.assign(new Error(message), { code });
@@ -65,7 +75,17 @@ export function createMessenger(ctx) {
   let generation = 0;
   let timer;
   let activeTick;
+  let directoryRequest;
   let directory;
+  let directoryDue = 0;
+  let selected;
+  let preferredSend;
+  let previousBackground;
+  let previousOutbox;
+  let previousAction;
+  let backgroundDue = 0;
+  let rateLimitedUntil = 0;
+  let rateLimitFailure;
   const remoteBlocked = new Set();
 
   const state = () => ctx.state()?.messenger ?? empty;
@@ -100,7 +120,7 @@ export function createMessenger(ctx) {
     if (status === "unknown") await ctx.run("pin", { ...fields, confirmed: true });
   }
 
-  async function refresh() {
+  async function fetchDirectory() {
     const [requests, welcomes, chats] = await Promise.all([
       ctx.api("/v1/chat-requests"),
       ctx.api("/v1/crypto/welcomes"),
@@ -114,7 +134,25 @@ export function createMessenger(ctx) {
       if (chat && !samePeer(chat, row)) remoteBlocked.add(row.id);
     }
     directory = { requests, welcomes, chats };
+    const pending = welcomes.length || requests.some((row) => !row.established);
+    const populated = Object.keys(state().chats ?? {}).length > 0;
+    directoryDue = performance.now() + jitter(pending || !populated ? 12_500 : 30_000);
     return directory;
+  }
+
+  function refresh() {
+    if (performance.now() < rateLimitedUntil) return Promise.reject(rateLimitFailure);
+    directoryRequest ??= fetchDirectory().catch((error) => {
+      rememberRateLimit(error);
+      throw error;
+    }).finally(() => { directoryRequest = undefined; });
+    return directoryRequest;
+  }
+
+  function rememberRateLimit(error) {
+    if (error.status !== 429 || performance.now() < rateLimitedUntil) return;
+    rateLimitedUntil = performance.now() + jitter(12_000);
+    rateLimitFailure = error;
   }
 
   async function postInvitation(row) {
@@ -252,6 +290,7 @@ export function createMessenger(ctx) {
       data.outbox[id] = envelope;
       data.chats[group].messages.push({ id, text, direction: "outgoing", status: "queued" });
     });
+    preferredSend = group;
     if (running) schedule(0);
     return id;
   }
@@ -297,6 +336,7 @@ export function createMessenger(ctx) {
 
   async function ingest(group, row, ownId, nextCursor) {
     const chat = readChat(group);
+    ensureUsable(chat);
     const envelope = {
       id: uuid(row.clientMessageId), sender: uuid(row.senderDeviceId),
       kind: row.envelopeKind, epoch: row.mlsEpoch, seq: row.serverSequence,
@@ -317,6 +357,13 @@ export function createMessenger(ctx) {
       const saved = data.chats[group];
       if (processed?.text !== undefined) {
         saved.messages.push({ id: envelope.id, text: processed.text, direction: "incoming", status: "received" });
+      } else if (processed?.unsupported === true) {
+        saved.messages.push({
+          id: envelope.id,
+          text: "Зашифрованное вложение или событие. Этот клиент его не отображает.",
+          direction: "incoming",
+          status: "unsupported",
+        });
       }
       if (processed?.active === false) saved.active = false;
       if (processed?.epoch !== undefined) saved.epoch = processed.epoch;
@@ -351,9 +398,10 @@ export function createMessenger(ctx) {
   }
 
   async function pull(group, ownId) {
-    let cursor = readChat(group).cursor;
+    const { seq: initialSeq, cursor: savedCursor } = readChat(group);
+    let cursor = savedCursor;
     let rebased = false;
-    for (let index = 0; index < 4 && readChat(group).active !== false; index++) {
+    for (let index = 0; index < 2 && readChat(group).active !== false; index++) {
       ensureUsable(readChat(group));
       const query = new URLSearchParams({ conversationId: group, cursor, limit: String(pageSize) });
       let page;
@@ -377,77 +425,132 @@ export function createMessenger(ctx) {
         await ingest(group, row, ownId, last ? page.nextCursor : "");
         if (readChat(group).active === false) break;
       }
-      if (!page.hasMore) break;
-      cursor = page.nextCursor;
+      return { changed: pageSequence > initialSeq, hasMore: page.hasMore };
     }
+    return { changed: false, hasMore: false };
   }
 
-  async function cycle() {
+  async function cycle(forceDirectory) {
+    if (performance.now() < rateLimitedUntil) throw rateLimitFailure;
     let failure;
     async function attempt(work) {
-      try { await work(); } catch (error) {
+      try { return await work(); } catch (error) {
+        if (error.status === 429) {
+          rememberRateLimit(error);
+          throw error;
+        }
         if (["conflict", "locked"].includes(error.code)) throw error;
         failure ??= error;
       }
     }
-    await attempt(refresh);
-    for (const row of Object.values(state().invites ?? {})) await attempt(() => postInvitation(row));
-    for (const [id, accepted] of Object.entries(state().accepted ?? {})) {
-      if (!accepted.posted) await attempt(() => postAccept(id, accepted));
+    const pendingActions = new Map([
+      ...Object.entries(state().invites ?? {}).map(([id, row]) => [id, () => postInvitation(row)]),
+      ...Object.entries(state().accepted ?? {}).filter(([, row]) => !row.posted)
+        .map(([id, row]) => [id, () => postAccept(id, row)]),
+      ...Object.entries(state().proposals ?? {}).filter(([, row]) => row.prepared && !row.posted)
+        .map(([id, row]) => [id, () => postEstablish(id, row)]),
+      ...Object.values(state().chats ?? {}).filter((chat) => chat.welcomePending)
+        .map((chat) => [chat.id, () => ackWelcome(chat.id)]),
+    ]);
+    const actionIds = [...pendingActions.keys()];
+    for (let index = 0; index < Math.min(2, actionIds.length); index++) {
+      previousAction = nextAfter(actionIds, previousAction);
+      await attempt(pendingActions.get(previousAction));
     }
-    for (const [id, proposal] of Object.entries(state().proposals ?? {})) {
-      if (proposal.prepared && !proposal.posted) await attempt(() => postEstablish(id, proposal));
+    if (forceDirectory || performance.now() >= directoryDue) await attempt(refresh);
+
+    const usable = Object.values(state().chats ?? {}).filter((chat) => (
+      chat.active !== false && !chat.welcomePending && !remoteBlocked.has(chat.id)
+    )).map((chat) => chat.id);
+    const pending = Object.values(state().outbox ?? {}).filter((entry) => usable.includes(entry.group));
+    const dispatchGroups = [...new Set(pending.map((entry) => entry.group))];
+    const outbound = dispatchGroups.includes(preferredSend)
+      ? preferredSend : nextAfter(dispatchGroups, previousOutbox);
+    preferredSend = undefined;
+    previousOutbox = outbound;
+    const foreground = outbound ?? (usable.includes(selected) ? selected : undefined);
+    const candidates = usable.filter((id) => id !== foreground);
+    let background;
+    // At most two sync pages per cycle regardless of how many chats are stored.
+    if (candidates.length && (forceDirectory || performance.now() >= backgroundDue)) {
+      background = candidates.includes(selected) && !previousBackground
+        ? selected : nextAfter(candidates, previousBackground);
+      previousBackground = background;
+      backgroundDue = performance.now() + jitter(backgroundPullInterval);
     }
-    const ownId = await identity();
-    for (const chat of Object.values(state().chats ?? {})) {
-      if (chat.welcomePending) await attempt(() => ackWelcome(chat.id));
-      if (chat.active === false || readChat(chat.id).welcomePending) continue;
-      await attempt(() => pull(chat.id, ownId));
+    let busy = pending.length > 0 || pendingActions.size > 2;
+    if (foreground || background) {
+      const ownId = await identity();
+      for (const id of [foreground, background].filter(Boolean)) {
+        const result = await attempt(() => pull(id, ownId));
+        if (result?.changed || result?.hasMore) busy = true;
+      }
+    }
+    if (outbound && readChat(outbound).active !== false) {
       // Oldest first so one failed send cannot be overtaken within this conversation.
-      for (const entry of Object.values(state().outbox ?? {}).filter((row) => row.group === chat.id).slice(0, 6)) {
-        try { await flushOne(entry); } catch (error) {
-          await attempt(() => { throw error; });
-          break;
-        }
+      for (const entry of pending.filter((row) => row.group === outbound).slice(0, 3)) {
+        if (!await attempt(async () => { await flushOne(entry); return true; })) break;
       }
     }
     if (failure) throw failure;
+    return busy;
+  }
+
+  function work(forceDirectory) {
+    activeTick ??= cycle(forceDirectory).finally(() => { activeTick = undefined; });
+    return activeTick;
+  }
+
+  async function tick({ forceDirectory = true } = {}) {
+    if (activeTick && forceDirectory) await refresh();
+    await work(forceDirectory);
     return directory;
   }
 
-  function tick() {
-    activeTick ??= cycle().finally(() => { activeTick = undefined; });
-    return activeTick;
+  function select(id) {
+    const next = id ? uuid(id) : undefined;
+    if (selected === next) return;
+    selected = next;
+    if (running) schedule(0);
   }
 
   let notifyUpdate;
   let notifyError;
   let retryDelay = 1000;
+  let idleDelay = activePollInterval;
+  let timerSequence = 0;
   function schedule(delay) {
     clearTimeout(timer);
     const current = generation;
+    const sequence = ++timerSequence;
     timer = setTimeout(async () => {
       if (!running || current !== generation) return;
-      let wait = 3000;
+      let wait;
       try {
-        const result = await tick();
-        if (running && current === generation) notifyUpdate?.(result);
+        const busy = await work(false);
+        if (running && current === generation) notifyUpdate?.(directory);
         retryDelay = 1000;
+        idleDelay = busy ? activePollInterval : Math.min(idleDelay * 1.5, selected ? 6500 : 14_000);
+        wait = Math.min(jitter(idleDelay), Math.max(0, directoryDue - performance.now()));
       } catch (error) {
         if (running && current === generation) notifyError?.(error);
         if (["locked", "conflict"].includes(error.code)) {
           stop();
           return;
         }
-        wait = retryDelay;
+        wait = Math.max(jitter(retryDelay), rateLimitedUntil - performance.now());
         retryDelay = Math.min(retryDelay * 2, 30_000);
       }
-      if (running && current === generation) schedule(wait);
+      if (running && current === generation && sequence === timerSequence) schedule(wait);
     }, delay);
   }
 
   function wake() {
-    if (running) schedule(0);
+    if (running) {
+      directoryDue = 0;
+      backgroundDue = 0;
+      schedule(0);
+    }
   }
 
   function start(onUpdate, onError) {
@@ -467,5 +570,5 @@ export function createMessenger(ctx) {
     globalThis.removeEventListener?.("online", wake);
   }
 
-  return { refresh, invite, accept, establish, join, send, tick, start, stop };
+  return { refresh, invite, accept, establish, join, send, tick, select, start, stop };
 }

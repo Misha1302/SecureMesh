@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { mock } from "node:test";
 import { createMessenger, fingerprint } from "../../site/app/messenger.js";
 import init, { execute } from "../../site/app/crypto/securemesh_browser_crypto.js";
 
@@ -22,6 +23,7 @@ function client(username) {
   const initialized = JSON.parse(execute(undefined, JSON.stringify({ op: "init", identity: device })));
   let stored = { snapshot: initialized.snapshot, identity: initialized.result };
   let failProcess;
+  let unsupportedProcess;
   async function api(path, data) {
     const { pathname, searchParams } = new URL(path, "https://api.example");
     if (path === "/v1/chat-requests") {
@@ -131,6 +133,10 @@ function client(username) {
       const result = JSON.parse(execute(stored.snapshot, JSON.stringify({ ...fields, op })));
       if (op === "keypackage") packages.set(device, result.result);
       if (op === "process" && fields.id === failProcess) throw new Error("simulated vault write failure");
+      if (op === "process" && fields.id === unsupportedProcess) {
+        // Exercise the WASM caller's authenticated unsupported-event result shape.
+        result.result = { unsupported: true };
+      }
       await ctx.update((draft) => {
         draft.snapshot = result.snapshot;
         mutate?.(draft, result.result);
@@ -138,7 +144,11 @@ function client(username) {
       return result.result;
     },
   };
-  const record = { own: initialized.result, ctx, failOn(id) { failProcess = id; } };
+  const record = {
+    own: initialized.result, ctx,
+    failOn(id) { failProcess = id; },
+    unsupportedOn(id) { unsupportedProcess = id; },
+  };
   clients.set(username, record);
   return record;
 }
@@ -193,8 +203,71 @@ await b.send(group, "reverse direction");
 await b.tick();
 await reopened.tick();
 assert.equal(alice.ctx.state().messenger.chats[group].messages.at(-1).text, "reverse direction");
+const unsupported = await a.send(group, "fixture plaintext for hidden event");
+bob.unsupportedOn(unsupported);
+await reopened.tick();
+await b.tick();
+const placeholder = bob.ctx.state().messenger.chats[group].messages.at(-1);
+assert.equal(placeholder.id, unsupported);
+assert.equal(placeholder.status, "unsupported");
+assert(placeholder.text.includes("Зашифрованное"));
+assert(!placeholder.text.includes("fixture plaintext"));
+
 replaceKey = true;
 await reopened.refresh();
 await assert.rejects(reopened.send(group, "blocked"), { code: "changed-key" });
 assert.equal(alice.ctx.state().messenger.chats[group].peerKey, bob.own.public_key);
+
+// Keep the background directory cadence independent of the active thread and
+// prove that every idle group eventually gets a turn in the bounded sync slot.
+let now = 1;
+mock.method(performance, "now", () => now);
+const ids = Array.from({ length: 11 }, () => randomUUID());
+const idleState = {
+  identity: alice.own,
+  messenger: { chats: Object.fromEntries(ids.map((id) => [id, { id, seq: 0, cursor: "" }])) },
+};
+let paths = [];
+let limited = false;
+const idle = createMessenger({
+  state: () => idleState,
+  api: async (path) => {
+    paths.push(path);
+    if (limited) throw Object.assign(new Error("limited"), { status: 429 });
+    if (!path.startsWith("/v1/sync?")) return [];
+    const conversationId = new URL(path, "https://fixture.test").searchParams.get("conversationId");
+    return { conversationId, messages: [], hasMore: false, nextCursor: "empty" };
+  },
+});
+const syncGroups = (routes) => routes.filter((p) => p.startsWith("/v1/sync?"))
+  .map((p) => new URL(p, "https://fixture.test").searchParams.get("conversationId"));
+idle.select(ids[0]);
+await idle.tick({ forceDirectory: false });
+assert.deepEqual(syncGroups(paths), ids.slice(0, 2));
+paths = [];
+now += 2_500;
+await idle.tick({ forceDirectory: false });
+assert.deepEqual(paths.length, 1);
+assert.deepEqual(syncGroups(paths), [ids[0]]);
+paths = [];
+await idle.tick();
+assert.equal(paths.filter((path) => !path.startsWith("/v1/sync?")).length, 3, "manual refresh must query directory");
+
+const background = new Set(ids.slice(1, 3));
+for (let index = 0; index < ids.length; index++) {
+  paths = [];
+  now += 11_000;
+  await idle.tick({ forceDirectory: false });
+  const pulled = syncGroups(paths);
+  assert(pulled.length <= 2);
+  assert.equal(pulled[0], ids[0]);
+  if (pulled[1]) background.add(pulled[1]);
+}
+assert.equal(background.size, ids.length - 1);
+limited = true;
+await assert.rejects(idle.tick(), { status: 429 });
+paths = [];
+await assert.rejects(idle.tick({ forceDirectory: false }), { status: 429 });
+assert.deepEqual(paths, []);
+mock.restoreAll();
 console.log("Browser messenger transport passed with real WASM");
