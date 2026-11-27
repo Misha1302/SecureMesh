@@ -1,0 +1,86 @@
+{
+  "tool": "cargo-audit 0.23.0",
+  "advisory_db_commit": "c9f6c91a44dbad9d71742329e9df061279f9c4be",
+  "base_commit": "857208f1f8743342eea6371bd0e63ecbbe841fd5",
+  "command": "cargo-audit audit --file src/crypto_core/Cargo.lock --db <checkout> --no-fetch --json",
+  "advisories_ignored": [],
+  "scan": [
+    {
+      "lockfile": "before",
+      "package_count": 306,
+      "exit_code": 1,
+      "findings": [
+        {
+          "id": "RUSTSEC-2026-0387",
+          "package": "crypto-bigint",
+          "version": "0.5.5"
+        },
+        {
+          "id": "RUSTSEC-2026-0331",
+          "package": "libcrux-kem",
+          "version": "0.0.9"
+        },
+        {
+          "id": "RUSTSEC-2026-0330",
+          "package": "libcrux-kem",
+          "version": "0.0.9"
+        },
+        {
+          "id": "RUSTSEC-2026-0459",
+          "package": "libsqlite3-sys",
+          "version": "0.35.0"
+        },
+        {
+          "id": "RUSTSEC-2026-0592",
+          "package": "url",
+          "version": "2.5.8"
+        }
+      ],
+      "warnings": {
+        "unmaintained": [
+          {
+            "id": "RUSTSEC-2026-0173",
+            "package": "proc-macro-error2",
+            "version": "2.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "lockfile": "after",
+      "package_count": 306,
+      "exit_code": 1,
+      "findings": [
+        {
+          "id": "RUSTSEC-2026-0387",
+          "package": "crypto-bigint",
+          "version": "0.5.5"
+        },
+        {
+          "id": "RUSTSEC-2026-0331",
+          "package": "libcrux-kem",
+          "version": "0.0.9"
+        },
+        {
+          "id": "RUSTSEC-2026-0330",
+          "package": "libcrux-kem",
+          "version": "0.0.9"
+        },
+        {
+          "id": "RUSTSEC-2026-0459",
+          "package": "libsqlite3-sys",
+          "version": "0.35.0"
+        }
+      ],
+      "warnings": {
+        "unmaintained": [
+          {
+            "id": "RUSTSEC-2026-0173",
+            "package": "proc-macro-error2",
+            "version": "2.0.1"
+          }
+        ]
+      }
+    }
+  ]
+}

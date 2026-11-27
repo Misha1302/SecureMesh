@@ -1,6 +1,8 @@
 # Security limitations — release blocked
 
-Actual V2 RustSec scan exits 1 (`reports/evidence/v2-rustsec-initial.txt` and `reports/evidence/rustsec-current.txt`), database commit 472a4c9a785030434f15d7da84964d60fbe789ab. All four findings remain:
+The modernization scan using cargo-audit 0.23.0 and RustSec advisory DB commit `c9f6c91a44dbad9d71742329e9df061279f9c4be` (2026-11-26) found five advisories in the original lockfile. Updating `url` from 2.5.8 to 2.5.9 and `form_urlencoded` from 1.2.2 to 1.2.3 cleared RUSTSEC-2026-0592. The second scan exited 1 with the four findings listed below. The scoped before/after results are in `reports/evidence/modernization-rustsec.json`.
+
+Historical V2 RustSec scan exits 1 (`reports/evidence/v2-rustsec-initial.txt` and `reports/evidence/rustsec-current.txt`), database commit 472a4c9a785030434f15d7da84964d60fbe789ab. All four findings remain:
 
 | Advisory | Locked package | Finding |
 |---|---|---|
