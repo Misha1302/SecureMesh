@@ -51,6 +51,8 @@ If readiness or the contract fails after switching, restore the prior proxy conf
 
 The nginx template allows 4,194,320 bytes for `PUT /v1/conversations/{group}/blobs/{id}` with lowercase canonical UUIDs. This fits native 4 MiB attachments and PWA photos with their 16-byte AES-GCM tag. Every other request, including `/parts` and other methods on the blob URL, keeps the 128 KiB cap. The API still enforces trusted membership, ciphertext length and quotas.
 
+The API virtual host writes HTTP status and elapsed time to stdout. Its normal access log omits the remote address, request line, query string, headers and account or conversation identifiers. Its error threshold is critical because routine nginx errors can include the original request line. Restrict access and retention for runtime and platform logs. Review upstream load balancers, the default virtual host, application logging and crash diagnostics separately before staging.
+
 Substitute only the three deployment placeholders to retain the nginx variables:
 
 ```sh

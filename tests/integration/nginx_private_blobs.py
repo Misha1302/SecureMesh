@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Verify scoped ingress sizes through real loopback nginx, TLS and the HTTPS API fixture."""
+import asyncio
 import hashlib
 import http.client
 import os
+import re
 import socket
 import ssl
 import subprocess
@@ -13,6 +15,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
+
+from websockets.asyncio.client import connect
 
 import delivery as d
 from directory import establish
@@ -61,11 +65,12 @@ def ingress(root, api_port):
                 time.sleep(.1)
         else:
             raise RuntimeError("nginx did not become ready")
-        yield endpoint, tls
+        yield endpoint, tls, container
     except Exception:
-        # Retain proxy diagnostics before the ephemeral container is removed.
-        logs = subprocess.run(["docker", "logs", container], capture_output=True, text=True)
-        print(logs.stderr, file=sys.stderr)
+        logs = subprocess.run(["docker", "logs", container], capture_output=True)
+        for line in logs.stdout.splitlines()[-12:]:
+            if re.fullmatch(rb"securemesh status=[0-9]{3} elapsed=[0-9.]+", line):
+                print(line.decode("ascii"), file=sys.stderr)
         raise
     finally:
         subprocess.run(["docker", "stop", "-t", "2", container], check=True, capture_output=True)
@@ -79,6 +84,24 @@ def exchange(port_number, tls, method, path, body=None, headers=None):
         return response.status, response.headers, response.read()
     finally:
         connection.close()
+
+
+async def verify_stream(endpoint, tls, token, device):
+    async with connect(f"wss://127.0.0.1:{endpoint}/v1/stream", ssl=tls, proxy=None,
+                       additional_headers={"Authorization": "Bearer " + token}, open_timeout=10) as stream:
+        hello = d.wire.Frame(protocol_version=1, kind=d.wire.HELLO)
+        hello.hello.supported_versions.append(1)
+        hello.hello.client_device_id = uuid.UUID(device.identity).bytes
+        ping = d.wire.Frame(protocol_version=1, kind=d.wire.PING)
+        for request, expected in [(hello, d.wire.HELLO), (ping, d.wire.PONG)]:
+            request.request_id = uuid.uuid4().bytes
+            frame = request.SerializeToString()
+            await stream.send(d._VarintBytes(len(frame)) + frame)
+            raw = await asyncio.wait_for(stream.recv(), timeout=10)
+            length, start = d._DecodeVarint(raw, 0)
+            assert length == len(raw) - start
+            reply = d.wire.Frame.FromString(raw[start:])
+            assert reply.request_id == request.request_id and reply.kind == expected
 
 
 def verify(endpoint, tls, group, account):
@@ -97,13 +120,7 @@ def verify(endpoint, tls, group, account):
             assert response["Content-Type"].startswith("text/html"), payload[:120]
         return payload
 
-    with patch.object(d, "BASE", f"https://127.0.0.1:{endpoint}"), patch.object(d, "TLS", tls):
-        stream = d.Stream(token, account["device"])
-        try:
-            assert stream.exchange(d.wire.Frame(protocol_version=1, kind=d.wire.PING)).kind == d.wire.PONG
-        finally:
-            stream.close()
-
+    asyncio.run(verify_stream(endpoint, tls, token, account["device"]))
 
     for size in (WHOLE_BLOB_MAX, PHOTO_MAX):
         route = f"/v1/conversations/{group}/blobs/{uuid.uuid4()}"
@@ -138,19 +155,39 @@ def verify(endpoint, tls, group, account):
     send("POST", "/v1/auth/session/activity", 200, body=b"x" * DEFAULT_MAX)
 
 
+def check_request_logs(endpoint, tls, container, server):
+    # Synthetic markers cover a routed request, an unmatched path and an ingress rejection.
+    marker = "privacy-check-" + uuid.uuid4().hex
+    for path, headers, expected in [
+        ("/health/ready?probe=" + marker, {}, 200),
+        ("/" + marker, {}, 404),
+        ("/" + marker, {"Content-Length": str(DEFAULT_MAX + 1), "Expect": "100-continue"}, 413),
+    ]:
+        status, _, _ = exchange(endpoint, tls, "GET", path, headers=headers)
+        assert status == expected, (status, expected)
+    proxy = subprocess.run(["docker", "logs", container], capture_output=True, check=True)
+    # Never echo request logs. They may include unrelated sensitive fixture data.
+    sources = {"nginx": proxy.stdout + proxy.stderr, "API": Path(server.log.name).read_bytes()}
+    leaking = [name for name, data in sources.items() if marker.encode() in data]
+    assert not leaking, "Request coordinates appeared in " + ", ".join(leaking)
+    for status in (200, 404, 413):
+        assert f"securemesh status={status} elapsed=".encode() in proxy.stdout
+
+
 def main():
     api_port = port()
     d.BASE = f"http://127.0.0.1:{api_port}"
     env = {"SECUREMESH_TEST_URLS": d.BASE, "BrowserClientOrigin": BROWSER_ORIGIN}
     with patch.dict(os.environ, env), database() as db:
-        with d.Server(db, legacy_bootstrap=False), tempfile.TemporaryDirectory() as work:
+        with d.Server(db, legacy_bootstrap=False) as server, tempfile.TemporaryDirectory() as work:
             root = Path(work)
             owner, peer = (d.account(root) for _ in range(2))
             owner["device"].pin(peer["device"])
             peer["device"].pin(owner["device"])
             group = establish(owner, peer)
             with tempfile.TemporaryDirectory() as frontend:
-                with ingress(Path(frontend), api_port) as (endpoint, tls):
+                with ingress(Path(frontend), api_port) as (endpoint, tls, container):
+                    check_request_logs(endpoint, tls, container, server)
                     verify(endpoint, tls, group, owner)
     print("PASS nginx private upload bounds, scoped limits, parts, PWA preflight, ordinary HTTP and WSS HELLO/PING")
 

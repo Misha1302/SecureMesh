@@ -1,5 +1,7 @@
 # Include in reviewed nginx http configuration after explicit env substitution.
 # Not deployed or production-validated.
+# Keep coarse response diagnostics without client/network identifiers or URL data.
+log_format securemesh_status 'securemesh status=$status elapsed=$request_time';
 map $http_upgrade $securemesh_upgrade {
     default upgrade;
     '' close;
@@ -16,6 +18,9 @@ server {
     ssl_certificate ${SECUREMESH_TLS_CERT_PATH};
     ssl_certificate_key ${SECUREMESH_TLS_KEY_PATH};
     server_tokens off;
+    access_log /dev/stdout securemesh_status;
+    # Ordinary nginx errors include the unredacted request line.
+    error_log /dev/stderr crit;
     client_max_body_size 128k;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
