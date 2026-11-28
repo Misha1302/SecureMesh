@@ -187,6 +187,7 @@ export function createMessenger(ctx) {
 
   function observeConflict(id) {
     remoteBlocked.set(id, Symbol());
+    ctx.onBindingConflict?.(id);
   }
 
   async function persistConflicts(ids) {
@@ -200,10 +201,14 @@ export function createMessenger(ctx) {
     });
   }
 
+  function bindingBlocked(chat) {
+    return chat.bindingConflict || remoteBlocked.has(chat.id) || reconfirming.has(chat.id);
+  }
+
   function ensureUsable(chat) {
     requireValue(chat, "unknown-chat", "This conversation has not been verified");
     requireValue(chat.active !== false, "inactive-chat", "This conversation is inactive");
-    requireValue(!chat.bindingConflict && !remoteBlocked.has(chat.id) && !reconfirming.has(chat.id),
+    requireValue(!bindingBlocked(chat),
       "changed-key", "The conversation contact changed");
   }
 
@@ -833,6 +838,11 @@ export function createMessenger(ctx) {
     globalThis.removeEventListener?.("online", wake);
   }
 
-  return { refresh, invite, accept, establish, join, reconfirmChat, send, sendPhoto, tick, select, start, stop,
+  function canViewPeer(id) {
+    const chat = state().chats?.[id];
+    return Boolean(chat && chat.active !== false && !bindingBlocked(chat));
+  }
+
+  return { canViewPeer, refresh, invite, accept, establish, join, reconfirmChat, send, sendPhoto, tick, select, start, stop,
     openPhoto, releasePhoto };
 }

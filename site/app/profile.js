@@ -205,7 +205,15 @@ function attach(handle, worker) {
     if (chat) chat.readCount = Math.max(chat.readCount ?? 0, Math.min(count, chat.receivedCount ?? 0));
   });
   instance.account = createAccount(ctx);
-  instance.mesh = createMessenger({ ...ctx, api: instance.account.api, apiBytes: instance.account.apiBytes });
+  instance.mesh = createMessenger({
+    ...ctx, api: instance.account.api, apiBytes: instance.account.apiBytes,
+    onBindingConflict: group => {
+      if (opened === instance && selected === group) {
+        clearPeerProfile();
+        show("peer-profile-open", false);
+      }
+    },
+  });
   return instance;
 }
 function disposePhotoControls(current) {
@@ -213,8 +221,75 @@ function disposePhotoControls(current) {
   current?.photoControls?.clear();
 }
 
+let peerProfileView;
+
+function clearPeerProfile() {
+  peerProfileView = undefined;
+  const button = byId("peer-profile-open");
+  button.textContent = "Анкета собеседника";
+  button.setAttribute("aria-expanded", "false");
+  show("peer-profile", false);
+  byId("peer-profile-note").textContent = "";
+  for (const id of ["peer-profile-status", "peer-profile-bio"]) {
+    byId(id).textContent = "";
+    show(id, false);
+  }
+}
+
+function peerProfileContext() {
+  const state = opened?.handle.state;
+  if (!selected || !state?.session || state.session.refreshPending ||
+      !state.enrollmentVerified || state.trustState !== "DEVICE_TRUSTED" ||
+      !opened.mesh.canViewPeer(selected)) return;
+  const { peerDevice, peerKey } = state.messenger.chats[selected];
+  return { current: opened, group: selected, peerDevice, peerKey };
+}
+
+function samePeerProfile(view, context) {
+  return view && context && view.current === context.current && view.group === context.group &&
+    view.peerDevice === context.peerDevice && view.peerKey === context.peerKey;
+}
+
+byId("peer-profile-open").onclick = async () => {
+  if (peerProfileView) {
+    clearPeerProfile();
+    return;
+  }
+  const view = peerProfileContext();
+  if (!view || document.hidden) return;
+  peerProfileView = view;
+  const button = byId("peer-profile-open");
+  button.textContent = "Закрыть анкету";
+  button.setAttribute("aria-expanded", "true");
+  show("peer-profile", true);
+  const note = byId("peer-profile-note");
+  note.textContent = "Загрузка…";
+  const active = () => peerProfileView === view && !document.hidden &&
+    samePeerProfile(view, peerProfileContext());
+  try {
+    const result = await view.current.account.api(
+      `/v1/conversations/${view.group}/profile-text/${view.peerDevice}`,
+    );
+    if (!active()) return;
+    for (const [field, limit] of [["status", 80], ["bio", 280]]) {
+      const value = result?.[field];
+      if (value !== null && (typeof value !== "string" || [...value].length > limit))
+        throw failure("format");
+    }
+    for (const field of ["status", "bio"]) {
+      const id = `peer-profile-${field}`;
+      byId(id).textContent = result[field] ?? "";
+      show(id, Boolean(result[field]));
+    }
+    note.textContent = result.status || result.bio ? "" : "Нет доступных сведений.";
+  } catch {
+    if (active()) note.textContent = "Анкета недоступна.";
+  }
+};
+
 function lock() {
   generation++;
+  clearPeerProfile();
   const current = opened;
   opened = null;
   disposePhotoControls(current);
@@ -380,7 +455,10 @@ function layout() {
   show("backup", !!state);
   show("conversations", trusted);
   show("profile-text", trusted);
-  if (!trusted) clearProfileText();
+  if (!trusted) {
+    clearProfileText();
+    clearPeerProfile();
+  }
   show("security-email", trusted);
   if (!trusted) {
     byId("security-email").open = false;
@@ -439,6 +517,7 @@ function watchUnread(chat, target) {
 }
 document.addEventListener("visibilitychange", () => {
   stopWatchingUnread();
+  if (document.hidden) clearPeerProfile();
   if (opened && !byId("conversations").hidden) renderChats();
 });
 
@@ -502,6 +581,9 @@ function renderChats() {
     else button.removeAttribute("aria-current");
   }
   const chat = chats[selected];
+  const peerContext = peerProfileContext();
+  if (peerProfileView && !samePeerProfile(peerProfileView, peerContext)) clearPeerProfile();
+  show("peer-profile-open", Boolean(peerContext));
   byId("conversations").classList.toggle("thread-open", Boolean(chat));
   show("thread-placeholder", !chat);
   show("thread", Boolean(chat));

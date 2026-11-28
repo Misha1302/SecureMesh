@@ -226,8 +226,19 @@ main:has(#conversations:not([hidden])) #title {
   margin: 0;
 }
 .thread-header, #compose { display: flex; align-items: center; gap: .65rem; padding: .7rem 1rem; }
-.thread-header { min-height: 3.75rem; border-bottom: 1px solid var(--line); }
+.thread-header { min-height: 3.75rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .thread-header h2 { overflow-wrap: anywhere; }
+#peer-profile {
+  flex: 1 0 100%;
+  min-width: 0;
+  max-height: min(12rem, 35vh);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  padding-top: .25rem;
+}
+#peer-profile p { margin: .25rem 0; white-space: pre-wrap; }
+#peer-profile p:empty { display: none; }
+#peer-profile-status { font-weight: 650; }
 #to-chats { display: none; }
 #timeline { overflow-y: auto; overscroll-behavior: contain; background: var(--bg); padding: 1rem; }
 #messages { display: grid; gap: .5rem; margin: 0; }
