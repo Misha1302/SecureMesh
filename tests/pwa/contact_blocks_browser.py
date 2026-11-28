@@ -103,10 +103,14 @@ def exercise(origin, api_port, pin):
         expect(bio).to_have_text("")
         owner.locator("#password").fill(owner_password)
         owner.locator("#enter").click()
+        owner.set_viewport_size({"width": 390, "height": 844})
         row.click()
         toggle.click()
         owner.locator("#peer-invitations summary").click()
         expect(action).to_have_text("Разблокировать")
+        action.scroll_into_view_if_needed()
+        expect(action).to_be_in_viewport(ratio=1)
+        expect(owner.locator("#compose button")).to_be_in_viewport(ratio=1)
 
         # DELETE has cross-origin authorization only for this route and origin.
         request = playwright.request.new_context(base_url=f"https://127.0.0.1:{api_port}", ignore_https_errors=True)

@@ -91,6 +91,7 @@ jobs:
           .local/venv/bin/playwright install --with-deps chromium firefox webkit
       - name: Verify browser accounts, encrypted storage, cross-platform MLS and offline delivery
         run: |
+          node tests/pwa/history_search.mjs
           node tests/pwa/image_headers.mjs
           node tests/pwa/account.mjs
           node tests/pwa/messenger_transport.mjs
@@ -101,5 +102,6 @@ jobs:
             .local/venv/bin/python tests/pwa/native_photo_browser.py --browser "$browser"
           done
           .local/venv/bin/python tests/pwa/contact_blocks_browser.py
+          .local/venv/bin/python tests/pwa/history_search_browser.py
           .local/venv/bin/python tests/pwa/recovery_browser.py
           .local/venv/bin/python tests/pwa/private_image_browser.py
