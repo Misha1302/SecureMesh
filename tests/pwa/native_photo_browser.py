@@ -3,6 +3,7 @@
 import argparse
 import base64
 import hashlib
+import os
 import re
 import secrets
 import sys
@@ -63,7 +64,16 @@ def exchange(root, origin, api_port, pin, engine):
         page.locator("[data-action=join]").click(timeout=25_000)
         page.locator("#chat-list").get_by_role("button", name=re.compile(name)).click()
         group, message = setup["id"], str(uuid.uuid4())
-        png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGP8z/CfgYEBAAoEAgDdrjB4AAAAAElFTkSuQmCC"
+        # A synthetic landscape large enough to review the rendered preview.
+        def png_chunk(tag, content):
+            payload = tag + content
+            return len(content).to_bytes(4, "big") + payload + zlib.crc32(payload).to_bytes(4, "big")
+        width, height = 320, 200
+        rows = b"".join(b"\0" + b"".join(bytes((x * 255 // width, y * 255 // height, 120))
+                                               for x in range(width)) for y in range(height))
+        raw = (b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08\x02\0\0\0")
+               + png_chunk(b"IDAT", zlib.compress(rows)) + png_chunk(b"IEND", b""))
+        png = base64.b64encode(raw).decode()
         staged = device.call("attachment_prepare", group=group, id=message, data=png,
                              name="private.png", media="photo", caption="Тестовое фото")
         ciphertext = device.call("attachment_ciphertext", group=group, id=message)["ciphertext"]
@@ -80,14 +90,22 @@ def exchange(root, origin, api_port, pin, engine):
             page.get_by_role("button", name="Посмотреть фото").click(timeout=25_000)
         preview = page.locator("#messages img.private-photo-preview")
         expect(preview).to_be_visible()
-        assert preview.evaluate("async img => { await img.decode(); return [img.naturalWidth, img.naturalHeight]; }") == [2, 1]
+        assert preview.evaluate("async img => { await img.decode(); return [img.naturalWidth, img.naturalHeight]; }") == [320, 200]
+        evidence = os.environ.get("SECUREMESH_PHOTO_SCREENSHOTS")
+        def capture(name):
+            if evidence:
+                Path(evidence).mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(Path(evidence) / name), animations="disabled")
+        capture("desktop-received.png")
         page.set_viewport_size({"width": 390, "height": 844})
         page.locator("#to-chats").click()
         expect(preview).to_have_count(0)
         page.locator("#chat-list").get_by_role("button", name=re.compile(name)).click()
         page.get_by_role("button", name="Посмотреть фото").click()
         expect(preview).to_be_visible()
+        capture("phone-received.png")
         page.locator("#photo-picker summary").click()
+        capture("phone-send.png")
         ours = page.locator("#send-photo")
         file = ours.locator("input")
         uploads, submissions = [], []
@@ -129,10 +147,6 @@ def exchange(root, origin, api_port, pin, engine):
             page.route("**/v1/messages", lose_message_reply)
         raw_png = base64.b64decode(png)
 
-        def png_chunk(tag, content):
-            payload = tag + content
-            return len(content).to_bytes(4, "big") + payload + zlib.crc32(payload).to_bytes(4, "big")
-
         for invalid in [
             b"not an image",
             b"x" * (4 * 1024 * 1024 + 1),
@@ -150,6 +164,11 @@ def exchange(root, origin, api_port, pin, engine):
         sent = page.locator("#messages li.out").last
         expect(sent.get_by_text("Фото", exact=True)).to_be_visible()
         expect(sent.get_by_text("Принято сервером")).to_be_visible(timeout=40_000)
+        capture("phone-sent.png")
+        page.set_viewport_size({"width": 1280, "height": 800})
+        page.locator("#photo-picker summary").click()
+        capture("desktop-send.png")
+        page.locator("#photo-picker summary").click()
         if inject_loss:
             assert len(uploads) >= 2 and len(submissions) >= 2, (len(uploads), len(submissions))
             assert all(record == uploads[0] for record in uploads)
