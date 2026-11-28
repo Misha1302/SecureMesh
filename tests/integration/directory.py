@@ -28,7 +28,8 @@ def establish(a,b,check_crash=False):
     db.call('directory_consent',invitation=invitation,sender=da.identity,senderKey=da.public,username=a['username'],confirmed=True)
     d.request(f'/v1/chat-requests/{invitation}/accept',{},token=bt,expected=204)
     assert not next(q for q in d.request('/v1/chat-requests',token=at) if q['id']==invitation)['established']
-    published=d.request('/v1/crypto/keypackages',dict(payload=db.call('directory_consent_package',invitation=invitation)['keypackage']),token=bt,expected=201)
+    offer = dict(payload=db.call('directory_consent_package',invitation=invitation)['keypackage'], invitationId=invitation)
+    published=d.request('/v1/crypto/keypackages',offer,token=bt,expected=201)
     package=d.request('/v1/crypto/keypackages/lease',dict(invitationId=invitation,requestId=lease),token=at)
     assert package['reference']==published['reference']
     # Independent pins are a prerequisite, never inferred from the directory response.
@@ -38,11 +39,50 @@ def establish(a,b,check_crash=False):
     assert da.call('directory_prepare',**args)==request
     group=request['id']
     d.request('/v1/conversations/establish',request,token=at,expected=201)
+    assert d.request('/v1/crypto/keypackages', offer, token=bt) == published
     certificate=next(c for c in d.request('/v1/crypto/welcomes',token=bt) if c['group']==group)
     assert next(q for q in d.request('/v1/chat-requests',token=at) if q['id']==invitation)['established']
     db.call('directory_join',**certificate)
     d.request(f'/v1/crypto/welcomes/{group}/ack',{},token=bt,expected=204)
     return group
+
+
+def verify_package_recovery(a, b, outsider):
+    sender, recipient = a['device'], b['device']
+    sender.pin(recipient)
+    recipient.pin(sender)
+    invitation = str(uuid.uuid4())
+    lease = str(uuid.uuid4())
+    sender_token, recipient_token = a['session']['accessToken'], b['session']['accessToken']
+    d.request('/v1/chat-requests', dict(id=invitation, username=b['username']), token=sender_token, expected=201)
+    recipient.call('directory_consent', invitation=invitation, sender=sender.identity,
+                   senderKey=sender.public, username=a['username'], confirmed=True)
+
+    def publish(payload, expected=200, token=recipient_token):
+        return d.request('/v1/crypto/keypackages', dict(payload=payload, invitationId=invitation),
+                         token=token, expected=expected)
+
+    original = recipient.call('directory_consent_package', invitation=invitation)['keypackage']
+    publish(original, expected=404, token=outsider['session']['accessToken'])
+    first = publish(original, expected=201)
+    assert publish(original) == first
+    sql(f"UPDATE key_packages SET expires_at=now()-interval '1 second' WHERE offered_for='{uuid.UUID(invitation)}'")
+    assert publish(original, expected=409)['code'] == 'KEYPACKAGE_UNAVAILABLE'
+    replacement = recipient.call('directory_consent_package', invitation=invitation, replace=original)['keypackage']
+    assert replacement != original
+    second = publish(replacement, expected=201)
+    assert second != first
+    assert publish(replacement) == second
+    assert publish(original) == second
+    d.request(f'/v1/chat-requests/{invitation}/accept', {}, token=recipient_token, expected=204)
+    lease_req = dict(invitationId=invitation, requestId=lease)
+    assigned = d.request('/v1/crypto/keypackages/lease', lease_req, token=sender_token)
+    assert assigned['reference'] == second['reference'] and assigned['keypackage'] == replacement
+    assert publish(replacement) == second
+    sql(f"UPDATE key_packages SET lease_expires_at=now()-interval '1 second' WHERE lease_id='{uuid.UUID(lease)}'")
+    assert publish(replacement, expected=409)['code'] == 'KEYPACKAGE_LEASE_EXPIRED'
+    assert d.request('/v1/crypto/keypackages/lease', lease_req, token=sender_token,
+                     expected=409)['code'] == 'KEYPACKAGE_ALREADY_LEASED'
 
 
 def main():
@@ -138,7 +178,8 @@ def main():
         raw=f"SecureMesh/conversation-establish/v1\n{hostile}\n{binding['invitation']}\n{binding['lease']}\n{da.identity}\n{unexpected.identity}\n{package['reference']}\n{base64.b64encode(hashlib.sha256(base64.b64decode(hidden['welcome'])).digest()).decode()}\n1".encode()
         signature=da.call('sign',payload=base64.b64encode(raw).decode())['signature']
         unexpected.call('directory_join',reject=True,**binding,signature=signature)
-        print('PASS: real OpenMLS public KeyPackage validation; credential/key/signature substitution denied; trusted publication; explicit recipient consent; atomic one-use lease/race/idempotency; signed recipient-scoped Welcome; legacy bootstrap disabled; crash before local join COMMIT recovers; redelivery cannot roll back MLS; TLS two-way ciphertext delivery and membership IDOR; late bootstrap ACK retry after lease expiry; no private keys in server helper.')
+        verify_package_recovery(a, b, outsider)
+        print('PASS: real OpenMLS public KeyPackage validation; credential/key/signature substitution denied; trusted publication; explicit recipient consent; atomic one-use lease/race/idempotency; signed recipient-scoped Welcome; legacy bootstrap disabled; crash before local join COMMIT recovers; redelivery cannot roll back MLS; TLS two-way ciphertext delivery and membership IDOR; late bootstrap ACK retry after lease expiry; expired offer replacement without lease renewal; no private keys in server helper.')
 
 
 if __name__=='__main__':main()

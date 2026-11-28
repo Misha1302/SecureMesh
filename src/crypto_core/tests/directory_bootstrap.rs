@@ -75,6 +75,12 @@ fn directory_checks_package_and_persists_the_accepted_context() {
     drop(recipient);
     let recipient = open("recipient");
     assert_eq!(call(&recipient, &publish), package);
+    let mut replacement = publish.clone();
+    replacement["replace"] = package["keypackage"].clone();
+    let new_package = call(&recipient, &replacement);
+    assert_ne!(new_package, package);
+    assert_eq!(call(&recipient, &replacement), new_package);
+    assert_eq!(call(&recipient, &publish), new_package);
     assert_eq!(call(&recipient, &join)["epoch"], 1);
     drop(recipient);
     let recipient = open("recipient");

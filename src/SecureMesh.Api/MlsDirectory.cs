@@ -6,7 +6,7 @@ using Npgsql;
 namespace SecureMesh;
 
 public sealed record ChatRequestInput(Guid Id,string Username);
-public sealed record KeyPackageInput(byte[] Payload);
+public sealed record KeyPackageInput(byte[] Payload, Guid? InvitationId = null);
 public sealed record LeaseInput(Guid InvitationId,Guid RequestId);
 public sealed record EstablishInput(Guid Id,Guid InvitationId,Guid LeaseId,byte[] Welcome,byte[] Signature);
 
@@ -133,20 +133,74 @@ public static class MlsDirectory
 
     private static async Task<IResult> Publish(KeyPackageInput input,HttpContext ctx,NpgsqlDataSource db,PublicKeyPackageValidator validator)
     {
-        var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync();
+        var actor = await Sql.Authenticate(ctx, db);
+        await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
         byte[] key;
-        await using(var cmd=Sql.Cmd(c,"SELECT public_key FROM devices WHERE id=$1 AND trusted AND NOT revoked",actor.DeviceId))
-            key=await cmd.ExecuteScalarAsync() as byte[] ?? throw new ApiError(403,"DEVICE_NOT_TRUSTED");
-        var reference=await validator.Validate(input.Payload,actor.DeviceId,key,ctx.RequestAborted);
-        await using var tx=await c.BeginTransactionAsync();
-        await using(var cmd=Sql.Cmd(c,"SELECT id FROM devices WHERE id=$1 AND trusted AND NOT revoked FOR UPDATE",actor.DeviceId))
-            if(await cmd.ExecuteScalarAsync() is null) throw new ApiError(403,"DEVICE_NOT_TRUSTED");
-        await using(var old=Sql.Cmd(c,"SELECT 1 FROM key_packages WHERE reference=$1 AND device_id=$2 AND payload=$3",reference,actor.DeviceId,input.Payload))
-            if(await old.ExecuteScalarAsync() is not null) return Results.Ok(new{reference=Convert.ToBase64String(reference)});
-        await using(var count=Sql.Cmd(c,"SELECT count(*) FROM key_packages WHERE device_id=$1 AND lease_id IS NULL AND expires_at>now()",actor.DeviceId))
-            if((long)(await count.ExecuteScalarAsync())!>=64) throw new ApiError(429,"KEYPACKAGE_LIMIT");
-        await using(var cmd=Sql.Cmd(c,"INSERT INTO key_packages(reference,device_id,payload) VALUES($1,$2,$3)",reference,actor.DeviceId,input.Payload)) await cmd.ExecuteNonQueryAsync();
-        await tx.CommitAsync();return Results.Created("/v1/crypto/keypackages",new{reference=Convert.ToBase64String(reference)});
+        await using (var cmd = Sql.Cmd(c, "SELECT public_key FROM devices WHERE id=$1 AND trusted AND NOT revoked", actor.DeviceId))
+            key = await cmd.ExecuteScalarAsync(ctx.RequestAborted) as byte[] ?? throw new ApiError(403, "DEVICE_NOT_TRUSTED");
+        byte[]? reference = input.InvitationId is null
+            ? await validator.Validate(input.Payload, actor.DeviceId, key, ctx.RequestAborted) : null;
+        await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
+        if (input.InvitationId is Guid invitation)
+        {
+            // Serialize publication with leasing and establishment for this invitation.
+            await using var request = Sql.Cmd(c, """
+                SELECT 1 FROM chat_requests
+                WHERE id=$1 AND recipient_user=$2 AND (recipient_device IS NULL OR recipient_device=$3)
+                  AND expires_at>statement_timestamp()
+                FOR UPDATE
+                """, invitation, actor.UserId, actor.DeviceId);
+            if (await request.ExecuteScalarAsync(ctx.RequestAborted) is null)
+                throw new ApiError(404, "CHAT_REQUEST_NOT_FOUND");
+        }
+        await using (var cmd = Sql.Cmd(c, "SELECT id FROM devices WHERE id=$1 AND trusted AND NOT revoked FOR UPDATE", actor.DeviceId))
+            if (await cmd.ExecuteScalarAsync(ctx.RequestAborted) is null)
+                throw new ApiError(403, "DEVICE_NOT_TRUSTED");
+
+        if (input.InvitationId is Guid offeredFor)
+        {
+            await using (var lease = Sql.Cmd(c, """
+                SELECT reference, consumed_by IS NOT NULL OR lease_expires_at>statement_timestamp()
+                FROM key_packages WHERE invitation_id=$1 AND device_id=$2
+                """, offeredFor, actor.DeviceId))
+            await using (var row = await lease.ExecuteReaderAsync(ctx.RequestAborted))
+            {
+                if (await row.ReadAsync(ctx.RequestAborted))
+                {
+                    if (!row.GetBoolean(1)) throw new ApiError(409, "KEYPACKAGE_LEASE_EXPIRED");
+                    return Results.Ok(new { reference = Convert.ToBase64String(row.GetFieldValue<byte[]>(0)) });
+                }
+            }
+
+            // A saved usable offer makes a lost publication response safe to retry.
+            await using var existing = Sql.Cmd(c, """
+                SELECT reference FROM key_packages
+                WHERE offered_for=$1 AND device_id=$2 AND lease_id IS NULL AND expires_at>statement_timestamp()
+                LIMIT 1
+                """, offeredFor, actor.DeviceId);
+            if (await existing.ExecuteScalarAsync(ctx.RequestAborted) is byte[] available)
+                return Results.Ok(new { reference = Convert.ToBase64String(available) });
+        }
+
+        reference ??= await validator.Validate(input.Payload, actor.DeviceId, key, ctx.RequestAborted);
+        await using (var old = Sql.Cmd(c, "SELECT 1 FROM key_packages WHERE reference=$1 AND device_id=$2 AND payload=$3",
+            reference, actor.DeviceId, input.Payload))
+        {
+            if (await old.ExecuteScalarAsync(ctx.RequestAborted) is not null)
+            {
+                if (input.InvitationId is not null) throw new ApiError(409, "KEYPACKAGE_UNAVAILABLE");
+                return Results.Ok(new { reference = Convert.ToBase64String(reference) });
+            }
+        }
+        await using (var count = Sql.Cmd(c, "SELECT count(*) FROM key_packages WHERE device_id=$1 AND lease_id IS NULL AND expires_at>now()", actor.DeviceId))
+            if ((long)(await count.ExecuteScalarAsync(ctx.RequestAborted))! >= 64)
+                throw new ApiError(429, "KEYPACKAGE_LIMIT");
+
+        await using var insert = Sql.Cmd(c, "INSERT INTO key_packages(reference,device_id,payload,offered_for) VALUES($1,$2,$3,NULLIF($4,'00000000-0000-0000-0000-000000000000'::uuid))",
+            reference, actor.DeviceId, input.Payload, input.InvitationId ?? Guid.Empty);
+        await insert.ExecuteNonQueryAsync(ctx.RequestAborted);
+        await tx.CommitAsync(ctx.RequestAborted);
+        return Results.Created("/v1/crypto/keypackages", new { reference = Convert.ToBase64String(reference) });
     }
 
     private static async Task<IResult> Lease(LeaseInput input,HttpContext ctx,NpgsqlDataSource db,PublicKeyPackageValidator validator)
@@ -175,7 +229,12 @@ public static class MlsDirectory
         }
         if(!existing)
         {
-            await using(var cmd=Sql.Cmd(c,"SELECT reference,payload FROM key_packages WHERE device_id=$1 AND lease_id IS NULL AND expires_at>now() ORDER BY expires_at,reference LIMIT 1 FOR UPDATE SKIP LOCKED",target))
+            await using(var cmd=Sql.Cmd(c,"""
+                SELECT reference,payload FROM key_packages
+                WHERE device_id=$1 AND lease_id IS NULL AND expires_at>now()
+                  AND (offered_for=$2 OR offered_for IS NULL)
+                ORDER BY (offered_for IS NULL),expires_at,reference LIMIT 1 FOR UPDATE SKIP LOCKED
+                """,target,input.InvitationId))
             await using(var r=await cmd.ExecuteReaderAsync())
             {if(!await r.ReadAsync()) throw new ApiError(409,"NO_FRESH_KEYPACKAGE");reference=(byte[])r[0];payload=(byte[])r[1];}
         }

@@ -368,6 +368,12 @@ class _AccountHubState extends State<AccountHub> {
                   'Получатель ещё не опубликовал ключевой пакет. Повторите чуть позже.',
                   'Your contact has not published a fresh key package. Retry shortly.',
                 )
+              : failure is ApiFailure &&
+                    failure.code == 'KEYPACKAGE_LEASE_EXPIRED'
+              ? tr(
+                  'Время подключения истекло. Попросите собеседника отправить новый запрос.',
+                  'The connection window expired. Ask your contact to send a new request.',
+                )
               : failure is ApiFailure && failure.code == 'CONTACT_REQUEST_LIMIT'
               ? tr(
                   'Достигнут суточный лимит запросов этому пользователю.',
@@ -493,13 +499,30 @@ class _AccountHubState extends State<AccountHub> {
       key,
       request['username'] as String,
     );
+    final invitation = request['id'] as String;
     final package = await widget.crypto('directory_consent_package', {
-      'invitation': request['id'],
+      'invitation': invitation,
     });
-    await widget.api(
-      '/v1/crypto/keypackages',
-      data: {'payload': package['keypackage']},
-    );
+    Future<void> publish(Map<String, dynamic> offer) async {
+      await widget.api(
+        '/v1/crypto/keypackages',
+        data: {'payload': offer['keypackage'], 'invitationId': invitation},
+      );
+    }
+
+    try {
+      await publish(package);
+    } on ApiFailure catch (failure) {
+      if (failure.code != 'KEYPACKAGE_UNAVAILABLE' &&
+          failure.code != 'INVALID_KEYPACKAGE') {
+        rethrow;
+      }
+      final replacement = await widget.crypto('directory_consent_package', {
+        'invitation': invitation,
+        'replace': package['keypackage'],
+      });
+      await publish(replacement);
+    }
     await widget.api('/v1/chat-requests/${request['id']}/accept', data: {});
   }
 
@@ -1235,6 +1258,15 @@ class _AccountHubState extends State<AccountHub> {
                               ? null
                               : () => action(() => create(r as Map)),
                           child: Text(tr('Создать чат', 'Create chat')),
+                        )
+                      : r['recipientDevice'] == account['deviceId']
+                      ? TextButton(
+                          onPressed: blocked
+                              ? null
+                              : () => action(() => accept(r as Map)),
+                          child: Text(
+                            tr('Обновить подключение', 'Refresh connection'),
+                          ),
                         )
                       : null)
                 : Row(

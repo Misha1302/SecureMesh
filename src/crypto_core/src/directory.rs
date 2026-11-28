@@ -141,12 +141,15 @@ pub(super) fn execute(
             "SELECT keypackage FROM directory_consents WHERE invitation=? AND recipient=? AND joined_group IS NULL",
             params![invitation,identity], |r|r.get(0))?;
         if let Some(package) = saved {
-            return Ok(json!({"keypackage":package}));
+            // A parallel or repeated recovery can only replace the package it observed.
+            if req["replace"] != package {
+                return Ok(json!({"keypackage":package}));
+            }
         }
         let package = super::execute(db, p, &json!({"op":"keypackage"}))?;
         db.execute(
-            "UPDATE directory_consents SET keypackage=? WHERE invitation=?",
-            params![s(&package, "keypackage")?, invitation],
+            "UPDATE directory_consents SET keypackage=? WHERE invitation=? AND recipient=? AND joined_group IS NULL",
+            params![s(&package, "keypackage")?, invitation, identity],
         )?;
         return Ok(package);
     }
