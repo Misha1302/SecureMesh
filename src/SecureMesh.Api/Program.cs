@@ -65,6 +65,7 @@ app.MapProfileText();
 app.MapPublicChannels();
 app.MapPrivateBlobs();
 app.MapDeviceTrust();
+app.MapSecurityEmail();
 app.MapRoster();
 app.MapMlsDirectory();
 Delivery.MapDelivery(app);

@@ -306,7 +306,7 @@ public static class Identity
             await tx.CommitAsync();
             return Results.Ok(result);
         }
-        app.MapPost("/v1/auth/refresh", async (Refresh input,NpgsqlDataSource db) =>
+        app.MapPost("/v1/auth/refresh", async (Refresh input,NpgsqlDataSource db,VerificationEmailQueue emails,CancellationToken cancellationToken) =>
         {
             await using var c=await db.OpenConnectionAsync(); await using var tx=await c.BeginTransactionAsync();
             Guid id,device,family; bool used,revoked;
@@ -324,7 +324,10 @@ public static class Identity
             }
             if(used || revoked)
             {
-                await using var revoke=Sql.Cmd(c,"UPDATE sessions SET revoked=true WHERE family=$1",family); await revoke.ExecuteNonQueryAsync();
+                await using var revoke=Sql.Cmd(c,"UPDATE sessions SET revoked=true WHERE family=$1 AND NOT revoked",family);
+                var newlyRevoked = await revoke.ExecuteNonQueryAsync();
+                if (used && newlyRevoked > 0)
+                    await emails.EnqueueNoticeAsync(c, owner, SecurityEmail.RefreshReuse, cancellationToken);
                 await tx.CommitAsync(); throw new ApiError(401,"REFRESH_REUSE");
             }
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM devices WHERE id=$1 AND user_id=$2 AND NOT revoked FOR UPDATE",device,owner))

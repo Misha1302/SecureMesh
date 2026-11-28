@@ -36,6 +36,29 @@ internal sealed class VerificationEmailQueue(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    // The caller holds the account lock and commits the security event and mail together.
+    public async Task EnqueueNoticeAsync(NpgsqlConnection c, Guid owner, string purpose, CancellationToken ct)
+    {
+        var lastSent = purpose switch {
+            SecurityEmail.NewDevice => "device_email_at",
+            SecurityEmail.RefreshReuse => "refresh_reuse_email_at",
+            _ => throw new ArgumentOutOfRangeException(nameof(purpose))
+        };
+        await using var reserve = Sql.Cmd(c, $"""
+            UPDATE users SET {lastSent}=statement_timestamp()
+            WHERE id=$1 AND verified AND security_email_enabled
+              AND ({lastSent} IS NULL OR {lastSent} <= statement_timestamp()-interval '1 hour')
+            RETURNING email
+            """, owner);
+        if (await reserve.ExecuteScalarAsync(ct) is not string recipient) return;
+        var payload = protector.Protect(recipient + "\n\n" + purpose);
+        await using var enqueue = Sql.Cmd(c, """
+            INSERT INTO verification_email_queue(token_hash,security_owner,payload,expires_at)
+            VALUES($1,$2,$3,statement_timestamp()+interval '24 hours')
+            """, RandomNumberGenerator.GetBytes(32), owner, payload);
+        await enqueue.ExecuteNonQueryAsync(ct);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -108,7 +131,11 @@ internal sealed class VerificationEmailQueue(
             if (parts.Length is < 2 or > 3)
                 throw new CryptographicException("Invalid email queue payload.");
             var purpose = parts.Length == 2 ? "verification" : parts[2];
-            if (purpose is not ("verification" or "account_recovery"))
+            if (purpose is SecurityEmail.NewDevice or SecurityEmail.RefreshReuse)
+            {
+                if (parts[1].Length != 0) throw new CryptographicException("Invalid notice payload.");
+            }
+            else if (purpose is not ("verification" or "account_recovery"))
                 throw new CryptographicException("Invalid email queue payload.");
             await sender.SendAsync(parts[0], parts[1], purpose, cancellationToken);
         }

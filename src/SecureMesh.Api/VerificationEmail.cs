@@ -46,12 +46,20 @@ internal sealed class VerificationEmail
         {
             "verification" => "SecureMesh verification",
             "account_recovery" => "SecureMesh account recovery",
-            _ => throw new InvalidOperationException("Unknown email token purpose."),
+            SecurityEmail.NewDevice => "SecureMesh: подключено устройство",
+            SecurityEmail.RefreshReuse => "SecureMesh: проверьте сеансы",
+            _ => throw new InvalidOperationException("Unknown email purpose."),
         };
         using var smtp = credentials is null
             ? new SmtpClient("127.0.0.1", mailpitPort)
             : new SmtpClient("smtp.resend.com", 587) { EnableSsl = true, Credentials = credentials };
-        using var message = new MailMessage(sender, recipient, subject, token);
+        var body = purpose switch
+        {
+            SecurityEmail.NewDevice => "Новое устройство завершило подтверждение и стало доверенным. Если вы не подключали устройство, откройте SecureMesh и проверьте список устройств.",
+            SecurityEmail.RefreshReuse => "Повторно использован уже заменённый ключ обновления сеанса. Связанные сеансы отозваны. Откройте SecureMesh и проверьте список устройств. Если действие вам незнакомо, смените пароль.",
+            _ => token
+        };
+        using var message = new MailMessage(sender, recipient, subject, body);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try

@@ -122,7 +122,7 @@ public static class DeviceTrust
             return Results.NoContent();
         });
 
-        app.MapPost("/v1/devices/enrollment/{id:guid}/activate",async(Guid id,EnrollmentSignature input,HttpContext ctx,NpgsqlDataSource db)=>
+        app.MapPost("/v1/devices/enrollment/{id:guid}/activate",async(Guid id,EnrollmentSignature input,HttpContext ctx,NpgsqlDataSource db,VerificationEmailQueue emails)=>
         {
             var actor=await Sql.Authenticate(ctx,db,false);
             await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
@@ -146,6 +146,7 @@ public static class DeviceTrust
                 await using(var cmd=Sql.Cmd(c,"UPDATE device_enrollments SET activation_signature=$2,activated_at=now() WHERE id=$1",id,input.Signature)) await cmd.ExecuteNonQueryAsync();
                 await using(var cmd=Sql.Cmd(c,"UPDATE devices SET trusted=true WHERE id=$1 AND NOT revoked",actor.DeviceId))
                     if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(409,"DEVICE_REVOKED");
+                await emails.EnqueueNoticeAsync(c, actor.UserId, SecurityEmail.NewDevice, ctx.RequestAborted);
             }
             await tx.CommitAsync();return Results.NoContent();
         });
