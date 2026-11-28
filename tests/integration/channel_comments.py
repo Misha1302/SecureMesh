@@ -1,4 +1,5 @@
 """Exercise comment access after revocation, quota and moderation through HTTPS."""
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
 import uuid
@@ -42,11 +43,35 @@ def run():
         assert len(page['items'])==16 and all(row['canDelete'] for row in page['items'])
         old=call(path+'?before='+str(page['next']),member)
         assert old['items']==[dict(id=own,body='First',username=owner['username'],canDelete=False)] and old['next'] is None
-        call(room+'/revoke-access',owner,{'username':member['username']},expected=204)
+        from delivery_recovery_serialization import hold_row, scalar as sql, wait_for
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            with hold_row(db,f"SELECT 1 FROM public_channel_subscriptions WHERE channel_id='{spec['id']}' FOR UPDATE"):
+                revoke=pool.submit(call,room+'/revoke-access',owner,{'username':member['username']},expected=204)
+                wait_for(db,"wait_event_type='Lock' AND query LIKE 'DELETE FROM public_channel_subscriptions%'")
+                late=pool.submit(call,path,member,message('Queued behind revocation'),expected=404)
+                wait_for(db,"wait_event_type='Lock' AND query LIKE 'SELECT id FROM channel_catalog%FOR SHARE%'")
+            revoke.result(timeout=5)
+            late.result(timeout=5)
         call(path,member,expected=404)
         call(path,member,message('Revoked'),expected=404)
         call(path+'/'+str(page['items'][0]['id']),member,method='DELETE',expected=404)
-        from delivery_recovery_serialization import scalar as sql
+        other_seq=call(room+'/posts',owner,message('Independent post'),expected=201)['seq']
+        other_post=f'{room}/posts/{other_seq}'
+        expired=call(other_post+'/comments',owner,message('Expired tombstone'),expected=201)['id']
+        call(f'{other_post}/comments/{expired}',owner,method='DELETE',expected=204)
+        sql(db,f"UPDATE public_channel_comments SET deleted_at=now()-interval '2 days' WHERE id={expired}")
+        # A live write can proceed while a different post's expired tombstone is locked.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with hold_row(db,f'SELECT id FROM public_channel_comments WHERE id={expired} FOR UPDATE'):
+                independent=pool.submit(call,path,owner,message('Independent write'),expected=201)
+                assert independent.result(timeout=3)['id'] > expired
+        sql(db,f"""INSERT INTO public_channel_comments(post_seq,user_id,request_id,body,deleted_at)
+                   SELECT {other_seq},u.id,gen_random_uuid(),NULL,now()-interval '1 hour' FROM users u,
+                   generate_series(1,1024) WHERE u.username='{owner['username']}'""")
+        call(path,owner,message('Recent moderation consumes account capacity'),expected=409)
+        sql(db,f"UPDATE public_channel_comments SET deleted_at=now()-interval '2 days' WHERE post_seq={other_seq}")
+        call(path,owner,message('Expired moderation releases account capacity'),expected=201)
+        call(other_post,owner,method='DELETE',expected=204)
         post_seq=int(post.split('/')[-1])
         sql(db, f"""INSERT INTO public_channel_comments(post_seq,user_id,request_id,body)
                    SELECT {post_seq},u.id,gen_random_uuid(),'quota fixture' FROM users u,
@@ -68,7 +93,7 @@ def run():
         call(post,owner,method='DELETE',expected=204)
         call(path,owner,expected=404)
         assert sql(db,'SELECT count(*) FROM public_channel_comments').strip()=='0'
-    print('PASS restricted comments, retry, pagination, moderation, revocation, quota and post deletion')
+    print('PASS restricted comments, retries, keyset pagination, moderation, concurrent revocation and independent posts, quotas and post deletion')
 
 
 if __name__=='__main__':

@@ -55,9 +55,15 @@ public static partial class PublicChannels
                 if (r.IsDBNull(1) || r.GetString(1)!=body) throw new ApiError(409,"CHANNEL_REQUEST_CONFLICT");
                 return Results.Ok(new { id=r.GetInt64(0) });
             }
-        await using (var purge=Sql.Cmd(c,"DELETE FROM public_channel_comments WHERE (user_id=$1 OR post_seq=$2) AND deleted_at < now()-interval '1 day'",actor.UserId,seq))
-            await purge.ExecuteNonQueryAsync();
-        await using var quota=Sql.Cmd(c,"SELECT (SELECT count(*) FROM public_channel_comments WHERE post_seq=$1)>=512 OR (SELECT count(*) FROM public_channel_comments WHERE user_id=$2)>=1024",seq,actor.UserId);
+        // Retire tombstones only under the lock that protects their post.
+        // An expired tombstone elsewhere cannot consume the author's active quota.
+        await using (var purge=Sql.Cmd(c,"DELETE FROM public_channel_comments WHERE post_seq=$1 AND deleted_at < now()-interval '1 day'",seq))
+            await purge.ExecuteNonQueryAsync(ctx.RequestAborted);
+        await using var quota=Sql.Cmd(c,"""
+            SELECT (SELECT count(*) FROM public_channel_comments WHERE post_seq=$1)>=512
+                OR (SELECT count(*) FROM public_channel_comments WHERE user_id=$2
+                    AND (deleted_at IS NULL OR deleted_at >= now()-interval '1 day'))>=1024
+            """,seq,actor.UserId);
         if ((bool)(await quota.ExecuteScalarAsync())!) throw new ApiError(409,"CHANNEL_COMMENT_QUOTA");
         await Charge(c,actor.UserId,"comment",60);
         await using var insert=Sql.Cmd(c,"INSERT INTO public_channel_comments(post_seq,user_id,request_id,body) VALUES($1,$2,$3,$4) RETURNING id",seq,actor.UserId,input.RequestId,body);
