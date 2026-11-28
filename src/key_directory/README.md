@@ -143,7 +143,10 @@ enrolled with that policy, including matching publication epochs and both AKD
 versions. First contact after a rename also requires complete authenticated
 reverse-label history back to version 1. Every record must carry the same UUID
 and root and a valid signature for its actual AKD version. The verifier rejects
-history above 32 records or 256 KiB. Independently provisioned pins can resolve
+history above 32 records or 256 KiB. In the AKD 0.13.0 integration fixture,
+32 consecutive publications (one account and 32 distinct usernames) produced
+a 44,641-byte complete reverse history. Tree shape and claim lengths affect
+the encoded size, so both limits apply independently. Independently provisioned pins can resolve
 beyond this bound. An initial false registration or directory reassignment to
 a different account requires independent human authentication to detect on
 first contact. Name allocation and expiry policy belong to the registrar.

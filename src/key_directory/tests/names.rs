@@ -242,3 +242,95 @@ async fn durable_writer_publishes_and_serves_name_history_after_restart() -> Res
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn discovery_enforces_record_and_wire_history_limits() -> Result<()> {
+    use akd::{proto::specs::types as wire, HistoryParams};
+    use protobuf::Message;
+    use securemesh_key_directory::{names::encode_history, MAX_PROOF_BYTES};
+    let tree = Directory::<WhatsAppV1Configuration, _, _>::new(
+        StorageManager::new_no_cache(AsyncInMemoryDatabase::new()),
+        HardCodedAkdVRF,
+        AzksParallelismConfig::disabled(),
+    )
+    .await?;
+    let vrf = *tree.get_public_key().await?.as_bytes();
+    let policy = Policy::new(
+        [1; 32],
+        vrf,
+        [1, 2, 3, 4].map(|i| key(i).verifying_key().to_bytes()),
+    )?;
+    let root = key(7);
+    let pin = AccountPin::new(A, root.verifying_key().to_bytes())?;
+    for version in 1..=33 {
+        let name = format!("contact_{version:02}");
+        let batch = publication(&policy, &name, A, &root, 1, version)?;
+        let forward_label = batch[0].0.clone();
+        let reverse_label = batch[1].0.clone();
+        let head = tree.publish(batch).await?;
+        if version < 32 {
+            continue;
+        }
+        let client = Client::from_pin(
+            vrf,
+            Checkpoint {
+                epoch: head.epoch(),
+                root: head.hash(),
+            },
+        );
+        let forward = encode_lookup(&tree.lookup(forward_label).await?.0)?;
+        let reverse = encode_lookup(&tree.lookup(reverse_label.clone()).await?.0)?;
+        let history = encode_history(
+            &tree
+                .key_history(&reverse_label, HistoryParams::Complete)
+                .await?
+                .0,
+        )?;
+        assert_eq!(
+            client
+                .verify_pinned_name(&policy, &pin, &name, &forward, &reverse)?
+                .pin,
+            pin
+        );
+        let discover = |evidence: Option<&[u8]>| {
+            client.discover_name(&policy, &name, &forward, &reverse, evidence)
+        };
+        assert!(discover(None).is_err());
+        if version == 32 {
+            eprintln!("32-record AKD history encodes to {} bytes", history.len());
+            assert!(history.len() <= MAX_PROOF_BYTES);
+            assert_eq!(discover(Some(&history))?.pin, pin);
+            // Keep the original valid proof and pad an ignored protobuf field.
+            // Field 1000 uses a two-byte key and a three-byte length at these sizes.
+            let pad_to = |size: usize| -> Result<Vec<u8>> {
+                let mut padded = wire::HistoryProof::parse_from_bytes(&history)?;
+                padded
+                    .mut_unknown_fields()
+                    .add_length_delimited(1000, vec![0; size - history.len() - 5]);
+                let bytes = padded.write_to_bytes()?;
+                assert_eq!(bytes.len(), size);
+                Ok(bytes)
+            };
+            assert_eq!(discover(Some(&pad_to(MAX_PROOF_BYTES)?))?.pin, pin);
+            let oversized = pad_to(MAX_PROOF_BYTES + 1)?;
+            assert!(discover(Some(&oversized))
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds verification budget"));
+            let incomplete = encode_history(
+                &tree
+                    .key_history(&reverse_label, HistoryParams::MostRecent(31))
+                    .await?
+                    .0,
+            )?;
+            assert!(discover(Some(&incomplete)).is_err());
+        } else {
+            assert!(history.len() < MAX_PROOF_BYTES);
+            assert!(discover(Some(&history))
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds verification budget"));
+        }
+    }
+    Ok(())
+}
