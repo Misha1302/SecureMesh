@@ -239,6 +239,7 @@ main:has(#conversations:not([hidden])) #title {
 #peer-profile p { margin: .25rem 0; white-space: pre-wrap; }
 #peer-profile p:empty { display: none; }
 #peer-profile-status { font-weight: 650; }
+#peer-invitations { margin: .25rem 0 0; }
 #to-chats { display: none; }
 #timeline { overflow-y: auto; overscroll-behavior: contain; background: var(--bg); padding: 1rem; }
 #messages { display: grid; gap: .5rem; margin: 0; }

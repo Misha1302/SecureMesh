@@ -128,9 +128,12 @@
               <p id="peer-profile-note" role="status"></p>
               <p id="peer-profile-status" hidden></p>
               <p id="peer-profile-bio" hidden></p>
-              <p id="peer-block-description">Блокировка убирает ожидающие входящие приглашения от этого аккаунта и запрещает новые. Фото профиля, описание и статус скрываются для вас обоих. Сообщения в существующем чате по-прежнему доступны.</p>
-              <button type="button" id="peer-block" aria-describedby="peer-block-description">Проверить блокировку</button>
-              <p id="peer-block-note" aria-live="polite"></p>
+              <details id="peer-invitations">
+                <summary>Настройки приглашений</summary>
+                <p id="peer-block-description">Блокировка удаляет входящие приглашения от собеседника и запрещает новые. Вы перестанете видеть анкеты и фото друг друга. Переписка в этом чате продолжится.</p>
+                <button type="button" id="peer-block" aria-describedby="peer-block-description" disabled>Проверить блокировку</button>
+                <p id="peer-block-note" aria-live="polite"></p>
+              </details>
             </section>
           </div>
           <div id="timeline">

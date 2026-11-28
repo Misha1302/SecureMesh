@@ -239,6 +239,9 @@ function clearPeerProfile() {
   button.setAttribute("aria-expanded", "false");
   show("peer-profile", false);
   clearPeerFields();
+  byId("peer-invitations").open = false;
+  byId("peer-block").disabled = true;
+  byId("peer-block").textContent = "Проверить блокировку";
   byId("peer-block-note").textContent = "";
 }
 

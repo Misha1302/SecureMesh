@@ -45,6 +45,7 @@ def exercise(origin, api_port, pin):
         note = owner.locator("#peer-block-note")
         path = "/v1/contact-blocks/" + peer_name
         toggle.click()
+        owner.locator("#peer-invitations summary").click()
         expect(bio).to_have_text("Видимая анкета", timeout=25_000)
         expect(action).to_have_text("Заблокировать приглашения")
         toggle.click()
@@ -70,6 +71,7 @@ def exercise(origin, api_port, pin):
           };
         }""")
         toggle.click()
+        owner.locator("#peer-invitations summary").click()
         expect(owner.locator("html")).to_have_attribute("data-held-profile", "1")
         action.click()
         expect(note).to_contain_text("Не удалось подтвердить изменение.")
@@ -95,11 +97,15 @@ def exercise(origin, api_port, pin):
         # Reload the established chat after locking and see server state again.
         owner.locator("#lock").click()
         expect(owner.locator("#peer-profile")).to_be_hidden()
+        expect(action).to_be_disabled()
+        expect(action).to_have_text("Проверить блокировку")
+        assert not owner.locator("#peer-invitations").evaluate("panel => panel.open")
         expect(bio).to_have_text("")
         owner.locator("#password").fill(owner_password)
         owner.locator("#enter").click()
         row.click()
         toggle.click()
+        owner.locator("#peer-invitations summary").click()
         expect(action).to_have_text("Разблокировать")
 
         # DELETE has cross-origin authorization only for this route and origin.
