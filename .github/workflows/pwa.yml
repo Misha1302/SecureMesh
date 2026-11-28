@@ -41,6 +41,7 @@ jobs:
             scripts/package-pwa.py
             tests/pwa/package_origin.py
             tests/pwa/sw_release.py
+            tests/pwa/install_desktop.py
             src/browser_crypto
             src/crypto_core/src/server_credential.rs
           sparse-checkout-cone-mode: false
@@ -63,6 +64,7 @@ jobs:
           "$RUNNER_TEMP/pwa-venv/bin/pip" install playwright==1.57.0
           "$RUNNER_TEMP/pwa-venv/bin/playwright" install --with-deps chromium
           "$RUNNER_TEMP/pwa-venv/bin/python" tests/pwa/sw_release.py "$RUNNER_TEMP/securemesh-pwa"
+          "$RUNNER_TEMP/pwa-venv/bin/python" tests/pwa/install_desktop.py "$RUNNER_TEMP/securemesh-pwa"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: securemesh-pwa

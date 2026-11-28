@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="SecureMesh">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="description" content="Тестовый мессенджер SecureMesh для iPhone и справка по установке.">
-  <title>SecureMesh для iPhone</title>
+  <meta name="description" content="Личные чаты SecureMesh в браузере и установка приложения на телефон или компьютер.">
+  <title>SecureMesh · Веб-приложение</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -26,44 +26,49 @@
   </header>
   <main id="main" class="wrap">
     <header class="intro">
-      <h1>SecureMesh для iPhone</h1>
-      <p>Тестовый веб‑клиент для личных текстовых диалогов один на один. После первого запуска справка и локальный профиль доступны офлайн.</p>
-      <a class="profile-link" href="./profile.html">Открыть тестовый мессенджер</a>
+      <h1>SecureMesh в браузере</h1>
+      <p>Тестовая версия для личных чатов. Откройте мессенджер в браузере или установите его на своё устройство.</p>
+      <a class="profile-link" href="./profile.html">Открыть мессенджер</a>
       <p id="offline-status" class="cache-status" role="status"></p>
     </header>
 
     <div class="layout">
       <section class="panel" aria-labelledby="install">
-        <h2 id="install">На экран «Домой»</h2>
-        <p id="standalone" hidden>Справка открыта с экрана «Домой».</p>
-        <ol id="install-steps">
-          <li>Откройте эту страницу в Safari.</li>
-          <li>Нажмите «Поделиться» на панели Safari или в меню страницы. Выберите «На экран “Домой”».</li>
-          <li>Если видите переключатель «Открывать как веб‑приложение», включите его. Нажмите «Добавить».</li>
-          <li>Первый раз откройте значок SecureMesh при подключении к интернету. Чтобы проверить доступность справки офлайн, нажмите SecureMesh в шапке мессенджера.</li>
-        </ol>
-        <details id="install-help">
-          <summary>Нет пункта «На экран “Домой”»?</summary>
-          <p>В меню действий Safari прокрутите список вниз и нажмите «Редактировать действия». Добавьте «На экран “Домой”». Если страница открыта внутри другого приложения, сначала откройте её в Safari.</p>
-        </details>
-      </section>
-
-      <section class="panel" aria-labelledby="server">
-        <h2 id="server">Адрес демосервера</h2>
-        <label for="server-address">Для поля «Сервер HTTPS» в клиенте</label>
-        <textarea id="server-address" rows="2" readonly spellcheck="false" dir="ltr">https://securemesh.90-156-230-119.sslip.io</textarea>
-        <div class="actions">
-          <button type="button" id="copy-address" hidden>Скопировать адрес</button>
-          <a href="https://securemesh.90-156-230-119.sslip.io/health/ready" target="_blank" rel="noopener noreferrer">Проверить доступность<span class="visually-hidden"> (новая вкладка)</span></a>
+        <h2 id="install">Установка приложения</h2>
+        <p id="standalone" hidden>SecureMesh открыт в отдельном окне приложения.</p>
+        <div id="install-guide">
+          <button type="button" id="install-app" hidden>Установить SecureMesh</button>
+          <details>
+            <summary>iPhone и iPad</summary>
+            <p>Откройте страницу в Safari. В меню «Поделиться» выберите «На экран Домой». Если доступен переключатель «Открывать как веб-приложение», включите его и нажмите «Добавить».</p>
+          </details>
+          <details>
+            <summary>Android</summary>
+            <p>В меню Chrome выберите «Добавить на главный экран», затем «Установить», если браузер предлагает этот вариант. Можно продолжать переписку в открытой вкладке.</p>
+          </details>
+          <details>
+            <summary>Windows и Linux</summary>
+            <p>В Chrome или Edge нажмите значок установки в адресной строке, если он появился, и подтвердите установку. В любом поддерживаемом браузере можно открыть мессенджер по ссылке выше.</p>
+          </details>
         </div>
-        <p id="copy-status" class="feedback" role="status"></p>
-        <p class="hint">Проверка требует интернета. Ответ <code>ready</code> означает, что API соединился с базой данных.</p>
+        <p id="install-result" class="feedback" role="status"></p>
       </section>
 
-      <section class="panel native-panel" aria-labelledby="options">
+      <section class="panel" aria-labelledby="options">
         <h2 id="options">Нативный клиент</h2>
-        <p>Для iPhone опубликована неподписанная тестовая сборка. Для её установки нужны подпись Apple и подходящий профиль подготовки.</p>
-        <a class="release-link" href="https://github.com/Misha1302/SecureMesh/releases/tag/v0.1.0-ios-alpha.1">Открыть страницу сборки на GitHub</a>
+        <p>Для iPhone доступна тестовая сборка. Для её установки нужны подпись Apple и профиль подготовки.</p>
+        <a class="release-link" href="https://github.com/Misha1302/SecureMesh/releases/tag/v0.1.0-ios-alpha.1">Сборка для iPhone на GitHub</a>
+        <details>
+          <summary>Адрес тестового сервера</summary>
+          <label for="server-address">Для ручной настройки нативного клиента</label>
+          <textarea id="server-address" rows="2" readonly spellcheck="false" dir="ltr">https://securemesh.90-156-230-119.sslip.io</textarea>
+          <div class="actions">
+            <button type="button" id="copy-address" hidden>Скопировать адрес</button>
+            <a href="https://securemesh.90-156-230-119.sslip.io/health/ready" target="_blank" rel="noopener noreferrer">Проверить доступность<span class="visually-hidden"> (новая вкладка)</span></a>
+          </div>
+          <p id="copy-status" class="feedback" role="status"></p>
+          <p class="hint">Проверка требует интернета. Ответ <code>ready</code> означает, что API соединился с базой данных.</p>
+        </details>
       </section>
     </div>
   </main>

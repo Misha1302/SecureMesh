@@ -160,6 +160,4 @@ button:active, .profile-link:active { filter: brightness(.82); }
   .intro { margin-block-end: 2rem; }
   .layout { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
   .panel { padding: 1.4rem; }
-  .native-panel { grid-column: 1 / -1; }
-  .native-panel > p { max-width: 65ch; }
 }
