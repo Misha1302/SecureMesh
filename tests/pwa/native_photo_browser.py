@@ -142,10 +142,11 @@ def exchange(root, origin, api_port, pin, engine):
         source = raw_png[:-12] + png_chunk(b"tEXt", b"Comment\0local-only-source-metadata") + raw_png[-12:]
         file.set_input_files({"name": "original-private-name.png", "mimeType": "image/png", "buffer": source})
         assert not uploads and not submissions
-        with page.expect_response(lambda r: r.url.endswith("/v1/messages") and r.ok, timeout=40_000):
-            ours.get_by_role("button", name="Отправить фото").click()
-        expect(page.get_by_text("Фото", exact=True).last).to_be_visible()
-        assert len(uploads) >= 2 and len(submissions) >= 2
+        ours.get_by_role("button", name="Отправить фото").click()
+        sent = page.locator("#messages li.out").last
+        expect(sent.get_by_text("Фото", exact=True)).to_be_visible()
+        expect(sent.get_by_text("Принято сервером")).to_be_visible(timeout=40_000)
+        assert len(uploads) >= 2 and len(submissions) >= 2, (len(uploads), len(submissions))
         assert all(record == uploads[0] for record in uploads)
         assert all(record == submissions[0] for record in submissions)
         envelope = submissions[0]

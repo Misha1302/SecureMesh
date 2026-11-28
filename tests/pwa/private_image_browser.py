@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Chromium lifecycle test for the private-photo UI control."""
+"""Exercise the private-photo UI lifecycle and local normalization in Chromium."""
 
 import functools
 import threading
@@ -84,8 +84,28 @@ def main():
         page.wait_for_timeout(0)
         assert page.evaluate("window.released") == [displayed, late]
         assert page.locator("img.private-photo-preview").count() == 0
+        normalized = page.evaluate("""async () => {
+          const { normalizeSelectedPhoto, photoHeader } = await import('/app/private-image.js');
+          const canvas = document.createElement('canvas');
+          canvas.width = 1200;
+          canvas.height = 600;
+          canvas.getContext('2d').fillRect(0, 0, canvas.width, canvas.height);
+          const source = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+          const original = new Uint8Array(await source.arrayBuffer());
+          // APP1 with a little-endian TIFF IFD0 setting orientation to 6 (rotate 90°).
+          const exif = Uint8Array.of(
+            0xff, 0xe1, 0, 34, 69, 120, 105, 102, 0, 0,
+            73, 73, 42, 0, 8, 0, 0, 0, 1, 0,
+            0x12, 1, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0);
+          const selected = new File([original.slice(0, 2), exif, original.slice(2)], 'source.jpg',
+            { type: 'application/octet-stream' });
+          const jpeg = await normalizeSelectedPhoto(selected, () => {});
+          return { ...photoHeader(jpeg),
+            hasExif: new TextDecoder().decode(jpeg).includes(String.fromCharCode(69,120,105,102,0,0)) };
+        }""")
+        assert normalized == {"mime": "image/jpeg", "width": 480, "height": 960, "hasExif": False}
         browser.close()
-    print("Private photo Chromium lifecycle passed.")
+    print("Private photo Chromium lifecycle and EXIF-free normalization passed.")
 
 
 if __name__ == "__main__":
