@@ -1,3 +1,5 @@
+import { photoHeader } from "./private-image.js";
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const usernamePattern = /^[a-z0-9_]{3,32}$/;
 const empty = Object.freeze({});
@@ -39,15 +41,6 @@ function encodeBase64(bytes) {
     binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
   }
   return btoa(binary);
-}
-
-function imageMime(bytes) {
-  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
-      bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) return "image/png";
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" &&
-      String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP") return "image/webp";
-  return null;
 }
 
 async function sha256(bytes) {
@@ -157,8 +150,7 @@ export function createMessenger(ctx) {
     delete opened.data;
     let source;
     try {
-      const mime = imageMime(plain);
-      requireValue(mime !== null, "attachment", "The attachment is not a supported image format");
+      const { mime } = photoHeader(plain);
       source = new Blob([plain], { type: mime });
     } finally {
       plain.fill(0);

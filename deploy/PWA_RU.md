@@ -25,7 +25,7 @@ pwa.test.example.org {
     root * /srv/securemesh-pwa/www
     header {
         -Server
-        Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self' https://securemesh.90-156-230-119.sslip.io; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'"
+        Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob:; manifest-src 'self'; worker-src 'self'; connect-src 'self' https://securemesh.90-156-230-119.sslip.io; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'"
         X-Content-Type-Options nosniff
         Referrer-Policy no-referrer
         Cross-Origin-Resource-Policy same-origin
