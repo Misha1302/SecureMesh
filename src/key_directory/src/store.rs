@@ -254,5 +254,6 @@ fn record(
 }
 
 mod rosters;
+pub use rosters::{DeviceKeyPackageEvidence, VerifiedKeyPackage, VerifiedPackageSet};
 #[cfg(test)]
 mod tests;
