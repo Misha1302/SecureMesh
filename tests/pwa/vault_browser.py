@@ -1,5 +1,6 @@
 """Exercise real WebCrypto and IndexedDB with python tests/pwa/vault_browser.py."""
 
+import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,9 +25,9 @@ class QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
-def run(origin):
+def run(origin, engine):
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = playwright[engine].launch()
         context = browser.new_context()
         page = context.new_page()
         other = context.new_page()
@@ -162,13 +163,16 @@ def run(origin):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
+    args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     with ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=root / "site")) as server:
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            run(f"http://127.0.0.1:{server.server_port}")
+            run(f"http://127.0.0.1:{server.server_port}", args.browser)
         finally:
             server.shutdown()
             thread.join()
-    print("Browser vault tests passed")
+    print(f"{args.browser}: browser vault tests passed")
