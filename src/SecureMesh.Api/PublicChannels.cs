@@ -9,11 +9,20 @@ public sealed record ChannelInput(Guid Id, string Slug, string Title, bool Invit
 public sealed record ChannelInvite(string Username);
 public sealed record PostEdit(int ExpectedRevision, string Body);
 public sealed record PostInput(Guid RequestId, string Body);
+public sealed record PostReaction(string Kind);
 
 public static class PublicChannels
 {
     private static readonly Regex Slug = new("^[a-z0-9_]{3,32}\\z", RegexOptions.CultureInvariant);
     private static readonly Regex Prefix = new("^[a-z0-9_]{0,32}\\z", RegexOptions.CultureInvariant);
+
+    private const int ReactionLimit = 4096;
+    private const string ReactionProjection = """
+        count(*) FILTER (WHERE r.kind='like'),
+        count(*) FILTER (WHERE r.kind='heart'),
+        count(*) FILTER (WHERE r.kind='smile'),
+        max(r.kind) FILTER (WHERE r.user_id=$1)
+        """;
 
     public static void MapPublicChannels(this WebApplication app)
     {
@@ -29,6 +38,8 @@ public static class PublicChannels
         routes.MapPost("/{id:guid}/revoke-access", RevokeAccess);
         routes.MapGet("/{id:guid}/posts", Feed);
         routes.MapPut("/{id:guid}/posts/{seq:long}", Edit);
+        routes.MapPut("/{id:guid}/posts/{seq:long}/reaction", PutReaction);
+        routes.MapDelete("/{id:guid}/posts/{seq:long}/reaction", DeleteReaction);
         routes.MapPost("/{id:guid}/posts", Publish);
         routes.MapDelete("/{id:guid}/posts/{seq:long}", RemovePost);
     }
@@ -56,7 +67,7 @@ public static class PublicChannels
         await using var current = Sql.Cmd(c, """
             SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
             WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND d.trusted AND NOT d.revoked
-              AND NOT s.used AND NOT s.revoked AND s.expires_at>now()
+              AND NOT s.used AND NOT s.revoked AND s.expires_at>statement_timestamp()
               AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
             """, a.SessionId, a.DeviceId, a.UserId);
         if (await current.ExecuteScalarAsync() is null) throw new ApiError(401,"AUTH_REQUIRED");
@@ -79,13 +90,16 @@ public static class PublicChannels
 
     private static async Task<ChannelAccess> Access(NpgsqlConnection c, Guid id, Actor a, bool write = false)
     {
-        var sql = """
+        // ACL reads need a fresh statement after waiting on a membership or removal writer.
+        var lockMode = write ? "FOR UPDATE" : "FOR SHARE";
+        await using (var gate = Sql.Cmd(c, $"SELECT id FROM channel_catalog WHERE id=$1 {lockMode}",id))
+            if(await gate.ExecuteScalarAsync() is null) throw new ApiError(404,"CHANNEL_NOT_FOUND");
+        await using var cmd=Sql.Cmd(c,"""
             SELECT p.owner_id=$2,p.invite_only,
                 EXISTS (SELECT 1 FROM public_channel_subscriptions s WHERE s.user_id=$2 AND s.channel_id=p.id),
-                EXISTS (SELECT 1 FROM channel_invitations i WHERE i.user_id=$2 AND i.channel_id=p.id AND i.expires_at>now())
+                EXISTS (SELECT 1 FROM channel_invitations i WHERE i.user_id=$2 AND i.channel_id=p.id AND i.expires_at>statement_timestamp())
             FROM channel_catalog p WHERE p.id=$1
-            """ + (write ? " FOR UPDATE OF p" : " FOR SHARE OF p");
-        await using var cmd=Sql.Cmd(c,sql,id,a.UserId);
+            """,id,a.UserId);
         await using var r=await cmd.ExecuteReaderAsync();
         if (!await r.ReadAsync()) throw new ApiError(404,"CHANNEL_NOT_FOUND");
         var access=new ChannelAccess(r.GetBoolean(0),r.GetBoolean(1),r.GetBoolean(2),r.GetBoolean(3));
@@ -205,6 +219,7 @@ public static class PublicChannels
         {
             await using var cmd=Sql.Cmd(c,"DELETE FROM public_channel_subscriptions WHERE user_id=$1 AND channel_id=$2",a.UserId,id);
             await cmd.ExecuteNonQueryAsync();
+            await ClearAccountReactions(c,id,a.UserId);
         }
         if(access.Restricted)
         {
@@ -259,8 +274,12 @@ public static class PublicChannels
         await Charge(c,actor.UserId,"revoke",240);
         await using(var invites=Sql.Cmd(c,"DELETE FROM channel_invitations i USING users u WHERE i.channel_id=$1 AND i.user_id=u.id AND u.username=$2",id,name))
             await invites.ExecuteNonQueryAsync();
-        await using(var members=Sql.Cmd(c,"DELETE FROM public_channel_subscriptions s USING users u WHERE s.channel_id=$1 AND s.user_id=u.id AND u.username=$2",id,name))
-            await members.ExecuteNonQueryAsync();
+        await using(var members=Sql.Cmd(c,"""
+            DELETE FROM public_channel_subscriptions s USING users u
+            WHERE s.channel_id=$1 AND s.user_id=u.id AND u.username=$2 RETURNING s.user_id
+            """,id,name))
+            if(await members.ExecuteScalarAsync() is Guid member)
+                await ClearAccountReactions(c,id,member);
         await tx.CommitAsync();return Results.NoContent();
     }
 
@@ -302,13 +321,20 @@ public static class PublicChannels
             timestamp = new DateTime(ticks, DateTimeKind.Utc);
         }
         await using var c = await db.OpenConnectionAsync();
-        await using var cmd = Sql.Cmd(c, """
-            SELECT p.seq,p.body,p.published_at,p.revision,ch.id,ch.slug,ch.title
-            FROM public_channel_subscriptions s
-            JOIN channel_catalog ch ON ch.id=s.channel_id AND NOT ch.invite_only
-            JOIN public_channel_posts p ON p.channel_id=ch.id AND p.body IS NOT NULL
-            WHERE s.user_id=$1 AND (p.published_at,p.seq)<($2,$3)
-            ORDER BY p.published_at DESC,p.seq DESC LIMIT 9
+        await using var cmd = Sql.Cmd(c, $$"""
+            WITH page AS MATERIALIZED (
+                SELECT p.seq,p.body,p.published_at,p.revision,ch.id,ch.slug,ch.title
+                FROM public_channel_subscriptions s
+                JOIN channel_catalog ch ON ch.id=s.channel_id AND NOT ch.invite_only
+                JOIN public_channel_posts p ON p.channel_id=ch.id AND p.body IS NOT NULL
+                WHERE s.user_id=$1 AND (p.published_at,p.seq)<($2,$3)
+                ORDER BY p.published_at DESC,p.seq DESC LIMIT 9
+            )
+            SELECT p.*, reactions.* FROM page p
+            CROSS JOIN LATERAL (
+                SELECT {{ReactionProjection}} FROM public_channel_reactions r WHERE r.post_seq=p.seq
+            ) reactions
+            ORDER BY p.published_at DESC,p.seq DESC
             """, actor.UserId, timestamp, seq);
         await using var r = await cmd.ExecuteReaderAsync();
         var items = new List<object>(); string? last = null; bool more = false;
@@ -319,7 +345,8 @@ public static class PublicChannels
             var published = r.GetDateTime(2); var postSeq = r.GetInt64(0);
             last = $"{published.Ticks}~{postSeq}";
             items.Add(new { seq = postSeq, body = r.GetString(1), publishedAt = published,
-                revision = r.GetInt32(3), channelId = r.GetGuid(4), slug = r.GetString(5), title = r.GetString(6) });
+                revision = r.GetInt32(3), channelId = r.GetGuid(4), slug = r.GetString(5), title = r.GetString(6),
+                reactions = ReadReactions(r,7) });
         }
         return Results.Ok(new { items, next = more ? last : null });
     }
@@ -332,13 +359,22 @@ public static class PublicChannels
         await using var tx=await c.BeginTransactionAsync();
         var access=await Access(c,id,a);
         if(!access.Owner && !access.Subscribed) throw new ApiError(403,"CHANNEL_SUBSCRIPTION_REQUIRED");
-        await using var cmd=Sql.Cmd(c,"SELECT seq,body,published_at,revision FROM public_channel_posts WHERE channel_id=$1 AND body IS NOT NULL AND seq<$2 ORDER BY seq DESC LIMIT 9",id,before??long.MaxValue);
+        await using var cmd=Sql.Cmd(c,$$"""
+            WITH page AS MATERIALIZED (
+                SELECT seq,body,published_at,revision FROM public_channel_posts
+                WHERE channel_id=$2 AND body IS NOT NULL AND seq<$3 ORDER BY seq DESC LIMIT 9
+            )
+            SELECT p.*, reactions.* FROM page p
+            CROSS JOIN LATERAL (
+                SELECT {{ReactionProjection}} FROM public_channel_reactions r WHERE r.post_seq=p.seq
+            ) reactions ORDER BY p.seq DESC
+            """,a.UserId,id,before??long.MaxValue);
         await using var r=await cmd.ExecuteReaderAsync();
         var items=new List<object>(); long? last=null; bool more=false;
         while(await r.ReadAsync())
         {
             if(items.Count==8){more=true;break;}
-            last=r.GetInt64(0);items.Add(new{seq=last,body=r.GetString(1),publishedAt=r.GetDateTime(2),revision=r.GetInt32(3)});
+            last=r.GetInt64(0);items.Add(new{seq=last,body=r.GetString(1),publishedAt=r.GetDateTime(2),revision=r.GetInt32(3),reactions=ReadReactions(r,4)});
         }
         return Results.Ok(new{items,next=more?last:null});
     }
@@ -369,6 +405,80 @@ public static class PublicChannels
         var seq=(long)(await insert.ExecuteScalarAsync())!;await tx.CommitAsync();return Results.Created($"/v1/public-channels/{id}/posts/{seq}",new{seq});
     }
 
+    private sealed record ReactionCounts(long Like, long Heart, long Smile, string? Mine);
+
+    private static ReactionCounts ReadReactions(NpgsqlDataReader row, int start) =>
+        new(row.GetInt64(start), row.GetInt64(start+1), row.GetInt64(start+2),
+            row.IsDBNull(start+3) ? null : row.GetString(start+3));
+
+    private static async Task<ReactionCounts> ReadPostReactions(NpgsqlConnection c, long post, Guid account)
+    {
+        await using var cmd=Sql.Cmd(c,$$"""
+            SELECT {{ReactionProjection}} FROM public_channel_reactions r WHERE r.post_seq=$2
+            """,account,post);
+        await using var row=await cmd.ExecuteReaderAsync();
+        await row.ReadAsync();
+        return ReadReactions(row,0);
+    }
+
+    private static async Task ClearAccountReactions(NpgsqlConnection c, Guid channel, Guid account)
+    {
+        await using var cmd=Sql.Cmd(c,"""
+            DELETE FROM public_channel_reactions r USING public_channel_posts p
+            WHERE r.post_seq=p.seq AND r.user_id=$1 AND p.channel_id=$2
+            """,account,channel);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static Task<IResult> PutReaction(Guid id,long seq,PostReaction input,HttpContext ctx,NpgsqlDataSource db) =>
+        ChangeReaction(id,seq,input.Kind,ctx,db,remove:false);
+
+    private static Task<IResult> DeleteReaction(Guid id,long seq,HttpContext ctx,NpgsqlDataSource db) =>
+        ChangeReaction(id,seq,null,ctx,db,remove:true);
+
+    private static async Task<IResult> ChangeReaction(Guid id,long seq,string? kind,HttpContext ctx,NpgsqlDataSource db,bool remove)
+    {
+        var actor=await Sql.Authenticate(ctx,db);
+        if(!remove && kind is not ("like" or "heart" or "smile"))
+            throw new ApiError(400,"INVALID_CHANNEL_REACTION");
+        await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
+        await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
+        await LockAccount(c,actor);
+        var access=await Access(c,id,actor);
+        if(!access.Owner && !access.Subscribed) throw new ApiError(403,"CHANNEL_SUBSCRIPTION_REQUIRED");
+        await using(var post=Sql.Cmd(c,"""
+            SELECT 1 FROM public_channel_posts WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL FOR UPDATE
+            """,id,seq))
+            if(await post.ExecuteScalarAsync(ctx.RequestAborted) is null)
+                throw new ApiError(404,"CHANNEL_POST_NOT_FOUND");
+
+        var current=await ReadPostReactions(c,seq,actor.UserId);
+        if(current.Mine==kind) return Results.Ok(current);
+
+        if(remove)
+        {
+            await using var delete=Sql.Cmd(c,"DELETE FROM public_channel_reactions WHERE post_seq=$1 AND user_id=$2",seq,actor.UserId);
+            await delete.ExecuteNonQueryAsync(ctx.RequestAborted);
+        }
+        else
+        {
+            if(current.Mine is null &&
+                (current.Like+current.Heart+current.Smile>=ReactionLimit ||
+                 await Count(c,"SELECT count(*) FROM public_channel_reactions WHERE user_id=$1",actor.UserId)>=ReactionLimit))
+                throw new ApiError(409,"CHANNEL_REACTION_QUOTA");
+            await Charge(c,actor.UserId,"reaction",240);
+            await using var update=Sql.Cmd(c,"""
+                INSERT INTO public_channel_reactions(post_seq,user_id,kind) VALUES($1,$2,$3)
+                ON CONFLICT(post_seq,user_id) DO UPDATE SET kind=excluded.kind
+                """,seq,actor.UserId,kind!);
+            await update.ExecuteNonQueryAsync(ctx.RequestAborted);
+        }
+
+        var result=await ReadPostReactions(c,seq,actor.UserId);
+        await tx.CommitAsync(ctx.RequestAborted);
+        return Results.Ok(result);
+    }
+
     private static async Task<IResult> RemovePost(Guid id,long seq,HttpContext ctx,NpgsqlDataSource db)
     {
         var a=await Sql.Authenticate(ctx,db);
@@ -376,6 +486,11 @@ public static class PublicChannels
         await LockAccount(c,a);
         if(!(await Access(c,id,a,true)).Owner)throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
         await using var cmd=Sql.Cmd(c,"UPDATE public_channel_posts SET body=NULL,deleted_at=now() WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq);
-        await cmd.ExecuteNonQueryAsync();await tx.CommitAsync();return Results.NoContent();
+        if(await cmd.ExecuteNonQueryAsync()!=0)
+        {
+            await using var reactions=Sql.Cmd(c,"DELETE FROM public_channel_reactions WHERE post_seq=$1",seq);
+            await reactions.ExecuteNonQueryAsync();
+        }
+        await tx.CommitAsync();return Results.NoContent();
     }
 }

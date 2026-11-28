@@ -25,6 +25,8 @@ def verify(request, owner, reader, outsider, pending, username):
     pub=request(root+'/posts',{'requestId':str(uuid.uuid4()),'body':'Original'},token=owner,expected=201)
     seq=pub['seq']
     editpath=root+'/posts/'+str(seq)
+    reaction=editpath+'/reaction'
+    request(reaction,{'kind':'heart'},token=outsider,method='PUT',expected=404)
     def invite(who,token=owner,expected=204):
         return request(root+'/invitations',{'username':who},token=token,expected=expected)
     invite(username+'!',expected=400)
@@ -34,6 +36,7 @@ def verify(request, owner, reader, outsider, pending, username):
     invite(username.upper())
     assert request(listing,token=reader)['items'][0]['invited'] is True
     request(root+'/posts',token=reader,expected=403)
+    request(reaction,{'kind':'heart'},token=reader,method='PUT',expected=403)
     invite(username,token=reader,expected=403)
     request(root+'/subscription',token=pending,method='PUT',expected=403)
     request(root+'/subscription',token=reader,method='DELETE',expected=204)
@@ -59,7 +62,11 @@ def verify(request, owner, reader, outsider, pending, username):
     invite(username)
     request(root+'/subscription',token=reader,method='PUT',expected=204)
     request(root+'/revoke-access',{'username':username},token=reader,expected=403)
+    assert request(reaction,{'kind':'heart'},token=reader,method='PUT')['heart']==1
     request(root+'/revoke-access',{'username':username},token=owner,expected=204)
+    request(reaction,method='DELETE',token=reader,expected=404)
+    request(reaction,{'kind':'smile'},token=reader,method='PUT',expected=404)
+    assert request(root+'/posts',token=owner)['items'][0]['reactions']['heart']==0
     request(root+'/posts',token=reader,expected=404)
     assert request(listing,token=reader)['items']==[]
     request(root,token=owner,method='DELETE',expected=204)

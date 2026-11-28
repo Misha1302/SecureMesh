@@ -72,6 +72,7 @@ def main():
                 '202611280105_ContactBlocks',
                 '202611280106_AccountRecovery',
                 '202611280107_SecurityEmail',
+                '202611280108_ChannelReactions',
             ]
             assert result.strip().splitlines() == expected
             print(f'PASS: {len(expected)} EF migrations on a fresh PostgreSQL database; idempotent restart preserves trust and device metadata.')

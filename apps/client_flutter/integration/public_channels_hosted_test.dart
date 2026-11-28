@@ -66,6 +66,19 @@ void main() {
         await settle();
       }
 
+      Finder chip(String reaction) => find.descendant(
+        of: find.byTooltip(reaction),
+        matching: find.byType(ChoiceChip),
+      );
+
+      Future<void> hitReaction(String reaction) async {
+        final target = chip(reaction);
+        await tester.ensureVisible(target);
+        await tester.tap(target);
+        await tester.pump();
+        await settle();
+      }
+
       final handle = 'ui_${DateTime.now().microsecondsSinceEpoch}';
       await asUser(env['SECUREMESH_CHANNEL_OWNER']!);
       await hit('New channel');
@@ -95,6 +108,25 @@ void main() {
       expect(find.text('An actual public-channel post.'), findsNothing);
       await hit('Subscribe');
       expect(find.text('An actual public-channel post.'), findsOneWidget);
+      await hitReaction('Heart');
+      expect(tester.widget<ChoiceChip>(chip('Heart')).selected, isTrue);
+      expect(
+        (tester.widget<ChoiceChip>(chip('Heart')).label as Text).data,
+        '1',
+      );
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pump();
+      await settle();
+      await hit('Subscription feed');
+      expect(tester.widget<ChoiceChip>(chip('Heart')).selected, isTrue);
+      await hitReaction('Smile');
+      expect(tester.widget<ChoiceChip>(chip('Heart')).selected, isFalse);
+      expect(tester.widget<ChoiceChip>(chip('Smile')).selected, isTrue);
+      await hitReaction('Smile');
+      expect(tester.widget<ChoiceChip>(chip('Smile')).selected, isFalse);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      await hit('Bulletin $handle');
       await hit('Unsubscribe');
       expect(find.text('An actual public-channel post.'), findsNothing);
       final restricted = '${handle}_in';

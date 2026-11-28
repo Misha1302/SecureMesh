@@ -348,6 +348,65 @@ class _PublicChannelsState extends State<PublicChannels> {
     if (mounted) await feed();
   }
 
+  Future<void> react(String channel, int seq, String? kind) async {
+    final summary = await widget.api(
+      '$path/$channel/posts/$seq/reaction',
+      method: kind == null ? 'DELETE' : 'PUT',
+      data: kind == null ? null : {'kind': kind},
+    ) as Map;
+    if (!mounted) return;
+    Map update(Map post) => {...post, 'reactions': summary};
+    if (room?['id'] == channel) {
+      posts = [
+        for (final post in posts) post['seq'] == seq ? update(post) : post,
+      ];
+    }
+    aggregatePosts = [
+      for (final post in aggregatePosts)
+        post['channelId'] == channel && post['seq'] == seq
+            ? update(post)
+            : post,
+    ];
+  }
+
+  Widget reactions(Map post, String channel) {
+    final summary = post['reactions'];
+    if (summary is! Map) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        for (final (kind, icon, name) in [
+          ('like', Icons.thumb_up_alt_outlined, tr('Нравится', 'Like')),
+          ('heart', Icons.favorite_border, tr('Сердце', 'Heart')),
+          ('smile', Icons.sentiment_satisfied_alt, tr('Улыбка', 'Smile')),
+        ])
+          Tooltip(
+            message: name,
+            child: ChoiceChip(
+              key: ValueKey('reaction-$channel-${post['seq']}-$kind'),
+              avatar: Icon(icon, size: 18),
+              label: Text(
+                '${summary[kind] ?? 0}',
+                semanticsLabel: '$name: ${summary[kind] ?? 0}',
+              ),
+              selected: summary['mine'] == kind,
+              showCheckmark: false,
+              onSelected: busy
+                  ? null
+                  : (select) => run(
+                      () => react(
+                        channel,
+                        post['seq'] as int,
+                        select ? kind : null,
+                      ),
+                    ),
+            ),
+          ),
+      ],
+    );
+  }
+
   Future<void> closeRoom() async {
     room = null;
     post.clear();
@@ -448,8 +507,14 @@ class _PublicChannelsState extends State<PublicChannels> {
         for (final p in aggregatePosts)
           ListTile(
             title: SelectableText(p['body'] as String),
-            subtitle: Text(
-              '${p['title']} · @${p['slug']} · ${MaterialLocalizations.of(context).formatMediumDate(DateTime.parse(p['publishedAt'] as String).toLocal())}',
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${p['title']} · @${p['slug']} · ${MaterialLocalizations.of(context).formatMediumDate(DateTime.parse(p['publishedAt'] as String).toLocal())}',
+                ),
+                reactions(p, p['channelId'] as String),
+              ],
             ),
           ),
         if (aggregateCursor != null)
@@ -585,14 +650,20 @@ class _PublicChannelsState extends State<PublicChannels> {
           for (final p in posts)
             ListTile(
               title: SelectableText(p['body'] as String),
-              subtitle: Text(
-                [
-                  MaterialLocalizations.of(context).formatMediumDate(
-                    DateTime.parse(p['publishedAt'] as String).toLocal(),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    [
+                      MaterialLocalizations.of(context).formatMediumDate(
+                        DateTime.parse(p['publishedAt'] as String).toLocal(),
+                      ),
+                      if ((p['revision'] as int? ?? 1) > 1)
+                        tr('Изменено', 'Edited'),
+                    ].join(' · '),
                   ),
-                  if ((p['revision'] as int? ?? 1) > 1)
-                    tr('Изменено', 'Edited'),
-                ].join(' · '),
+                  reactions(p, room!['id'] as String),
+                ],
               ),
               trailing: room!['owner'] == true
                   ? PopupMenuButton<String>(

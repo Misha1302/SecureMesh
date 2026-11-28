@@ -32,6 +32,21 @@ def verify(request, owner, reader, outsider, pending):
     data={'requestId':str(uuid.uuid4()),'body':'Публикация в открытом канале'}
     request(root+'/posts',data,token=reader,expected=403)
     seq=request(root+'/posts',data,token=owner,expected=201)['seq']
+    reaction = f'{root}/posts/{seq}/reaction'
+    request(reaction, {'kind':'heart'}, method='PUT', expected=401)
+    request(reaction, method='DELETE', expected=401)
+    request(reaction, {'kind':'heart'}, method='PUT', token=pending, expected=403)
+    request(reaction, {'kind':'heart'}, method='PUT', token=outsider, expected=403)
+    request(reaction, {'kind':'unknown'}, method='PUT', token=reader, expected=400)
+    for _ in range(2):
+        assert request(reaction,{'kind':'heart'},method='PUT',token=reader)['heart']==1
+    assert request(root+'/posts',token=owner)['items'][0]['reactions']==dict(like=0,heart=1,smile=0,mine=None)
+    assert request(path+'/feed',token=reader)['items'][0]['reactions']['mine']=='heart'
+    assert request(reaction,{'kind':'smile'},method='PUT',token=reader)==dict(like=0,heart=0,smile=1,mine='smile')
+    assert request(reaction,{'kind':'like'},method='PUT',token=owner)==dict(like=1,heart=0,smile=1,mine='like')
+    assert request(reaction,method='DELETE',token=owner)==dict(like=0,heart=0,smile=1,mine=None)
+    for _ in range(2):
+        assert request(reaction,method='DELETE',token=reader)==dict(like=0,heart=0,smile=0,mine=None)
     assert request(root+'/posts',data,token=owner)['seq']==seq
     request(root+'/posts',{**data,'body':'changed'},token=owner,expected=409)
     request(root+'/posts',{**data,'body':' '},token=owner,expected=400)
@@ -41,7 +56,7 @@ def verify(request, owner, reader, outsider, pending):
     assert aggregate['items']
     assert all(p['channelId'] == channel for p in aggregate['items'])
     assert request(path+'/feed',token=outsider)['items'] == []
-    first=request(root+'/posts',token=reader)
+    first=request(root+'/posts',token=reader,max_bytes=262144)
     assert len(first['items'])==8 and first['next']==first['items'][-1]['seq']
     older=request(root+'/posts?before='+str(first['next']),token=reader)
     assert len(older['items'])==2 and older['next'] is None and older['items'][-1]['seq']==seq
@@ -53,6 +68,7 @@ def verify(request, owner, reader, outsider, pending):
     second_root=path+'/'+second['id']
     request(second_root+'/subscription',token=reader,method='PUT',expected=204)
     second_seq=request(second_root+'/posts',{'requestId':str(uuid.uuid4()),'body':'Second channel'},token=owner,expected=201)['seq']
+    request(f'{second_root}/posts/{seq}/reaction',{'kind':'heart'},method='PUT',token=reader,expected=404)
     posts = []
     feed_path = path + '/feed'
     while True:
@@ -71,7 +87,10 @@ def verify(request, owner, reader, outsider, pending):
     request(second_root,token=owner,method='DELETE',expected=204)
     request(root+'/posts?before=-1',token=reader,expected=400)
     request(root+'/posts/'+str(seq),token=reader,method='DELETE',expected=403)
+    request(reaction,{'kind':'like'},method='PUT',token=reader)
     request(root+'/posts/'+str(seq),token=owner,method='DELETE',expected=204)
+    request(reaction,{'kind':'like'},method='PUT',token=reader,expected=404)
+    request(reaction,method='DELETE',token=owner,expected=404)
     request(root+'/posts',data,token=owner,expected=409)
     request(root,token=reader,method='DELETE',expected=403)
     request(root+'/subscription',token=reader,method='DELETE',expected=204)
@@ -100,14 +119,58 @@ def verify(request, owner, reader, outsider, pending):
     request(path, extra, token=outsider, expected=429)
 
 
+def verify_reaction_quota_and_revoke(db, owner, reader, username):
+    import concurrent.futures
+    import delivery as d
+    from delivery_recovery_serialization import hold_row, scalar, wait_for
+
+    path = '/v1/public-channels'
+    channel = uuid.uuid4()
+    root = f'{path}/{channel}'
+    d.request(path+'/invite-only', {'id':str(channel),'slug':'limits_'+uuid.uuid4().hex[:10],
+                                   'title':'Reaction limits'}, token=owner, expected=201)
+    d.request(root+'/invitations', {'username':username}, token=owner, expected=204)
+    d.request(root+'/subscription', method='PUT', token=reader, expected=204)
+    first, second = [
+        d.request(root+'/posts', {'requestId':str(uuid.uuid4()),'body':body},
+                  token=owner, expected=201)['seq']
+        for body in ('Quota check', 'Removal is still available')
+    ]
+    reaction = f'{root}/posts/{first}/reaction'
+    other = f'{root}/posts/{second}/reaction'
+    heart = {'kind':'heart'}
+    assert d.request(reaction, heart, method='PUT', token=reader)['heart'] == 1
+    d.request(other, {'kind':'like'}, method='PUT', token=reader)
+    user = uuid.UUID(d.request('/v1/users/me', token=reader)['userId'])
+    scalar(db, f"UPDATE public_channel_activity SET count=240 WHERE user_id='{user}' AND action='reaction'")
+    assert d.request(reaction, heart, method='PUT', token=reader)['heart'] == 1
+    assert d.request(reaction, {'kind':'smile'}, method='PUT', token=reader,
+                     expected=429)['code'] == 'CHANNEL_RATE_LIMIT'
+    assert d.request(other, method='DELETE', token=reader)['like'] == 0
+    scalar(db, f"UPDATE public_channel_activity SET count=0 WHERE user_id='{user}' AND action='reaction'")
+
+    # Queue the reaction behind the channel row while revocation waits on membership removal.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        with hold_row(db, f"SELECT user_id FROM public_channel_subscriptions WHERE channel_id='{channel}' AND user_id='{user}' FOR UPDATE"):
+            revoke = pool.submit(d.request, root+'/revoke-access', {'username':username}, token=owner, expected=204)
+            wait_for(db, "wait_event_type='Lock' AND query LIKE 'DELETE FROM public_channel_subscriptions s USING users u%'")
+            change = pool.submit(d.request, reaction, {'kind':'smile'}, method='PUT', token=reader, expected=404)
+            wait_for(db, "wait_event_type='Lock' AND query LIKE 'SELECT id FROM channel_catalog WHERE id=$1 FOR SHARE%'")
+        revoke.result(timeout=10)
+        assert change.result(timeout=10)['code'] == 'CHANNEL_NOT_FOUND'
+    assert d.request(root+'/posts', token=owner)['items'][1]['reactions'] == dict(like=0,heart=0,smile=0,mine=None)
+    d.request(root, method='DELETE', token=owner, expected=204)
+
+
 def main():
     import os
     import subprocess
     import sys
     import delivery as d
     import invite_channels
+    from private_blobs import database
     d.BASE='https://127.0.0.1:5119'
-    with d.Server() as server, tempfile.TemporaryDirectory(dir=d.ROOT/'.local') as tmp:
+    with database() as db, d.Server(db) as server, tempfile.TemporaryDirectory(dir=d.ROOT/'.local') as tmp:
         a,b,c=[d.account(Path(tmp)) for _ in range(3)]
         pending=d.login(a['username'],a['password'],d.Device(Path(tmp)))
         tokens=[a['session']['accessToken'],b['session']['accessToken'],c['session']['accessToken'],pending['accessToken']]
@@ -115,18 +178,20 @@ def main():
         # Start a fresh service token bucket; the two suites deliberately exercise many requests.
         server.restart()
         invite_channels.verify(d.request,tokens[1],tokens[2],tokens[0],tokens[3],c['username'])
+        verify_reaction_quota_and_revoke(db, tokens[0], tokens[1], b['username'])
         if '--ui' in sys.argv:
             server.restart()
             env={**os.environ,'SECUREMESH_CHANNEL_FIXTURE_URL':d.BASE,
                  'SECUREMESH_CHANNEL_FIXTURE_CA':str(d.ROOT/'.local/tls.pem'),
                  'SECUREMESH_CHANNEL_OWNER':tokens[1], 'SECUREMESH_CHANNEL_READER':tokens[0],
                  'SECUREMESH_CHANNEL_READER_USERNAME':a['username']}
-            flutter=d.ROOT/'.local/flutter/bin/flutter'
-            subprocess.run([str(flutter) if flutter.exists() else 'flutter','test','--no-pub',
+            local_flutter=d.ROOT/'.local/flutter/bin/flutter'
+            flutter=os.environ.get('SECUREMESH_TEST_FLUTTER',str(local_flutter) if local_flutter.exists() else 'flutter')
+            subprocess.run([flutter,'test','--no-pub',
                            '--concurrency=1','integration/public_channels_hosted_test.dart'],
                            cwd=d.ROOT/'apps/client_flutter',env=env,check=True)
 
-    print('PASS trusted public channels, owner writes, subscription ACL, idempotency, Unicode and feed pagination.')
+    print('PASS public channel ACL, idempotency, reactions, Unicode and feed pagination.')
 
 
 if __name__=='__main__':
