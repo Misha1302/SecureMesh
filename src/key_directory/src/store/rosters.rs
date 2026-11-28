@@ -61,6 +61,10 @@ impl Store {
 
     /// Verify a bounded signature chain ending in an AKD lookup at the durable head,
     /// and commit only if both the directory head and local account history still match.
+    ///
+    /// Success means that this owner-authorized roster state was accepted and saved.
+    /// It does not authorize sending. A roster with zero active devices is valid state
+    /// and represents an account for which device sends must remain blocked.
     pub fn accept_roster(
         &self,
         account: &str,

@@ -93,5 +93,5 @@ pub mod contact;
 pub mod store;
 pub mod writer;
 
-pub mod witness;
 pub mod roster;
+pub mod witness;

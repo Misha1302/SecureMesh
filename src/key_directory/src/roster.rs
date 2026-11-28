@@ -101,6 +101,22 @@ impl Roster {
     pub fn digest(&self) -> [u8; 32] {
         Sha256::digest(self.body()).into()
     }
+
+    /// The current owner-authorized active-device set. An empty set is a valid
+    /// signed state (for example after revoking the last device), but never by
+    /// itself authorizes sending or proves that device records are available.
+    pub fn active_devices(&self) -> impl Iterator<Item = (Uuid, &[u8; 32])> {
+        self.devices
+            .iter()
+            .filter(|device| !device.revoked)
+            .map(|device| (device.id, &device.signing_key))
+    }
+
+    pub fn active_device_count(&self) -> usize {
+        self.active_devices().count()
+    }
+
+    /// Checks one requested recipient device, not full roster coverage or send readiness.
     pub fn contains_active_key(&self, device: &str, signing_key: &[u8; 32]) -> Result<bool> {
         let id = canonical_id(device)?;
         Ok(self

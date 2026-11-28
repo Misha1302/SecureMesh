@@ -253,6 +253,6 @@ fn record(
     Ok(Advancement::AlreadyCommitted)
 }
 
+mod rosters;
 #[cfg(test)]
 mod tests;
-mod rosters;

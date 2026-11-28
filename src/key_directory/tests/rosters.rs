@@ -137,5 +137,33 @@ async fn durable_signed_history_and_revocation_survive_reopen_and_retry() -> Res
         assert!(store.accept_roster(A, &[], &proof).is_err());
         assert_eq!(store.saved_roster(A)?.unwrap().digest(), third.digest());
     }
+
+    // Revoking the last two devices is valid owner-authorized state, but has no
+    // recipient that a future delivery gate may treat as send-ready.
+    let no_active = Roster::new(
+        A,
+        4,
+        third.digest(),
+        vec![revoked.clone(), Device::new(D2, key(2), true)?],
+    )?;
+    let locked_head = tree.publish(vec![no_active.publication(&root)?]).await?;
+    let previous = store.checkpoint()?;
+    store
+        .advance(
+            previous,
+            Checkpoint {
+                epoch: locked_head.epoch(),
+                root: locked_head.hash(),
+            },
+            &encode_consistency(&tree.audit(previous.epoch, locked_head.epoch()).await?)?,
+        )
+        .await?;
+    let locked_proof = encode_lookup(&tree.lookup(label).await?.0)?;
+    let (_, locked) = store.accept_roster(A, &[], &locked_proof)?;
+    assert_eq!(locked.active_device_count(), 0);
+    assert!(locked.active_devices().next().is_none());
+    assert!(!locked.contains_active_key(D1, &key(1))?);
+    assert!(!locked.contains_active_key(D2, &key(2))?);
+    assert_eq!(store.saved_roster(A)?.unwrap().digest(), no_active.digest());
     Ok(())
 }
