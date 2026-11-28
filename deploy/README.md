@@ -6,6 +6,17 @@ Before deployment: complete required M0–M7 functionality/gates; remediate advi
 
 Pin reviewed runtime/API image digests; apply compatible migrations, run staging smoke and DB+object recovery, prepare rollback. No production capacity was measured. compose.staging.yaml requires injected reviewed image/config and still hits the production guard. reverse-proxy.conf.template is for later TLS review. Local recovery exercises cover profile privacy, restricted channel data, MLS messages and database-backed encrypted attachments. The public ingress still requires access to the host, a zone export, a trusted certificate and a tested rollback. [Backup and recovery coverage](backups/README.md)
 
+### DNS rollout for registration mail
+
+The proposed sending domain is `auth.nodata-messenger.online`. The observed apex already receives mail through the hosting provider and publishes its SPF policy. Keep those records when enabling SecureMesh mail. The recorded public answers cover selected names. Obtain the full provider zone export and identify the exact owner names of the changes before applying them. [Public DNS snapshot](../reports/evidence/public-dns-20261128.json)
+
+1. In Resend Domains, add the sending subdomain and choose its sending region. Copy the exact DKIM record and return-path records shown for that domain. Record each owner name, RR type, MX priority if present, target and TTL in the private change log. [Resend domain configuration](https://resend.com/docs/dashboard/domains/introduction)
+2. At the authoritative DNS provider, add the generated records under their specified names. Check how the zone editor appends the root suffix. Coordinate any pre-existing SPF or MX record at the same owner before changing it. Check the effective DMARC policy for the sending subdomain including inheritance from the apex, and validate alignment with the chosen From address using the received test message.
+3. Verify the records against both authoritative servers and a recursive resolver, then wait for the domain to show verified in Resend. Open its Configuration tab and check that open and click tracking are disabled. [Tracking settings](https://resend.com/docs/dashboard/domains/tracking)
+4. Create a Sending access key restricted to the verified subdomain and place it in the protected server secret file. Record the key name and rotation date separately from its value. [Resend key permissions](https://resend.com/docs/dashboard/api-keys/introduction)
+5. Run registration and recovery for an authorized test mailbox. Verify actual arrival, SPF/DKIM/DMARC results in the received headers, acceptance of each code once, fresh login after recovery, and rejection of the old session. Keep timestamps and outcomes in the test report. Exclude email bodies, authorization codes and message headers containing personal data.
+6. For rollback, stop the email worker's external sending, revoke the dedicated key and restore only the changed RRsets from the provider export. Recheck the apex MX, SPF and delivery of existing mail.
+
 ### Registration email via Resend SMTP in the local alpha
 
 Mailpit on loopback is the default. To opt in to external verification email, verify the sending domain in Resend and create a sending-only key restricted to that domain. Store the key in a secret file outside the checkout, readable only by the API runtime. Export these settings in the process that starts the API, replacing the example address and path:
