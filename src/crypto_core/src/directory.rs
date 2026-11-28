@@ -34,6 +34,21 @@ fn transcript(req: &Value, welcome: &[u8]) -> Result<Vec<u8>> {
         reference.len() == 32 && welcome.len() <= 32768,
         "invalid welcome binding"
     );
+    ensure!(
+        s(req, "sender")? != s(req, "recipient")?,
+        "distinct devices required"
+    );
+    let message = MlsMessageIn::tls_deserialize_exact(welcome)?;
+    let MlsMessageBodyIn::Welcome(parsed) = message.extract() else {
+        bail!("not welcome");
+    };
+    let [secret] = parsed.secrets() else {
+        bail!("expected one Welcome recipient");
+    };
+    ensure!(
+        secret.new_member().as_slice() == reference,
+        "Welcome KeyPackage reference mismatch"
+    );
     Ok(format!(
         "SecureMesh/conversation-establish/v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n1",
         s(req, "group")?,
@@ -45,6 +60,25 @@ fn transcript(req: &Value, welcome: &[u8]) -> Result<Vec<u8>> {
         B64.encode(Sha256::digest(welcome))
     )
     .into_bytes())
+}
+
+fn check_initial_group(
+    db: &Connection,
+    group: &MlsGroup,
+    sender: &str,
+    recipient: &str,
+) -> Result<()> {
+    check_group(db, group)?;
+    let members = roster::members(group)?;
+    ensure!(
+        group.is_active()
+            && group.epoch().as_u64() == 1
+            && members.len() == 2
+            && members.contains_key(sender)
+            && members.contains_key(recipient),
+        "invalid initial group"
+    );
+    Ok(())
 }
 
 pub(super) fn execute(
@@ -121,21 +155,7 @@ pub(super) fn execute(
         "directory_sign" => {
             ensure!(s(req, "sender")? == identity, "sender mismatch");
             let group = load_group(p, s(req, "group")?)?;
-            check_group(db, &group)?;
-            let roster: std::collections::BTreeSet<_> = group
-                .members()
-                .map(|m| BasicCredential::try_from(m.credential).map(|c| c.identity().to_vec()))
-                .collect::<std::result::Result<_, _>>()?;
-            let expected = [
-                identity.as_bytes().to_vec(),
-                s(req, "recipient")?.as_bytes().to_vec(),
-            ]
-            .into_iter()
-            .collect();
-            ensure!(
-                roster == expected && group.epoch().as_u64() == 1,
-                "invalid initial group"
-            );
+            check_initial_group(db, &group, identity, s(req, "recipient")?)?;
             let signature = signer
                 .sign(&data)
                 .map_err(|_| anyhow!("signature rejected"))?;
@@ -155,10 +175,31 @@ pub(super) fn execute(
                 &key,
                 &bytes(req, "signature")?,
             )?;
+            let gid = s(req, "group")?;
+            let slot = format!("directory-join:{gid}");
+            let binding = B64.encode(Sha256::digest(&data));
+            if let Some(saved) = db
+                .query_row("SELECT value FROM app_meta WHERE key=?", [&slot], |r| {
+                    r.get::<_, String>(0)
+                })
+                .optional()?
+            {
+                ensure!(saved == binding, "directory join context changed");
+                return Ok(json!({"already_joined":true}));
+            }
+            // Older stores only recorded the Welcome digest. It cannot prove which
+            // invitation and lease were accepted for an already established group.
+            ensure!(
+                MlsGroup::load(p.storage(), &GroupId::from_slice(gid.as_bytes()))?.is_none(),
+                "missing directory join context for existing group"
+            );
             let mut join = req.clone();
             join["op"] = json!("join");
             join["expected_members"] = json!([sender, identity]);
-            super::execute(db, p, &join)
+            let result = super::execute(db, p, &join)?;
+            check_initial_group(db, &load_group(p, gid)?, sender, identity)?;
+            set_meta(db, &slot, &binding)?;
+            Ok(result)
         }
         _ => bail!("unsupported directory operation"),
     }
