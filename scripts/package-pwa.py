@@ -35,6 +35,7 @@ ASSETS = (
     "profile.css",
     "profile.html",
     "profile.js",
+    "private-image.js",
     "sw.js",
     "vault.js",
 )

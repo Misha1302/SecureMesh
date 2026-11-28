@@ -6,7 +6,8 @@ use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto as Provider;
 use openmls_traits::{
-    crypto::OpenMlsCrypto, signatures::Signer, storage::StorageProvider as _, OpenMlsProvider,
+    crypto::OpenMlsCrypto, signatures::Signer, storage::StorageProvider as _, types::AeadType,
+    OpenMlsProvider,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,6 +30,8 @@ pub fn derive_server_credential_v2(
 }
 
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+const ATTACHMENT_LIMIT: usize = 4 * 1024 * 1024;
+const ATTACHMENT_TAG: usize = 16;
 type Store = Vec<(Vec<u8>, Vec<u8>)>;
 type Roster = BTreeMap<String, Vec<u8>>;
 
@@ -73,6 +76,90 @@ fn bytes(req: &Value, name: &str, limit: usize) -> Result<Vec<u8>> {
     let decoded = B64.decode(value)?;
     ensure!(decoded.len() <= limit, "{name} too large");
     Ok(decoded)
+}
+
+fn canonical_uuid(value: &str) -> Result<()> {
+    ensure!(
+        uuid::Uuid::parse_str(value)?.to_string() == value,
+        "invalid identifier"
+    );
+    Ok(())
+}
+
+fn attachment_size(info: &Value) -> Result<usize> {
+    ensure!(info["v"] == 1, "unsupported attachment descriptor");
+    canonical_uuid(field(info, "blobId")?)?;
+    let size = info["size"].as_u64().context("missing attachment size")?;
+    ensure!(
+        (1..=ATTACHMENT_LIMIT as u64).contains(&size),
+        "invalid attachment size"
+    );
+    let name = field(info, "name")?;
+    ensure!(!name.trim().is_empty() && name.len() <= 255 && name != "." && name != ".."
+        && !name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')),
+        "invalid attachment name");
+    ensure!(
+        matches!(field(info, "media")?, "file" | "photo" | "voice" | "video"),
+        "invalid attachment media"
+    );
+    if let Some(caption) = info.get("caption") {
+        ensure!(
+            caption.as_str().is_some_and(|text| text.len() <= 2048),
+            "invalid attachment caption"
+        );
+    }
+    let key = B64.decode(field(info, "key")?)?;
+    let nonce = B64.decode(field(info, "nonce")?)?;
+    ensure!(
+        key.len() == 32 && nonce.len() == 12,
+        "invalid attachment key material"
+    );
+    ensure!(
+        B64.encode(&key) == field(info, "key")? && B64.encode(&nonce) == field(info, "nonce")?,
+        "noncanonical attachment key material"
+    );
+    Ok(size as usize)
+}
+
+fn attachment_aad(group: &str, id: &str, info: &Value) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&json!([
+        "SecureMesh/attachment/v1",
+        group,
+        id,
+        info["blobId"],
+        info["name"],
+        info["media"],
+        info["size"]
+    ]))?)
+}
+
+fn open_attachment(provider: &Provider, req: &Value) -> Result<Value> {
+    let group = field(req, "group")?;
+    let id = field(req, "id")?;
+    canonical_uuid(group)?;
+    canonical_uuid(id)?;
+    let info = &req["attachment"];
+    let size = attachment_size(info)?;
+    ensure!(
+        field(info, "media")? == "photo",
+        "unsupported attachment media"
+    );
+    let key = B64.decode(field(info, "key")?)?;
+    let nonce = B64.decode(field(info, "nonce")?)?;
+    let sealed = bytes(req, "ciphertext", ATTACHMENT_LIMIT + ATTACHMENT_TAG)?;
+    ensure!(
+        sealed.len() == size + ATTACHMENT_TAG,
+        "invalid sealed attachment length"
+    );
+    let plain = provider.crypto().aead_decrypt(
+        AeadType::Aes256Gcm,
+        &key,
+        &sealed,
+        &nonce,
+        &attachment_aad(group, id, info)?,
+    )?;
+    ensure!(plain.len() == size, "invalid attachment plaintext length");
+    Ok(json!({"name":info["name"],"media":"photo","size":size,"data":B64.encode(plain)}))
 }
 
 fn read_profile(snapshot: Option<&str>, req: &Value, provider: &Provider) -> Result<Profile> {
@@ -356,6 +443,7 @@ fn operation(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<
         "init" | "identity" => {
             Ok(json!({"identity":profile.identity,"public_key":B64.encode(&profile.public)}))
         }
+        "attachment_open" => open_attachment(provider, req),
         "sign" => {
             let signature = signer
                 .sign(&bytes(req, "payload", 16384)?)
@@ -524,9 +612,20 @@ fn process(provider: &Provider, profile: &Profile, req: &Value) -> Result<Value>
                     && coordinate(&message, "id")? == coordinate(req, "id")?,
                 "message binding mismatch"
             );
-            if !message["attachment"].is_null() || !message["type"].is_null() {
-                // The ratchet can advance, but never expose attachment keys or
-                // render control messages in the browser text UI.
+            if !message["type"].is_null() {
+                // The ratchet advances, but private call/control payloads remain unsupported.
+                return Ok(
+                    json!({"id":message["id"],"group":gid,"sender":sender,"unsupported":true}),
+                );
+            }
+            if !message["attachment"].is_null() {
+                let attachment = &message["attachment"];
+                if attachment_size(attachment).is_ok()
+                    && attachment["media"].as_str() == Some("photo")
+                {
+                    return Ok(json!({"id":message["id"],"group":gid,"sender":sender,
+                        "attachment":attachment}));
+                }
                 return Ok(
                     json!({"id":message["id"],"group":gid,"sender":sender,"unsupported":true}),
                 );

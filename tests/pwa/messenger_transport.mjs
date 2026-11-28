@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mock } from "node:test";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { once } from "node:events";
 import { createMessenger, fingerprint } from "../../site/app/messenger.js";
 import init, { execute } from "../../site/app/crypto/securemesh_browser_crypto.js";
 
@@ -294,6 +297,79 @@ paths = [];
 await assert.rejects(idle.tick({ forceDirectory: false }), { status: 429 });
 assert.deepEqual(paths, []);
 mock.restoreAll();
+
+// A real native SQLCipher/OpenMLS client creates the Welcome, sealed photo,
+// and MLS application event. The browser WASM joins and opens that payload.
+const nativeRecipient = client("native_recipient");
+const nativeProcess = spawn("python3", [new URL("./native_photo_fixture.py", import.meta.url).pathname], {
+  stdio: ["pipe", "pipe", "pipe"],
+});
+const nativeLines = createInterface({ input: nativeProcess.stdout });
+let nativeStderr = "";
+nativeProcess.stderr.setEncoding("utf8").on("data", (chunk) => { nativeStderr += chunk; });
+const nextNativeLine = () => new Promise((resolve, reject) => {
+  nativeLines.once("line", resolve);
+  nativeProcess.once("error", reject);
+  nativeProcess.once("exit", (code) => {
+    if (code !== 0) reject(new Error(`Native attachment fixture exited ${code}: ${nativeStderr}`));
+  });
+});
+const nativeStart = JSON.parse(await nextNativeLine());
+await nativeRecipient.ctx.run("pin", {
+  identity: nativeStart.sender, public_key: nativeStart.senderKey, confirmed: true,
+});
+const nativeConsent = await nativeRecipient.ctx.run("directory_consent", {
+  invitation: nativeStart.invitation, sender: nativeStart.sender,
+  senderKey: nativeStart.senderKey, confirmed: true,
+});
+nativeProcess.stdin.write(JSON.stringify({
+  recipient: nativeRecipient.own.identity,
+  recipientKey: nativeRecipient.own.public_key,
+  keypackage: nativeConsent.keypackage,
+  reference: nativeConsent.reference,
+}) + "\n");
+const nativePhoto = JSON.parse(await nextNativeLine());
+nativeProcess.stdin.end();
+if (nativeProcess.exitCode === null) await once(nativeProcess, "exit");
+assert.equal(nativeProcess.exitCode, 0);
+const { bootstrap, group: nativeGroup, id: nativeMessageId, envelope: nativeEnvelope,
+  sealed: nativeSealed, plain: nativePlain } = nativePhoto;
+assert.equal(bootstrap.binding.sender, nativeStart.sender);
+assert.equal(bootstrap.binding.reference, nativeConsent.reference);
+const nativeJoined = JSON.parse(execute(nativeRecipient.ctx.state().snapshot, JSON.stringify({
+  op: "directory_join", group: nativeGroup, invitation: nativeStart.invitation,
+  lease: nativeStart.lease, sender: nativeStart.sender,
+  recipient: nativeRecipient.own.identity, reference: nativeConsent.reference,
+  welcome: bootstrap.welcome, signature: bootstrap.signature,
+})));
+await nativeRecipient.ctx.update((draft) => { draft.snapshot = nativeJoined.snapshot; });
+const nativeMessage = await nativeRecipient.ctx.run("process", {
+  group: nativeGroup, id: nativeMessageId, sender: nativeStart.sender,
+  kind: nativeEnvelope.kind, epoch: nativeEnvelope.epoch,
+  ciphertext: nativeEnvelope.ciphertext,
+});
+assert.equal(nativeMessage.attachment.media, "photo");
+assert.equal(nativeMessage.attachment.name, "native-photo.png");
+assert.equal(nativeMessage.attachment.caption, "Native to browser");
+const openedNativePhoto = await nativeRecipient.ctx.run("attachment_open", {
+  group: nativeGroup, id: nativeMessageId, attachment: nativeMessage.attachment,
+  ciphertext: nativeSealed,
+});
+assert.equal(openedNativePhoto.data, nativePlain);
+const corruptNative = Buffer.from(nativeSealed, "base64");
+corruptNative[corruptNative.length - 1] ^= 1;
+await assert.rejects(nativeRecipient.ctx.run("attachment_open", {
+  group: nativeGroup, id: nativeMessageId, attachment: nativeMessage.attachment,
+  ciphertext: corruptNative.toString("base64"),
+}));
+await assert.rejects(nativeRecipient.ctx.run("attachment_open", {
+  group: nativeGroup, id: randomUUID(), attachment: nativeMessage.attachment,
+  ciphertext: nativeSealed,
+}));
+await assert.rejects(nativeRecipient.ctx.run("attachment_open", {
+  group: nativeGroup, id: nativeMessageId,
+  attachment: { ...nativeMessage.attachment, media: "file" }, ciphertext: nativeSealed,
+}));
 // Prior releases kept the consent only in the outer encrypted vault and
 // published into the recipient's unscoped package pool.
 for (const pooledMismatch of [false, true]) {

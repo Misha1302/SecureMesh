@@ -2,6 +2,7 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const usernamePattern = /^[a-z0-9_]{3,32}$/;
 const empty = Object.freeze({});
 const pageSize = 6;
+const privateAttachmentLimit = 4 * 1024 * 1024;
 const backgroundPullInterval = 9_000;
 const activePollInterval = 2_500;
 
@@ -30,6 +31,23 @@ function base64(value, min, max = min) {
   requireValue(binary.length >= min && binary.length <= max && btoa(binary) === value,
     "format", "Invalid encoded message data");
   return Uint8Array.from(binary, (byte) => byte.charCodeAt(0));
+}
+
+function encodeBase64(bytes) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+function imageMime(bytes) {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+      bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" &&
+      String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP") return "image/webp";
+  return null;
 }
 
 async function sha256(bytes) {
@@ -87,6 +105,92 @@ export function createMessenger(ctx) {
   let rateLimitedUntil = 0;
   let rateLimitFailure;
   const remoteBlocked = new Set();
+  const privateImageUrls = new Map();
+  let privateImageGeneration = 0;
+
+  function photoKey(group, id) { return `${uuid(group)}:${uuid(id)}`; }
+  function photoUrl(group, id) { return privateImageUrls.get(photoKey(group, id)); }
+  function releasePhoto(group, id) {
+    const key = photoKey(group, id);
+    const url = privateImageUrls.get(key);
+    if (url) URL.revokeObjectURL(url);
+    privateImageUrls.delete(key);
+  }
+  function clearPhotos() {
+    privateImageGeneration++;
+    for (const url of privateImageUrls.values()) URL.revokeObjectURL(url);
+    privateImageUrls.clear();
+  }
+
+  async function openPhoto(group, message) {
+    const chat = readChat(group);
+    ensureUsable(chat);
+    const id = uuid(message?.id);
+    const info = message?.attachment;
+    requireValue(info?.media === "photo" && Number.isSafeInteger(info.size) &&
+      info.size > 0 && info.size <= privateAttachmentLimit &&
+      typeof info.name === "string" && info.name.length <= 255,
+      "attachment", "This encrypted attachment is not a supported image");
+    const key = photoKey(group, id);
+    const cached = privateImageUrls.get(key);
+    if (cached) return cached;
+    const generationAtStart = privateImageGeneration;
+    const active = () => requireValue(generationAtStart === privateImageGeneration,
+      "locked", "The private image view was closed");
+    const sealed = await ctx.apiBytes(
+      `/v1/conversations/${uuid(group)}/blobs/${uuid(info.blobId)}`, info.size + 16,
+    );
+    let opened;
+    try {
+      active();
+      requireValue(sealed.length === info.size + 16, "attachment", "The encrypted image size does not match its message");
+      opened = await ctx.run("attachment_open", {
+        group, id, attachment: info, ciphertext: encodeBase64(sealed),
+      });
+      active();
+    } finally {
+      sealed.fill(0);
+    }
+    requireValue(opened?.media === "photo" && opened.size === info.size,
+      "attachment", "The encrypted image did not authenticate");
+    let plain = base64(opened.data, info.size, info.size);
+    delete opened.data;
+    let source;
+    try {
+      const mime = imageMime(plain);
+      requireValue(mime !== null, "attachment", "The attachment is not a supported image format");
+      source = new Blob([plain], { type: mime });
+    } finally {
+      plain.fill(0);
+      plain = null;
+    }
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(source);
+      active();
+      requireValue(bitmap.width > 0 && bitmap.height > 0 && bitmap.width <= 8192 &&
+        bitmap.height <= 8192 && bitmap.width * bitmap.height <= 16_000_000,
+        "attachment", "The image dimensions exceed the safe preview limit");
+      const scale = Math.min(1, 960 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext("2d", { alpha: false });
+      requireValue(context, "attachment", "Image preview is unavailable");
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const safeBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.86));
+      canvas.width = 0;
+      canvas.height = 0;
+      requireValue(safeBlob && safeBlob.size > 0 && safeBlob.size <= privateAttachmentLimit,
+        "attachment", "The image preview could not be encoded safely");
+      active();
+      const url = URL.createObjectURL(safeBlob);
+      privateImageUrls.set(key, url);
+      return url;
+    } finally {
+      bitmap?.close();
+    }
+  }
 
   const state = () => ctx.state()?.messenger ?? empty;
   const readChat = (id) => {
@@ -411,6 +515,9 @@ export function createMessenger(ctx) {
       const saved = data.chats[group];
       if (processed?.text !== undefined) {
         saved.messages.push({ id: envelope.id, text: processed.text, direction: "incoming", status: "received", recordedAt: Date.now() });
+      } else if (processed?.attachment?.media === "photo") {
+        saved.messages.push({ id: envelope.id, text: processed.attachment.caption ?? "Фото",
+          attachment: processed.attachment, direction: "incoming", status: "received", recordedAt: Date.now() });
       } else if (processed?.unsupported === true) {
         saved.messages.push({
           id: envelope.id,
@@ -564,6 +671,7 @@ export function createMessenger(ctx) {
   function select(id) {
     const next = id ? uuid(id) : undefined;
     if (selected === next) return;
+    clearPhotos();
     selected = next;
     if (running) schedule(0);
   }
@@ -621,8 +729,10 @@ export function createMessenger(ctx) {
     running = false;
     generation++;
     clearTimeout(timer);
+    clearPhotos();
     globalThis.removeEventListener?.("online", wake);
   }
 
-  return { refresh, invite, accept, establish, join, reconfirmChat, send, tick, select, start, stop };
+  return { refresh, invite, accept, establish, join, reconfirmChat, send, tick, select, start, stop,
+    openPhoto, photoUrl, releasePhoto };
 }

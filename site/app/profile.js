@@ -10,6 +10,7 @@ import {
 } from "./vault.js";
 import { createAccount, apiOrigin, deviceFingerprint } from "./account.js";
 import { createMessenger } from "./messenger.js";
+import { privatePhotoControl } from "./private-image.js";
 
 const byId = (id) => document.getElementById(id);
 const show = (id, visible) => {
@@ -174,13 +175,15 @@ function attach(handle, worker) {
       }),
   };
   instance.account = createAccount(ctx);
-  instance.mesh = createMessenger({ ...ctx, api: instance.account.api });
+  instance.mesh = createMessenger({ ...ctx, api: instance.account.api, apiBytes: instance.account.apiBytes });
   return instance;
 }
 function lock() {
   generation++;
   const current = opened;
   opened = null;
+  for (const control of current?.photoControls ?? []) control.dispose();
+  if (current) current.photoControls = new Set();
   current?.mesh.stop();
   current?.worker.stop();
   current?.close();
@@ -376,10 +379,27 @@ function renderChats() {
     rows.some((message) => message.id === previousFirst);
   opened.renderedGroup = selected;
   opened.timelineSignature = version;
+  for (const control of opened.photoControls ?? []) control.dispose();
+  opened.photoControls = new Set();
   messages.replaceChildren();
   for (const message of rows) {
     const row = element("li");
     row.append(element("span", message.text));
+    if (message.attachment?.media === "photo") {
+      const name = typeof message.attachment.name === "string" ? message.attachment.name : "Фото";
+      const current = opened;
+      const group = selected;
+      const control = privatePhotoControl({
+        name,
+        open: () => current.mesh.openPhoto(group, message),
+        release: () => current.mesh.releasePhoto(group, message.id),
+        onError: (error) => {
+          if (opened === current) notice(errorMessage(error));
+        },
+      });
+      opened.photoControls.add(control);
+      row.append(control.element);
+    }
     const footer = element("small");
     if (Number.isFinite(message.recordedAt)) {
       const when = new Date(message.recordedAt);

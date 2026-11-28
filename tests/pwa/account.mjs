@@ -204,6 +204,17 @@ fake = ({ path }) => {
   return request(me);
 };
 await account.login(passphrase);
+fake = ({ path, authorization }) => {
+  assert.equal(path, `/v1/conversations/${userId}/blobs/${challengeId}`);
+  assert.equal(authorization, `Bearer ${session().accessToken}`);
+  return new Response(Uint8Array.from([1, 2, 3]), { status: 200,
+    headers: { "Content-Type": "application/octet-stream", "Content-Length": "3" } });
+};
+assert.deepEqual([...await account.apiBytes(`/v1/conversations/${userId}/blobs/${challengeId}`, 3)], [1, 2, 3]);
+fake = () => new Response(Uint8Array.from([1, 2, 3, 4]), { status: 200,
+  headers: { "Content-Type": "application/octet-stream" } });
+await assert.rejects(account.apiBytes(`/v1/conversations/${userId}/blobs/${challengeId}`, 3), /ATTACHMENT_SIZE/);
+await assert.rejects(account.apiBytes("/v1/conversations/not-a-uuid/blobs/not-a-uuid", 3), /INVALID_API_PATH/);
 
 let release;
 let rotationCount = 0;

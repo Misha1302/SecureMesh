@@ -105,7 +105,7 @@ class StaticHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Content-Security-Policy",
                          "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; "
-                         "style-src 'self'; img-src 'self'; manifest-src 'self'; "
+                         "style-src 'self'; img-src 'self' blob:; manifest-src 'self'; "
                          f"worker-src 'self'; connect-src 'self' {API_ORIGIN}; "
                          "base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'")
         super().end_headers()

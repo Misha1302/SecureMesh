@@ -14,6 +14,7 @@ const labAssets = [
   'vault.js',
   'mesh-worker.js',
   'messenger.js',
+  'private-image.js',
   'account.js',
   'crypto/securemesh_browser_crypto.js',
   'crypto/securemesh_browser_crypto_bg.wasm',

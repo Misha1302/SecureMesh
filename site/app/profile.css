@@ -233,6 +233,7 @@ main:has(#conversations:not([hidden])) #title {
 #messages { display: grid; gap: .5rem; margin: 0; }
 #messages li { justify-self: start; max-width: min(86%, 38rem); margin: 0; background: var(--card); }
 #messages li.out { justify-self: end; background: var(--bubble); }
+#messages .private-photo-preview { display: block; max-width: min(100%, 36rem); max-height: 28rem; margin: .65rem 0; border-radius: .65rem; object-fit: contain; }
 #messages small { display: flex; gap: .45rem; align-items: baseline; justify-content: end; font-size: .8125rem; margin-top: .2rem; }
 #compose { margin: 0; border-top: 1px solid var(--line); }
 #compose textarea { flex: 1; min-width: 0; margin: 0; resize: vertical; max-height: 28dvh; }

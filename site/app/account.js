@@ -117,6 +117,61 @@ async function exchange(path, data, method = data === undefined ? "GET" : "POST"
   return body;
 }
 
+async function exchangeBytes(path, token, maxBytes) {
+  const url = exchangeUrl(path);
+  require(typeof token === "string" && lowerHex.test(token) && token.length === 64, "SESSION_INVALID");
+  require(Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= 4 * 1024 * 1024 + 16);
+  require(/^\/v1\/conversations\/[0-9a-f-]{36}\/blobs\/[0-9a-f-]{36}$/.test(url.pathname), "INVALID_API_PATH");
+  let response;
+  try {
+    response = await fetch(url.href, {
+      method: "GET", headers: { Accept: "application/octet-stream", Authorization: `Bearer ${token}` },
+      redirect: "error", credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer", mode: "cors",
+    });
+  } catch {
+    throw new AccountError("NETWORK_UNAVAILABLE");
+  }
+  require(!response.redirected && (!response.url || response.url === url.href), "SERVER_ORIGIN_MISMATCH");
+  if (!response.ok) {
+    let code = "SERVER_REQUEST_FAILED";
+    if (/^application\/(?:json|problem\+json)(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) {
+      try {
+        const body = await response.json();
+        if (typeof body?.code === "string" && /^[A-Z][A-Z0-9_]{0,83}$/.test(body.code)) code = body.code;
+      } catch { /* Keep the stable generic error. */ }
+    }
+    throw new AccountError(code, response.status);
+  }
+  require(response.status === 200 && /^application\/octet-stream(?:\s*;|$)/i.test(response.headers.get("content-type") ?? ""), "ACCOUNT_RESPONSE_MISMATCH");
+  const declared = response.headers.get("content-length");
+  if (declared !== null) require(/^\d+$/.test(declared) && Number(declared) > 0 && Number(declared) <= maxBytes, "ATTACHMENT_SIZE");
+  require(response.body?.getReader, "ACCOUNT_RESPONSE_MISMATCH");
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      require(total <= maxBytes, "ATTACHMENT_SIZE");
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    if (error instanceof AccountError) throw error;
+    throw new AccountError("NETWORK_UNAVAILABLE");
+  }
+  require(total > 0 && (declared === null || total === Number(declared)), "ATTACHMENT_SIZE");
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 function checkChallenge(challenge, binding) {
   const code = "DEVICE_CHALLENGE_MISMATCH";
   try {
@@ -354,9 +409,8 @@ export function createAccount(ctx) {
     }
   }
 
-  async function api(path, data, method) {
+  async function authenticated(path, sendRequest) {
     const url = exchangeUrl(path);
-    require(!/^\/v[12]\/auth\/(?:register|resend-verification|verify-email|challenge|login|reauthenticate|refresh)(?:\/|$)/.test(url.pathname), "INVALID_API_PATH");
     const state = ctx.state();
     const binding = principal(state);
     require(binding.userId !== null && !authenticating, "SESSION_REQUIRED");
@@ -370,7 +424,7 @@ export function createAccount(ctx) {
     };
     const observed = currentSession();
     const send = async (session) => {
-      const result = await exchange(path, data, method, session.accessToken);
+      const result = await sendRequest(session);
       stillBound(ctx.state(), binding);
       return result;
     };
@@ -397,6 +451,17 @@ export function createAccount(ctx) {
     }
   }
 
+  async function api(path, data, method) {
+    const url = exchangeUrl(path);
+    require(!/^\/v[12]\/auth\/(?:register|resend-verification|verify-email|challenge|login|reauthenticate|refresh)(?:\/|$)/.test(url.pathname), "INVALID_API_PATH");
+    return authenticated(path, (session) => exchange(path, data, method, session.accessToken));
+  }
+
+  async function apiBytes(path, maxBytes = 4 * 1024 * 1024 + 16) {
+    require(/^\/v1\/conversations\/[0-9a-f-]{36}\/blobs\/[0-9a-f-]{36}$/.test(exchangeUrl(path).pathname), "INVALID_API_PATH");
+    return authenticated(path, (session) => exchangeBytes(path, session.accessToken, maxBytes));
+  }
+
   async function activity() {
     if (document.visibilityState !== "visible") return;
     const state = ctx.state();
@@ -407,5 +472,5 @@ export function createAccount(ctx) {
     await api("/v1/auth/session/activity", undefined, "POST");
   }
 
-  return { register, resendVerification, verify, requestRecovery, completeRecovery, login, api, activity };
+  return { register, resendVerification, verify, requestRecovery, completeRecovery, login, api, apiBytes, activity };
 }
