@@ -196,6 +196,7 @@ await reopened.tick();
 assert.deepEqual(sendCalls[0], sendCalls[1]);
 assert.equal(alice.ctx.state().messenger.outbox[first], undefined);
 assert.equal(alice.ctx.state().messenger.chats[group].messages[0].status, "saved");
+assert.equal(alice.ctx.state().messenger.chats[group].receivedCount ?? 0, 0);
 assert(!Buffer.from(sendCalls[0].ciphertext, "base64").includes("first queue entry"));
 
 wrongSender = true;
@@ -210,6 +211,7 @@ await assert.rejects(b.tick(), /vault write failure/);
 assert.equal(bob.ctx.state().messenger.chats[group].cursor, "");
 assert.deepEqual(bob.ctx.state().messenger.chats[group].messages.map((message) => message.text),
   ["first queue entry 🔐"]);
+assert.equal(bob.ctx.state().messenger.chats[group].receivedCount, 1);
 bob.failOn(undefined);
 await b.tick();
 assert.equal(bob.ctx.state().messenger.chats[group].cursor, "2");
@@ -225,6 +227,8 @@ bob.unsupportedOn(unsupported);
 await reopened.tick();
 await b.tick();
 const placeholder = bob.ctx.state().messenger.chats[group].messages.at(-1);
+assert.equal(bob.ctx.state().messenger.chats[group].receivedCount, 3);
+assert.equal(alice.ctx.state().messenger.chats[group].receivedCount, 1);
 assert.equal(placeholder.id, unsupported);
 assert.equal(placeholder.status, "unsupported");
 assert(placeholder.text.includes("Зашифрованное"));
