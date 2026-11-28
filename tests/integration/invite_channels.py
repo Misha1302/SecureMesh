@@ -24,6 +24,9 @@ def verify(request, owner, reader, outsider, pending, username):
     request(root,token=outsider,method='DELETE',expected=404)
     pub=request(root+'/posts',{'requestId':str(uuid.uuid4()),'body':'Original'},token=owner,expected=201)
     seq=pub['seq']
+    pin={'expectedRevision':0,'seq':seq}
+    request(root+'/pin',pin,token=owner,method='PUT',expected=204)
+    request(root+'/pin',pin,token=outsider,method='PUT',expected=404)
     editpath=root+'/posts/'+str(seq)
     reaction=editpath+'/reaction'
     request(reaction,{'kind':'heart'},token=outsider,method='PUT',expected=404)
@@ -46,6 +49,7 @@ def verify(request, owner, reader, outsider, pending, username):
     assert request(listing,token=reader)['items'][0]['subscribed']
     assert all(p['channelId'] != spec['id'] for p in request(path+'/feed',token=reader)['items'])
     before=request(root+'/posts',token=reader)['items'][0]
+    assert request(root+'/posts',token=reader)['pinned']=={'seq':seq,'body':'Original'}
     assert before['revision']==1 and before['body']=='Original'
     edit={'expectedRevision':1,'body':'Corrected'}
     request(editpath,edit,token=reader,method='PUT',expected=403)

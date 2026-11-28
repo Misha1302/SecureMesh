@@ -1,12 +1,14 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json.Serialization;
 using Npgsql;
 
 namespace SecureMesh;
 
 public sealed record ChannelInput(Guid Id, string Slug, string Title, bool InviteOnly = false);
 public sealed record ChannelInvite(string Username);
+public sealed record ChannelPin([property: JsonRequired] long ExpectedRevision, [property: JsonRequired] long? Seq);
 public sealed record PostEdit(int ExpectedRevision, string Body);
 public sealed record PostInput(Guid RequestId, string Body);
 public sealed record PostReaction(string Kind);
@@ -36,6 +38,7 @@ public static partial class PublicChannels
         routes.MapDelete("/{id:guid}/subscription", Unsubscribe);
         routes.MapPost("/{id:guid}/invitations", Invite);
         routes.MapPost("/{id:guid}/revoke-access", RevokeAccess);
+        routes.MapPut("/{id:guid}/pin", SetPin);
         routes.MapGet("/{id:guid}/posts", Feed);
         routes.MapPut("/{id:guid}/posts/{seq:long}", Edit);
         routes.MapPut("/{id:guid}/posts/{seq:long}/reaction", PutReaction);
@@ -366,6 +369,39 @@ public static partial class PublicChannels
         return Results.Ok(new { items, next = more ? last : null });
     }
 
+    private static async Task<IResult> SetPin(Guid id,ChannelPin input,HttpContext ctx,NpgsqlDataSource db)
+    {
+        var a=await Sql.Authenticate(ctx,db);
+        if(input.ExpectedRevision<0 || input.Seq<=0) throw new ApiError(400,"INVALID_CHANNEL_PIN");
+        await using var c=await db.OpenConnectionAsync();
+        await using var tx=await c.BeginTransactionAsync();
+        await LockAccount(c,a);
+        if(!(await Access(c,id,a,true)).Owner) throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
+        if(input.Seq is long seq)
+        {
+            await using var target=Sql.Cmd(c,"SELECT 1 FROM public_channel_posts WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq);
+            if(await target.ExecuteScalarAsync() is null) throw new ApiError(404,"CHANNEL_POST_NOT_FOUND");
+        }
+        long revision;
+        long? current;
+        await using(var get=Sql.Cmd(c,"SELECT pin_revision,pinned_seq FROM channel_catalog WHERE id=$1",id))
+        await using(var r=await get.ExecuteReaderAsync())
+        {
+            await r.ReadAsync();
+            revision=r.GetInt64(0);
+            current=r.IsDBNull(1)?null:r.GetInt64(1);
+        }
+        if(input.ExpectedRevision!=revision && !(current==input.Seq && input.ExpectedRevision==revision-1))
+            throw new ApiError(409,"CHANNEL_PIN_CHANGED");
+        if(current!=input.Seq)
+        {
+            await using var update=Sql.Cmd(c,"UPDATE channel_catalog SET pinned_seq=$2::bigint,pin_revision=pin_revision+1 WHERE id=$1",id,(object?)input.Seq??DBNull.Value);
+            await update.ExecuteNonQueryAsync();
+        }
+        await tx.CommitAsync();
+        return Results.NoContent();
+    }
+
     private static async Task<IResult> Feed(Guid id,long? before,HttpContext ctx,NpgsqlDataSource db)
     {
         var a=await Sql.Authenticate(ctx,db);
@@ -375,6 +411,19 @@ public static partial class PublicChannels
         await Sql.LockTrustedDeliverySession(c, a, ctx.RequestAborted);
         var access=await Access(c,id,a);
         if(!access.Owner && !access.Subscribed) throw new ApiError(403,"CHANNEL_SUBSCRIPTION_REQUIRED");
+        long pinRevision;
+        object? pinned=null;
+        await using(var pin=Sql.Cmd(c,"""
+            SELECT c.pin_revision,p.seq,p.body FROM channel_catalog c
+            LEFT JOIN public_channel_posts p ON p.channel_id=c.id AND p.seq=c.pinned_seq AND p.body IS NOT NULL
+            WHERE c.id=$1
+            """,id))
+        await using(var pr=await pin.ExecuteReaderAsync(ctx.RequestAborted))
+        {
+            await pr.ReadAsync(ctx.RequestAborted);
+            pinRevision=pr.GetInt64(0);
+            if(!pr.IsDBNull(1)) pinned=new {seq=pr.GetInt64(1),body=pr.GetString(2)};
+        }
         await using var cmd=Sql.Cmd(c,$$"""
             WITH page AS MATERIALIZED (
                 SELECT seq,body,published_at,revision,edited_at FROM public_channel_posts
@@ -392,7 +441,7 @@ public static partial class PublicChannels
             if(items.Count==8){more=true;break;}
             last=r.GetInt64(0);items.Add(new{seq=last,body=r.GetString(1),publishedAt=r.GetDateTime(2),revision=r.GetInt32(3),editedAt=ReadEditTime(r,4),reactions=ReadReactions(r,5)});
         }
-        return Results.Ok(new{items,next=more?last:null});
+        return Results.Ok(new{items,next=more?last:null,pinned,pinRevision});
     }
 
     private static async Task<IResult> Publish(Guid id,PostInput input,HttpContext ctx,NpgsqlDataSource db)
@@ -507,6 +556,8 @@ public static partial class PublicChannels
         await using var cmd=Sql.Cmd(c,"UPDATE public_channel_posts SET body=NULL,deleted_at=now() WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq);
         if(await cmd.ExecuteNonQueryAsync()!=0)
         {
+            await using (var clear=Sql.Cmd(c,"UPDATE channel_catalog SET pinned_seq=NULL,pin_revision=pin_revision+1 WHERE id=$1 AND pinned_seq=$2",id,seq))
+                await clear.ExecuteNonQueryAsync();
             await using (var comments=Sql.Cmd(c,"DELETE FROM public_channel_comments WHERE post_seq=$1",seq))
                 await comments.ExecuteNonQueryAsync();
             await using var reactions=Sql.Cmd(c,"DELETE FROM public_channel_reactions WHERE post_seq=$1",seq);

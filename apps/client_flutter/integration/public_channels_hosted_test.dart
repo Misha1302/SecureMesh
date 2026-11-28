@@ -112,6 +112,11 @@ void main() {
       );
       await hit('Publish');
       expect(find.text('An actual public-channel post.'), findsOneWidget);
+      await tester.ensureVisible(find.byTooltip('Post actions'));
+      await tester.tap(find.byTooltip('Post actions'));
+      await tester.pumpAndSettle();
+      await hit('Pin post');
+      expect(find.text('Pinned post'), findsOneWidget);
       await asUser(env['SECUREMESH_CHANNEL_READER']!);
       await tester.enterText(find.byType(TextField), handle);
       await tester.tap(find.byTooltip('Search'));
@@ -121,7 +126,9 @@ void main() {
       expect(find.text('Publish'), findsNothing);
       expect(find.text('An actual public-channel post.'), findsNothing);
       await hit('Subscribe');
-      expect(find.text('An actual public-channel post.'), findsOneWidget);
+      expect(find.text('Pinned post'), findsOneWidget);
+      expect(find.text('An actual public-channel post.'), findsNWidgets(2));
+      expect(find.byTooltip('Unpin'), findsNothing);
       await hitReaction('Heart');
       expect(tester.widget<ChoiceChip>(chip('Heart')).selected, isTrue);
       expect(
@@ -130,6 +137,11 @@ void main() {
       );
       await asUser(env['SECUREMESH_CHANNEL_OWNER']!);
       await hit('Bulletin $handle');
+      await tester.ensureVisible(find.byTooltip('Unpin'));
+      await tester.tap(find.byTooltip('Unpin'));
+      await tester.pump();
+      await settle();
+      expect(find.text('Pinned post'), findsNothing);
       await editVisiblePost('An edited public-channel post.');
       expect(find.text('An edited public-channel post.'), findsOneWidget);
       final editedTime = find.textContaining(

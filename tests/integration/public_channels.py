@@ -33,6 +33,15 @@ def verify(request, owner, reader, outsider, pending):
     data={'requestId':str(uuid.uuid4()),'body':'Публикация в открытом канале'}
     request(root+'/posts',data,token=reader,expected=403)
     seq=request(root+'/posts',data,token=owner,expected=201)['seq']
+    pin = {'expectedRevision':0, 'seq':seq}
+    request(root+'/pin',pin,method='PUT',expected=401)
+    request(root+'/pin',pin,method='PUT',token=pending,expected=403)
+    request(root+'/pin',pin,method='PUT',token=reader,expected=403)
+    request(root+'/pin',{'seq':seq},method='PUT',token=owner,expected=400)
+    request(root+'/pin',{'expectedRevision':0},method='PUT',token=owner,expected=400)
+    assert request(root+'/posts',token=owner)['pinRevision']==0
+    for _ in range(2):
+        request(root+'/pin',pin,method='PUT',token=owner,expected=204)
     reaction = f'{root}/posts/{seq}/reaction'
     request(reaction, {'kind':'heart'}, method='PUT', expected=401)
     request(reaction, method='DELETE', expected=401)
@@ -77,6 +86,16 @@ def verify(request, owner, reader, outsider, pending):
     assert all(p['channelId'] == channel for p in aggregate['items'])
     assert request(path+'/feed',token=outsider)['items'] == []
     first=request(root+'/posts',token=reader,max_bytes=262144)
+    assert first['pinned']=={'seq':seq,'body':edit['body']} and first['pinRevision']==1
+    assert seq not in [post['seq'] for post in first['items']]
+    another=first['items'][0]['seq']
+    request(root+'/pin',{'expectedRevision':1,'seq':another},method='PUT',token=owner,expected=204)
+    request(root+'/pin',pin,method='PUT',token=owner,expected=409)
+    assert request(root+'/posts',token=reader)['pinned']['seq']==another
+    for _ in range(2):
+        request(root+'/pin',{'expectedRevision':2,'seq':None},method='PUT',token=owner,expected=204)
+    assert request(root+'/posts',token=reader)['pinned'] is None
+    request(root+'/pin',{'expectedRevision':3,'seq':seq},method='PUT',token=owner,expected=204)
     assert len(first['items'])==8 and first['next']==first['items'][-1]['seq']
     older=request(root+'/posts?before='+str(first['next']),token=reader)
     assert len(older['items'])==2 and older['next'] is None and older['items'][-1]['seq']==seq
@@ -89,6 +108,7 @@ def verify(request, owner, reader, outsider, pending):
     request(second_root+'/subscription',token=reader,method='PUT',expected=204)
     second_seq=request(second_root+'/posts',{'requestId':str(uuid.uuid4()),'body':'Second channel'},token=owner,expected=201)['seq']
     request(f'{second_root}/posts/{seq}/reaction',{'kind':'heart'},method='PUT',token=reader,expected=404)
+    request(second_root+'/pin',{'expectedRevision':0,'seq':seq},method='PUT',token=owner,expected=404)
     posts = []
     feed_path = path + '/feed'
     while True:
@@ -109,6 +129,9 @@ def verify(request, owner, reader, outsider, pending):
     request(root+'/posts/'+str(seq),token=reader,method='DELETE',expected=403)
     request(reaction,{'kind':'like'},method='PUT',token=reader)
     request(root+'/posts/'+str(seq),token=owner,method='DELETE',expected=204)
+    assert request(root+'/posts',token=reader)['pinned'] is None
+    assert request(root+'/posts',token=reader)['pinRevision']==5
+    request(root+'/pin',{'expectedRevision':3,'seq':seq},method='PUT',token=owner,expected=404)
     request(reaction,{'kind':'like'},method='PUT',token=reader,expected=404)
     request(reaction,method='DELETE',token=owner,expected=404)
     request(edit_route,{**edit,'expectedRevision':2},method='PUT',token=owner,expected=404)
@@ -122,6 +145,10 @@ def verify(request, owner, reader, outsider, pending):
     assert request(path+'?q='+slug,token=outsider)['items']==[]
     request(path,spec,token=owner,expected=409)
 
+
+
+def verify_channel_limits(request, outsider):
+    path='/v1/public-channels'
     # A separate account exercises real limits without consuming the fixture owner's allowance.
     quota_slug = 'limit_' + uuid.uuid4().hex[:9]
     opened = []
@@ -194,13 +221,17 @@ def verify_deleted_post_retry(db, owner):
                                      'title':'Delete retry'}, token=owner, expected=201)
     publication = {'requestId':str(uuid.uuid4()),'body':'An existing publication'}
     seq = d.request(root+'/posts', publication, token=owner, expected=201)['seq']
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    pin={'expectedRevision':0,'seq':seq}
+    d.request(root+'/pin',pin,method='PUT',token=owner,expected=204)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         with hold_row(db, f"SELECT seq FROM public_channel_posts WHERE seq={int(seq)} FOR UPDATE"):
             delete = pool.submit(d.request, f'{root}/posts/{seq}', method='DELETE', token=owner, expected=204)
             wait_for(db, "wait_event_type='Lock' AND query LIKE 'UPDATE public_channel_posts SET body=NULL%'")
             retry = pool.submit(d.request, root+'/posts', publication, token=owner, expected=409)
+            pin_retry=pool.submit(d.request,root+'/pin',pin,method='PUT',token=owner,expected=404)
             wait_for(db, "wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE%'")
         delete.result(timeout=10)
+        assert pin_retry.result(timeout=10)['code']=='CHANNEL_POST_NOT_FOUND'
         assert retry.result(timeout=10)['code'] == 'CHANNEL_POST_CONFLICT'
     assert d.request(root+'/posts', publication, token=owner, expected=409)['code'] == 'CHANNEL_POST_CONFLICT'
     assert d.request(root+'/posts', token=owner)['items'] == []
@@ -223,6 +254,7 @@ def main():
         verify(d.request,*tokens)
         # Start a fresh service token bucket; the two suites deliberately exercise many requests.
         server.restart()
+        verify_channel_limits(d.request,tokens[2])
         invite_channels.verify(d.request,tokens[1],tokens[2],tokens[0],tokens[3],c['username'])
         verify_reaction_quota_and_revoke(db, tokens[0], tokens[1], b['username'])
         verify_deleted_post_retry(db, tokens[0])

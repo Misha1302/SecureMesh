@@ -27,7 +27,8 @@ class _PublicChannelsState extends State<PublicChannels> {
       post = TextEditingController(),
       inviteName = TextEditingController();
   List<Map> rooms = [], posts = [], aggregatePosts = [];
-  Map? room;
+  Map? room, pinnedPost;
+  int? pinRevision;
   String? directoryCursor, aggregateCursor, error;
   int? feedCursor;
   String activeQuery = '';
@@ -68,6 +69,10 @@ class _PublicChannelsState extends State<PublicChannels> {
         ApiFailure(status: 429) => tr(
           'Слишком много действий. Повторите позже.',
           'Too many actions. Try again later.',
+        ),
+        ApiFailure(code: 'CHANNEL_PIN_CHANGED') => tr(
+          'Закрепление изменилось. Обновите публикации.',
+          'The pinned post changed. Refresh posts.',
         ),
         ApiFailure(code: 'CHANNEL_POST_CHANGED') => tr(
           'Публикацию уже изменили. Обновите список перед редактированием.',
@@ -125,10 +130,14 @@ class _PublicChannelsState extends State<PublicChannels> {
       final page = (result['items'] as List).cast<Map>();
       posts = more ? [...posts, ...page] : page;
       feedCursor = result['next'] as int?;
+      pinnedPost = result['pinned'] as Map?;
+      pinRevision = result['pinRevision'] as int?;
     } on ApiFailure catch (e) {
       if (e.status == 401 || e.status == 403 || e.status == 404) {
         posts = [];
         feedCursor = null;
+        pinnedPost = null;
+        pinRevision = null;
       }
       rethrow;
     }
@@ -162,6 +171,8 @@ class _PublicChannelsState extends State<PublicChannels> {
     inviteNote = null;
     posts = [];
     feedCursor = null;
+    pinnedPost = null;
+    pinRevision = null;
     post.clear();
     postId = null;
     if (room!['owner'] == true || room!['subscribed'] == true) await feed();
@@ -214,6 +225,8 @@ class _PublicChannelsState extends State<PublicChannels> {
     } else {
       posts = [];
       feedCursor = null;
+      pinnedPost = null;
+      pinRevision = null;
       if (room!['inviteOnly'] == true) await closeRoom();
     }
   }
@@ -267,6 +280,15 @@ class _PublicChannelsState extends State<PublicChannels> {
   Future<void> decline() async {
     await widget.api('$roomPath/subscription', method: 'DELETE');
     if (mounted) await closeRoom();
+  }
+
+  Future<void> setPin(int? seq) async {
+    await widget.api(
+      '$roomPath/pin',
+      method: 'PUT',
+      data: {'seq': seq, 'expectedRevision': pinRevision},
+    );
+    if (mounted) await feed();
   }
 
   Future<void> editPost(Map item) async {
@@ -462,6 +484,8 @@ class _PublicChannelsState extends State<PublicChannels> {
     post.clear();
     posts = [];
     feedCursor = null;
+    pinnedPost = null;
+    pinRevision = null;
     await catalog();
   }
 
@@ -703,6 +727,18 @@ class _PublicChannelsState extends State<PublicChannels> {
           action('Отклонить приглашение', 'Decline invitation', decline),
         if (room!['owner'] == true || room!['subscribed'] == true) ...[
           action('Обновить публикации', 'Refresh posts', feed),
+          if (pinnedPost case final Map pin)
+            ListTile(
+              title: Text(tr('Закреплённая публикация', 'Pinned post')),
+              subtitle: SelectableText(pin['body'] as String),
+              trailing: room!['owner'] == true
+                  ? IconButton(
+                      tooltip: tr('Открепить', 'Unpin'),
+                      icon: const Icon(Icons.push_pin_outlined),
+                      onPressed: busy ? null : () => run(() => setPin(null)),
+                    )
+                  : null,
+            ),
           if (!busy && posts.isEmpty)
             Text(tr('Публикаций пока нет.', 'No posts yet.')),
           for (final p in posts)
@@ -728,11 +764,19 @@ class _PublicChannelsState extends State<PublicChannels> {
                       enabled: !busy,
                       tooltip: tr('Действия с публикацией', 'Post actions'),
                       onSelected: (value) => run(
-                        () => value == 'edit'
-                            ? editPost(p)
-                            : removePost(p['seq'] as int),
+                        () => switch (value) {
+                          'edit' => editPost(p),
+                          'pin' => setPin(p['seq'] as int),
+                          _ => removePost(p['seq'] as int),
+                        },
                       ),
                       itemBuilder: (_) => [
+                        if (pinRevision != null &&
+                            p['seq'] != pinnedPost?['seq'])
+                          PopupMenuItem(
+                            value: 'pin',
+                            child: Text(tr('Закрепить', 'Pin post')),
+                          ),
                         if (p['revision'] is int)
                           PopupMenuItem(
                             value: 'edit',

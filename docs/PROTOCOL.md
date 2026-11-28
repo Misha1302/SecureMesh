@@ -97,3 +97,18 @@ The profile QR encodes `securemesh:profile:v1:<https-origin>/@<username>`. The s
 ### Browser unread counts
 
 Each unlocked PWA profile counts newly decrypted incoming items that have a visible timeline entry. A duplicate envelope and the user's own echo add zero. The encrypted vault commits the message and received counter together. Existing vaults begin counting with the first newly processed message. The separate read counter advances to the observed count when the end of the selected conversation intersects the visible page. These counts remain local to the browser profile. Neither counter is sent to the peer or included in an OS notification.
+
+### Channel publication pins
+
+Channel owners may pin one live publication. On every authorized channel feed page,
+`GET /v1/public-channels/{id}/posts` returns `pinRevision` (initially zero)
+and `pinned` (null or an object with the current `seq` and `body`). The pin
+is visible to the owner and subscribers, including when pagination omits the
+publication. Accepting an invitation grants access to an invite-only feed.
+
+Use `PUT /v1/public-channels/{id}/pin` with the observed `expectedRevision`
+and a `seq` from that channel. Pass a null `seq` to unpin. Success returns
+204. A conflicting revision returns 409 and requires refreshing the feed.
+An immediate retry of a successful change is idempotent. Pin changes and
+publication deletion serialize on the channel row. Deleting the pinned post
+clears its pin and advances the revision in the same transaction.
