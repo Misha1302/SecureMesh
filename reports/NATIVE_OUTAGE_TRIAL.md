@@ -10,7 +10,7 @@ The default run uses seeds 7, 19 and 41. Each direction starts with three messag
 
 The criterion set before measurement is zero missing, unexpected or duplicate IDs and a recovery p95 of at most 45 seconds. The budget allows up to 30 seconds of current retry backoff plus 15 seconds of EDGE catch-up for the default seven queued messages per direction. Recovery time starts just before the first route is restored and ends after the recipient commits the decrypted message. It excludes the 60-second hold, includes network reconfiguration and is reported separately from end-to-end delivery. Each JSON result includes the qdisc settings at cutoff and restoration, minimum blackout duration, measured timestamps by message ID, build hashes and the process exit status.
 
-Use the standard checkout's netem lock and Compose project if running from another worktree. The host ports 5090, 15990 and 15991 are shared with other network trials. The default 20-message run covers this standalone outage. The combined interruption schedule, the 1000-message offline qualification and physical radio tests remain separate.
+Use the standard checkout's netem lock and Compose project if running from another worktree. The host ports 5090, 15990 and 15991 are shared with other network trials. The default 20-message run covers this standalone outage. The combined interruption schedule, the offline sender backlog trial below and physical radio tests remain separate.
 
 ## Observed results
 
@@ -40,3 +40,17 @@ the first durable recipient ingest of each ID. The 180-second limit is a
 loopback qualification budget for the complete batch, including retries.
 The trial uses one established MLS epoch. Traffic shaping, a live epoch
 transition during recovery and device or operator performance are separate.
+
+Run with the local API and native Rust Debug artifacts, Dart package resolution,
+TLS fixture, test mail service and PostgreSQL running:
+
+```sh
+.local/venv/bin/python tests/integration/native_offline_backlog.py
+```
+
+The coordinator uses a dedicated database and TLS API port 5295, configurable
+via `SECUREMESH_TEST_URLS`. Use the established Compose project name when
+running from another worktree. The driver validates live cursor-paged ingestion.
+The coordinator then reopens the SQLCipher stores independently, checks exact
+recipient order against the PostgreSQL sequence, and retransmits three original
+envelopes to verify stable durable ACKs and an unchanged server row set.
