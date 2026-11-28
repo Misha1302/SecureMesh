@@ -16,6 +16,8 @@ cargo-audit 0.23.0 reported zero vulnerability advisories against the candidate 
 
 The prior client validates its schema migration history when unlocking a profile. Running upstream V7/V8 during the candidate evaluation caused the prior client to reject the upgraded file. SecureMesh therefore embeds the six shared upstream migrations for its standard MLS profile. Virtual-client draft features are disabled. A compatibility test checks the stored checksums against the complete upstream migration set on a disposable database.
 
+On 2026-11-28 cargo-audit 0.23.0 checked all three current Rust lockfiles against RustSec revision c5279d0b, the upstream HEAD returned by GitHub for this run. Each returned zero vulnerability advisories and one unmaintained warning (RUSTSEC-2026-0173). [Lockfile hashes, package counts and results](../reports/evidence/product-rustsec.json)
+
 ## Historical baseline
 
 The modernization scan using cargo-audit 0.23.0 and RustSec advisory DB commit `c9f6c91a44dbad9d71742329e9df061279f9c4be` (2026-11-26) found five advisories in the original lockfile. Updating `url` from 2.5.8 to 2.5.9 and `form_urlencoded` from 1.2.2 to 1.2.3 cleared RUSTSEC-2026-0592. The second scan exited 1 with the four findings listed below. The scoped before/after results are in `reports/evidence/modernization-rustsec.json`.

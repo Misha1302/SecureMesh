@@ -52,6 +52,8 @@ check pub-osv python3 tools/audit_pub_osv.py
 check rust-format cargo fmt --manifest-path src/crypto_core/Cargo.toml -- --check
 if [[ -x .local/security/bin/cargo-audit ]]; then
   check rustsec-current .local/security/bin/cargo-audit audit --file src/crypto_core/Cargo.lock --db .local/advisory-db --json
+  check rustsec-browser .local/security/bin/cargo-audit audit --file src/browser_crypto/Cargo.lock --db .local/advisory-db --no-fetch --json
+  check rustsec-directory .local/security/bin/cargo-audit audit --file src/key_directory/Cargo.lock --db .local/advisory-db --no-fetch --json
 else
   check rustsec-tool test -x .local/security/bin/cargo-audit
 fi
