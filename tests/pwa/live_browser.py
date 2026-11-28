@@ -354,6 +354,89 @@ def launch_browser(playwright, engine, app_origin, api_port, pin, outage):
             thread.join()
 
 
+def exercise_peer_profile(playwright, api_port, owner, viewer, editor, viewer_name, owner_row):
+    button = viewer.locator("#peer-profile-open")
+    card = viewer.locator("#peer-profile")
+    peer_bio = card.locator("#peer-profile-bio")
+    peer_status = card.locator("#peer-profile-status")
+    target = re.compile(r"/v1/conversations/[0-9a-f-]+/profile-text/[0-9a-f-]+$")
+    with viewer.expect_response(lambda r: target.search(r.url) and r.ok):
+        button.click()
+    expect(card.get_by_role("status")).to_have_text("Нет доступных сведений.")
+    expect(peer_bio).to_have_text("")
+    expect(peer_status).to_have_text("")
+    button.click()
+    expect(card).to_be_hidden()
+
+    editor.locator("summary").click()
+    editor.get_by_label("Показывать собеседникам").check()
+    editor.get_by_label("О себе", exact=True).fill("Строка анкеты <b>литеральный текст</b>")
+    with owner.expect_response(lambda r: r.url.endswith("/v1/users/me/profile-text/with-visibility") and r.ok) as saved:
+        editor.get_by_role("button", name="Сохранить", exact=True).click()
+    expect(editor.get_by_role("status")).to_have_text("Сохранено")
+    authorization = saved.value.request.all_headers()["authorization"]
+    editor.locator("summary").click()
+
+    # Playwright pages are two independently registered devices. The direct API
+    # call below changes the owner's real block setting using that same session.
+    direct = playwright.request.new_context(base_url=f"https://127.0.0.1:{api_port}", ignore_https_errors=True)
+    blocked = False
+    block_route = "/v1/contact-blocks/" + viewer_name
+    try:
+        button.click()
+        expect(peer_bio).to_have_text("Строка анкеты <b>литеральный текст</b>")
+        expect(peer_bio.locator("b")).to_have_count(0)
+        expect(peer_status).to_have_text("В отпуске")
+        button.click()
+        expect(card).to_be_hidden()
+        expect(peer_bio).to_have_text("")
+        expect(peer_status).to_have_text("")
+
+        # Hold the real, authorized response after HTTPS has returned. Leaving
+        # the selected conversation must discard the response even after unblock.
+        viewer.evaluate("""() => {
+          const request = window.fetch;
+          window.fetch = async (...args) => {
+            const response = await request(...args);
+            if (!String(args[0]).includes('/profile-text/') || window.releasePeerFixture) return response;
+            await new Promise(resolve => {
+              window.releasePeerFixture = resolve;
+              document.documentElement.dataset.peerFixtureHeld = "yes";
+            });
+            delete document.documentElement.dataset.peerFixtureHeld;
+            window.fetch = request;
+            return response;
+          };
+        }""")
+        button.click()
+        expect(viewer.locator("html")).to_have_attribute("data-peer-fixture-held", "yes")
+        owner_view = viewer.viewport_size
+        viewer.set_viewport_size({"width": 390, "height": 844})
+        viewer.locator("#to-chats").click()
+        expect(card).to_be_hidden()
+        response = direct.put(block_route, headers={"Authorization": authorization})
+        assert response.status == 204
+        blocked = True
+        viewer.evaluate("window.releasePeerFixture()")
+        owner_row.click()
+        viewer.set_viewport_size(owner_view)
+        expect(card).to_be_hidden()
+        expect(peer_bio).to_have_text("")
+        button.click()
+        expect(card.get_by_role("status")).to_have_text("Нет доступных сведений.")
+        expect(peer_status).to_have_text("")
+        button.click()
+        response = direct.delete(block_route, headers={"Authorization": authorization})
+        assert response.status == 204
+        blocked = False
+        button.click()
+        expect(peer_bio).to_have_text("Строка анкеты <b>литеральный текст</b>")
+    finally:
+        if blocked:
+            direct.delete(block_route, headers={"Authorization": authorization})
+        direct.dispose()
+
+
 def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
     with sync_playwright() as playwright, launch_browser(playwright, engine, app_origin, api_port, pin, outage) as (browser, options):
         pages = [browser.new_context(**options).new_page() for _ in range(2)]
@@ -465,6 +548,16 @@ def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
         bob.locator("#compose textarea").fill(reply)
         bob.locator("#compose button").click()
         expect(alice.locator("#messages").get_by_text(reply, exact=True)).to_be_visible(timeout=20_000)
+
+        exercise_peer_profile(playwright, api_port, alice, bob, profile_panel, bob_name, bob_row)
+        bob.locator("#lock").click()
+        expect(bob.locator("#peer-profile")).to_be_hidden()
+        expect(bob.locator("#peer-profile-bio")).to_have_text("")
+        expect(bob.locator("#peer-profile-status")).to_have_text("")
+        bob.locator("#password").fill(bob_password)
+        bob.locator("#enter").click()
+        bob_row.click()
+        expect(bob.locator("#peer-profile")).to_be_hidden()
 
         evidence = os.environ.get("SECUREMESH_CHAT_SCREENSHOTS")
         if evidence:

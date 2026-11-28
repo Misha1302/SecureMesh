@@ -236,8 +236,19 @@ assert(!placeholder.text.includes("fixture plaintext"));
 
 const queuedBeforeChange = await reopened.send(group, "durable pre-conflict draft");
 const attemptsBeforeChange = sendCalls.length;
+assert(reopened.canViewPeer(group));
+let profileCleared = false;
+alice.ctx.onBindingConflict = id => {
+  assert.equal(id, group);
+  assert.equal(reopened.canViewPeer(group), false);
+  assert(!alice.ctx.state().messenger.chats[group].bindingConflict);
+  profileCleared = true;
+};
 replaceKey = true;
 await reopened.refresh();
+delete alice.ctx.onBindingConflict;
+assert(profileCleared);
+assert.equal(reopened.canViewPeer(group), false);
 await assert.rejects(reopened.send(group, "blocked"), { code: "changed-key" });
 assert.equal(alice.ctx.state().messenger.chats[group].peerKey, bob.own.public_key);
 
