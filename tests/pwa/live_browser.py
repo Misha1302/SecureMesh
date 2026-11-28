@@ -387,6 +387,22 @@ def exercise_peer_profile(playwright, api_port, owner, viewer, editor, viewer_na
         expect(peer_bio).to_have_text("Строка анкеты <b>литеральный текст</b>")
         expect(peer_bio.locator("b")).to_have_count(0)
         expect(peer_status).to_have_text("В отпуске")
+        viewport = viewer.viewport_size
+        evidence = os.environ.get("SECUREMESH_PEER_PROFILE_SCREENSHOTS")
+        if evidence:
+            target = Path(evidence)
+            target.mkdir(parents=True, exist_ok=True)
+            viewer.set_viewport_size({"width": 1280, "height": 800})
+            viewer.screenshot(path=target / "desktop.png", animations="disabled")
+        viewer.set_viewport_size({"width": 390, "height": 844})
+        expect(button).to_be_in_viewport()
+        expect(peer_bio).to_be_in_viewport()
+        expect(viewer.locator("#compose button")).to_be_in_viewport(ratio=1)
+        assert viewer.locator("#timeline").bounding_box()["height"] >= 320
+        expect(viewer.locator("#security-email")).to_be_hidden()
+        if evidence:
+            viewer.screenshot(path=target / "phone.png", animations="disabled")
+        viewer.set_viewport_size(viewport)
         button.click()
         expect(card).to_be_hidden()
         expect(peer_bio).to_have_text("")
@@ -414,6 +430,7 @@ def exercise_peer_profile(playwright, api_port, owner, viewer, editor, viewer_na
         viewer.set_viewport_size({"width": 390, "height": 844})
         viewer.locator("#to-chats").click()
         expect(card).to_be_hidden()
+        expect(viewer.locator("#security-email")).to_be_visible()
         response = direct.put(block_route, headers={"Authorization": authorization})
         assert response.status == 204
         blocked = True
