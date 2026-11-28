@@ -35,3 +35,22 @@ python3 deploy/check-registration-contract.py https://demo.example.org
 Use the actual ingress origin for the second command. The probe uses an invalid username and email in each request so the API rejects them before storage or SMTP. It checks that a one-character display name gets past display-name validation and that a control character is rejected with `INVALID_DISPLAY_NAME`. Successful registration, mail delivery and TLS reachability from client networks require their own checks.
 
 If readiness or the contract fails after switching, restore the prior proxy configuration and, after checking migration and persisted credential compatibility, revert to the previous API release. Older releases cannot authenticate accounts created with v2 credentials. Preserve the database and investigate before switching back if v2 accounts may already exist. Production startup remains disabled.
+
+## Private blob upload limit
+
+The nginx template allows 4,194,320 bytes for `PUT /v1/conversations/{group}/blobs/{id}` with lowercase canonical UUIDs. This fits native 4 MiB attachments and PWA photos with their 16-byte AES-GCM tag. Every other request, including `/parts` and other methods on the blob URL, keeps the 128 KiB cap. The API still enforces trusted membership, ciphertext length and quotas.
+
+Substitute only the three deployment placeholders to retain the nginx variables:
+
+```sh
+envsubst '$SECUREMESH_DOMAIN $SECUREMESH_TLS_CERT_PATH $SECUREMESH_TLS_KEY_PATH' \
+  < deploy/reverse-proxy.conf.template
+```
+
+The local integration test renders this template with a loopback listener, a private TLS certificate and an isolated API/PostgreSQL fixture. Use the normal integration prerequisites and a locally cached `nginx:1.27-alpine` image. Override `SECUREMESH_TEST_NGINX_IMAGE` to test a different cached image.
+
+```sh
+.local/venv/bin/python tests/integration/nginx_private_blobs.py
+```
+
+The test checks native and PWA-sized PUT/GET round trips, rejection one byte above the cap, standard and part request limits, rejection of URL aliases at the elevated size, browser preflight and WSS HELLO/PING.
