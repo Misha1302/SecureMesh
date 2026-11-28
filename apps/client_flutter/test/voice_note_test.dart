@@ -112,6 +112,7 @@ void main() {
                 resumeAt: memory.read(chat, 'clip'),
                 onPosition: (value) => memory.save(chat, 'clip', value),
                 makePlayer: () => player = _Player(),
+                transcription: _LocalTranscription(false, ''),
               ),
             ),
           ),
