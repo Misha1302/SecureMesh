@@ -70,6 +70,8 @@ def main():
                         rate,rtt,loss,jitter=PROFILES[args.profile]
                         setup={}
                         for i,name in enumerate(('netem-a','netem-b')):setup[name]=configure(name,rate,rtt,loss,seed+i*100,jitter)
+                        progress_path = ROOT / '.local/native-network-progress.json'
+                        progress_path.unlink(missing_ok=True)
                         process.stdin.write('RUN\n');process.stdin.flush()
                         timed_out = False
                         try:
@@ -90,9 +92,24 @@ def main():
 
                         if stdout:print(stdout.strip(),flush=True)
                         if output.exists():
-                            result=json.loads(output.read_text());result.update(child_exit_code=process.returncode,timed_out=timed_out,rate_kbps_each_direction=rate,rtt_ms=rtt,packet_loss_percent=loss,jitter_ms_each_direction=jitter,setup=setup,source_head_at_start=source_head,binary_sha256=binary_hashes,source_sha256=source_hashes)
-                            for name in ('netem-a','netem-b'):result[name+'_tc_stats']=docker('exec','-T',name,'tc','-s','qdisc','show','dev','eth0')
-                            output.write_text(json.dumps(result,indent=2)+'\n')
+                            result = json.loads(output.read_text())
+                        else:
+                            result = dict(profile=args.profile, seed=seed, messages_each_direction=args.count,
+                                          outcome="incomplete", last_progress=None)
+                            if progress_path.exists():
+                                try:
+                                    result["last_progress"] = json.loads(progress_path.read_text())
+                                except json.JSONDecodeError:
+                                    pass  # The worker may have stopped while writing progress.
+                        result.update(child_exit_code=process.returncode, timed_out=timed_out,
+                                      rate_kbps_each_direction=rate, rtt_ms=rtt, packet_loss_percent=loss,
+                                      jitter_ms_each_direction=jitter, setup=setup, source_head_at_start=source_head,
+                                      binary_sha256=binary_hashes, source_sha256=source_hashes)
+                        for name in ('netem-a','netem-b'):
+                            result[name + '_tc_stats'] = docker('exec','-T',name,'tc','-s','qdisc','show','dev','eth0')
+                        output.write_text(json.dumps(result,indent=2)+'\n')
+                        if result.get("outcome") == "incomplete" and process.returncode == 0:
+                            raise RuntimeError("Trial exited without delivery measurements")
                         if timed_out:
                             raise TimeoutError(f'{args.profile}/{seed}: Dart did not exit within the 1300s watchdog')
                         if process.returncode!=0:raise RuntimeError(f'Dart native network trial exited {process.returncode}: '+(root/'dart.stderr').read_text())
