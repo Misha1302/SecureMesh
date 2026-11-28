@@ -1,8 +1,48 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:securemesh_client/channel_comments.dart';
 
 void main() {
+  testWidgets('serializes two callbacks before the disabled UI rebuilds', (
+    tester,
+  ) async {
+    final pending = Completer<Map<String, dynamic>>();
+    var sends = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChannelComments(
+            path: '/channel/posts/3/comments',
+            russian: false,
+            api: (route, {data, method}) async {
+              if (data != null) {
+                sends++;
+                return pending.future;
+              }
+              return {'items': [], 'next': null};
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'One comment');
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Send'),
+    );
+    button.onPressed!();
+    button.onPressed!();
+    expect(sends, 1);
+    pending.complete({'id': 1});
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      isEmpty,
+    );
+  });
+
   testWidgets(
     'shows older comments and clears restricted rows after access loss',
     (tester) async {
@@ -16,7 +56,7 @@ void main() {
               russian: false,
               api: (route, {data, method}) async {
                 if (revoked) throw StateError('membership revoked');
-                if (route == '$path?before=8')
+                if (route == '$path?before=8') {
                   return {
                     'items': [
                       {
@@ -28,6 +68,7 @@ void main() {
                     ],
                     'next': null,
                   };
+                }
                 expect(route, path);
                 return {
                   'items': [

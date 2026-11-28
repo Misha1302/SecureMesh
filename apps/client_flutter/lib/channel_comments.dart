@@ -21,7 +21,7 @@ class _ChannelCommentsState extends State<ChannelComments> {
   final draft = TextEditingController();
   List<Map> rows = [];
   int? next;
-  bool busy = true, failed = false;
+  bool busy = false, failed = false;
   String? requestId, requestBody;
   String tr(String ru, String en) => widget.russian ? ru : en;
 
@@ -38,6 +38,7 @@ class _ChannelCommentsState extends State<ChannelComments> {
   }
 
   Future<void> run(Future<void> Function() operation) async {
+    if (busy) return;
     setState(() {
       busy = true;
       failed = false;
