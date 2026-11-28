@@ -33,6 +33,8 @@ const codes = {
   NETWORK_UNAVAILABLE:
     "Нет соединения с совместимым сервером. Проверьте сеть и доступность API.",
   INVALID_TOKEN: "Не удалось подтвердить код.",
+  INVALID_RECOVERY: "Код восстановления недействителен, истёк или уже использован.",
+  INVALID_EMAIL: "Укажите адрес почты для восстановления.",
   INVALID_DISPLAY_NAME: "Проверьте имя профиля.",
   INVALID_CREDENTIALS: "Проверьте пароль и подтверждение почты.",
   SESSION_REQUIRED: "Войдите в аккаунт ещё раз.",
@@ -242,6 +244,7 @@ function layout() {
   show("register", !stage && !state.userId);
   show("verify", !state.userId && ["registered", "verifying"].includes(stage));
   show("resend-verification", !state.userId && ["registered", "verifying"].includes(stage));
+  show("recovery", !state.userId);
   show(
     "login",
     Boolean(state.userId || ["verifying", "verified"].includes(stage)),
@@ -481,7 +484,7 @@ bind(byId("entry"), async () => {
     throw err;
   }
 });
-for (const id of ["register", "verify", "resend-verification", "login"]) {
+for (const id of ["register", "verify", "resend-verification", "recovery-request", "recovery-complete", "login"]) {
   const form = byId(id);
   bind(form, async () => {
     const current = opened,
@@ -505,6 +508,13 @@ for (const id of ["register", "verify", "resend-verification", "login"]) {
     } else if (id === "resend-verification") {
       await current.account.resendVerification();
       notice("Проверьте почту. Новый код можно запрашивать раз в пять минут, до пяти раз в сутки.");
+    } else if (id === "recovery-request") {
+      await current.account.requestRecovery(form.elements.email.value);
+      notice("Если адрес подтверждён, письмо с кодом восстановления отправлено.");
+    } else if (id === "recovery-complete") {
+      await current.account.completeRecovery(form.elements.code.value);
+      form.reset();
+      notice("Пароль аккаунта восстановлен. Теперь войдите на этом устройстве.");
     } else {
       await current.account.login();
       notice(

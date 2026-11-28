@@ -214,6 +214,31 @@ export function createAccount(ctx) {
     });
   }
 
+  async function requestRecovery(email) {
+    const state = ctx.state();
+    const binding = principal(state);
+    require(binding.userId === null, "ACCOUNT_BINDING_MISMATCH");
+    require(typeof email === "string" && email.trim().length > 0 && email.trim().length <= 254, "INVALID_EMAIL");
+    await exchange("/v1/auth/recovery/request", { email: email.trim() });
+  }
+
+  async function completeRecovery(code) {
+    const state = ctx.state();
+    const binding = principal(state);
+    require(binding.userId === null, "ACCOUNT_BINDING_MISMATCH");
+    require(typeof code === "string" && isToken(code.trim()), "INVALID_RECOVERY");
+    const credential = await ctx.derive(apiOrigin, binding.username);
+    decodeBase64(credential, 32);
+    stillBound(ctx.state(), binding);
+    await exchange("/v2/auth/recovery/complete", {
+      token: code.trim(), username: binding.username, credential,
+    });
+    await ctx.update((draft) => {
+      stillBound(draft, binding);
+      draft.registrationStage = "verified";
+    });
+  }
+
   async function login(password) {
     require(!authenticating, "SIGN_IN_BUSY");
     authenticating = true;
@@ -356,5 +381,5 @@ export function createAccount(ctx) {
     await api("/v1/auth/session/activity", undefined, "POST");
   }
 
-  return { register, resendVerification, verify, login, api, activity };
+  return { register, resendVerification, verify, requestRecovery, completeRecovery, login, api, activity };
 }

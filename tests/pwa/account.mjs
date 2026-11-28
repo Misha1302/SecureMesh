@@ -69,7 +69,7 @@ function context(initial) {
     async derive(origin, principal, password) {
       assert.equal(origin, apiOrigin);
       assert.equal(principal, username);
-      assert.equal(password, passphrase);
+      if (password !== undefined) assert.equal(password, passphrase);
       return derived;
     },
   };
@@ -131,6 +131,23 @@ assert.equal(ctx.state().userId, userId);
 assert.equal(ctx.state().session.deviceId, identity);
 assert.equal(ctx.state().enrollmentVerified, true);
 assert.equal(signs(), 1);
+
+const recovery = context();
+const recoveryAccount = createAccount(recovery.ctx);
+fake = ({ path, data }) => {
+  if (path === "/v1/auth/recovery/request") {
+    assert.deepEqual(data, { email: "marina@example.org" });
+    return request(undefined, 202);
+  }
+  assert.equal(path, "/v2/auth/recovery/complete");
+  assert.deepEqual(data, { token: emailCode, username, credential: derived });
+  return request(undefined, 204);
+};
+await recoveryAccount.requestRecovery(" marina@example.org ");
+await recoveryAccount.completeRecovery(emailCode);
+assert.equal(recovery.ctx.state().registrationStage, "verified");
+assert.equal(calls.at(-1).path, "/v2/auth/recovery/complete");
+await assert.rejects(recoveryAccount.completeRecovery("bad-code"), /INVALID_RECOVERY/);
 
 await ctx.update((state) => { state.session = null; });
 fake = ({ path, data }) => {

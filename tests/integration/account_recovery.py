@@ -26,7 +26,7 @@ def mail_token(email):
     raise AssertionError('Account recovery email did not arrive')
 
 
-def recovery_lock_race(database, pg, username, account, replacement):
+def recovery_lock_race(database, username, account, replacement, pending_session):
     def sql(statement):
         return subprocess.check_output(['docker', 'compose', 'exec', '-T', 'db', 'psql', '-XAtq',
             '-U', 'securemesh', '-d', database, '-v', 'ON_ERROR_STOP=1', '-c', statement],
@@ -50,13 +50,14 @@ def recovery_lock_race(database, pg, username, account, replacement):
         blocker.kill()
         raise AssertionError('Could not establish deterministic account-row lock')
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         sign_in = pool.submit(d.request, '/v1/auth/login', login, None, None, 401)
         refresh = pool.submit(d.request, '/v1/auth/refresh', dict(token=account['session']['refreshToken']), None, None, 401)
+        enrollment = pool.submit(d.request, '/v1/devices/enrollment', {}, pending_session['accessToken'], None, 401)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             count = sql(f"SELECT count(*) FROM pg_stat_activity WHERE datname='{database}' AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE id=%FOR UPDATE%'")
-            if count == '2':
+            if count == '3':
                 break
             time.sleep(.05)
         else:
@@ -65,10 +66,13 @@ def recovery_lock_race(database, pg, username, account, replacement):
             raise AssertionError(f'Sign-in and refresh did not both wait on the account lock (observed {count})')
         blocker.stdin.write(f"UPDATE users SET password_hash='reset-race-fixture' WHERE username='{username}';\n"
                             f"UPDATE sessions SET revoked=true WHERE device_id IN (SELECT id FROM devices WHERE user_id=(SELECT id FROM users WHERE username='{username}'));\n"
-                            f"DELETE FROM auth_challenges WHERE username='{username}'; COMMIT;\\q\n")
+                            f"DELETE FROM auth_challenges WHERE username='{username}';\n"
+                            f"DELETE FROM device_enrollments WHERE user_id=(SELECT id FROM users WHERE username='{username}') AND activated_at IS NULL;\n"
+                            "COMMIT;\n\\q\n")
         blocker.stdin.flush()
         assert sign_in.result(timeout=10)['code'] == 'INVALID_CREDENTIALS'
         assert refresh.result(timeout=10)['code'] in ('REFRESH_REUSE', 'INVALID_REFRESH')
+        assert enrollment.result(timeout=10)['code'] == 'AUTH_REQUIRED'
     blocker.wait(timeout=10)
     assert blocker.returncode == 0, blocker.stderr.read()
 
@@ -93,10 +97,12 @@ def main():
             stale = d.request('/v1/auth/challenge', dict(username=username, deviceId=replacement.identity))
             stale_signature = replacement.call('sign', payload=stale['payload'])['signature']
             d.request('/v1/users/me', token=old_session['accessToken'])
+            pending_before_reset = d.login(username, account['password'], replacement)
+            assert pending_before_reset['trustState'] == 'DEVICE_PENDING_TRUST'
             d.request('/v1/auth/recovery/request', dict(email=email), expected=202)
             token = mail_token(email)
             assert len(token) == 64
-            recovery_lock_race(database, pg, username, account, replacement)
+            recovery_lock_race(database, username, account, replacement, pending_before_reset)
             new_password = 'replacement-password-' + uuid.uuid4().hex
             d.request('/v1/auth/recovery/complete', dict(token=token, username=username, password=new_password), method='POST', expected=204)
             d.request('/v1/auth/recovery/complete', dict(token=token, username=username, password=new_password), method='POST', expected=400)

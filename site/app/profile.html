@@ -107,6 +107,18 @@
         </form>
         <form id="resend-verification" hidden><button>Запросить новый код</button></form>
         <form id="login" hidden><button>Войти на этом устройстве</button></form>
+        <details id="recovery" hidden>
+          <summary>Восстановить вход по почте</summary>
+          <p>Используйте пароль этого локального профиля как новый пароль аккаунта. Сервер получит только выведенный криптографический credential. Восстановление не переносит старые ключи и переписку.</p>
+          <form id="recovery-request">
+            <label>Подтверждённая почта<input type="email" name="email" required autocomplete="email" /></label>
+            <button>Отправить код восстановления</button>
+          </form>
+          <form id="recovery-complete">
+            <label>Код из письма<input name="code" required autocomplete="one-time-code" inputmode="text" /></label>
+            <button>Восстановить аккаунт</button>
+          </form>
+        </details>
       </section>
       <section id="conversations" hidden>
         <details>
