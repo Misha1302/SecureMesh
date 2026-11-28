@@ -168,6 +168,9 @@ function layout() {
   show("entry", !state);
   show("new-fields", !hasLocal);
   show("confirm-label", !hasLocal);
+  show("password-hint", !hasLocal);
+  if (hasLocal) byId("password").removeAttribute("aria-describedby");
+  else byId("password").setAttribute("aria-describedby", "password-hint");
   const form = byId("entry");
   form.elements.username.disabled = hasLocal;
   form.elements.name.disabled = hasLocal;
@@ -184,7 +187,7 @@ function layout() {
       ? "Аккаунт SecureMesh"
       : hasLocal
         ? "Разблокировка"
-        : "Локальный профиль";
+        : "Создание профиля";
   show("lock", !!state);
   show("account", !!state && !trusted);
   show("backup", !!state);

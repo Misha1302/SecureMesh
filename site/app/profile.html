@@ -38,15 +38,18 @@
             >Имя в профиле<input name="name" dir="auto" autocomplete="nickname"
           /></label>
           <label
-            >Уникальный @username<input
+            >Имя пользователя<input
               name="username"
               autocapitalize="none"
               spellcheck="false"
+              aria-describedby="username-hint"
+              placeholder="marina_24"
               pattern="[a-z0-9_]{3,32}"
               minlength="3"
               maxlength="32"
               autocomplete="username"
           /></label>
+          <p class="field-hint" id="username-hint">От 3 до 32 символов: строчные латинские буквы, цифры и знак подчёркивания.</p>
         </div>
         <label
           >Пароль<input
@@ -55,12 +58,12 @@
             required
             autocomplete="current-password"
         /></label>
+        <p class="field-hint" id="password-hint">Не менее 16 символов. Можно использовать фразу из нескольких слов.</p>
         <label class="check"
           ><input type="checkbox" id="show-password" />Показать пароль</label
         >
         <label class="check" id="confirm-label"
-          ><input type="checkbox" name="remembered" />Я сохранил пароль. Он
-          понадобится для входа и восстановления архива.</label
+          ><input type="checkbox" name="remembered" />Я сохранил пароль для входа и доступа к переписке на этом устройстве.</label
         >
         <button id="enter">Открыть профиль</button>
       </form>
