@@ -145,7 +145,14 @@ class Server:
             try: request('/health/ready'); break
             except OSError: time.sleep(.1)
         else: raise RuntimeError('API readiness timeout')
-    def stop(self): self.p.terminate(); self.p.wait(timeout=10)
+    def stop(self):
+        self.p.terminate()
+        try:
+            self.p.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            # Only the disposable API subprocess created by this fixture.
+            self.p.kill()
+            self.p.wait(timeout=10)
     def restart(self): self.stop(); self.start()
     def __exit__(self,*_):
         self.stop(); self.log.close();self.port_lock.close()
