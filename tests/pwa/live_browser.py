@@ -291,9 +291,9 @@ def exercise_archive(browser, exporter, app_origin, exporter_code, peer, message
 
 
 @contextmanager
-def launch_browser(playwright, engine, app_origin, api_port, pin, outage):
+def launch_browser(playwright, engine, app_origin, api_port, pin, outage, *, chromium_channel=None):
     if engine == "chromium":
-        browser = playwright.chromium.launch(args=[
+        browser = playwright.chromium.launch(channel=chromium_channel, args=[
             "--no-proxy-server",
             f"--host-resolver-rules=MAP {API_HOST} 127.0.0.1:{api_port}, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
             f"--ignore-certificate-errors-spki-list={pin}",
@@ -455,7 +455,10 @@ def exercise_peer_profile(playwright, api_port, owner, viewer, editor, viewer_na
 
 
 def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
-    with sync_playwright() as playwright, launch_browser(playwright, engine, app_origin, api_port, pin, outage) as (browser, options):
+    # The full headless Chromium supports service-worker notifications. The shell denies them.
+    with sync_playwright() as playwright, launch_browser(
+        playwright, engine, app_origin, api_port, pin, outage, chromium_channel="chromium",
+    ) as (browser, options):
         pages = [browser.new_context(**options).new_page() for _ in range(2)]
         traffic = []
         for page in pages:
@@ -541,17 +544,56 @@ def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
         establish.click()
         bob.locator("[data-action=join]").click()
         alice.locator("#chat-list").get_by_role("button", name=re.compile(bob_name)).click()
-        first, reply = "Привет! Ты получил приглашение?", "Да, вижу наш чат."
+        first, second, reply = "Привет! Ты получил приглашение?", "Сообщение после включения", "Да, вижу наш чат."
+        bob_row = bob.locator("#chat-list").get_by_role("button", name=re.compile(alice_name))
+        mute = bob_row.locator("..").get_by_role("button", name="Без звука", exact=True)
+        badge = bob_row.locator(".chat-unread")
+        bob.set_viewport_size({"width": 390, "height": 844})
+        expect(mute).to_have_attribute("aria-pressed", "false")
+        expect(mute).to_have_accessible_description("@" + alice_name)
+        expect(mute).to_be_in_viewport()
+        notifications = """async () => {
+          const registration = await navigator.serviceWorker.ready;
+          const notices = await registration.getNotifications({tag: 'securemesh-incoming'});
+          return notices.map(({title, body, data}) => ({title, body, data}));
+        }"""
+        if engine == "chromium":
+            bob.context.grant_permissions(["notifications"], origin=app_origin)
+            bob.locator("#chat-notifications summary").click()
+            expect(bob.locator("#chat-notification-status")).to_have_text("Уведомления разрешены.")
+            bob.locator("#chat-notifications summary").click()
+        mute.focus()
+        mute.press("Space")
+        expect(mute).to_have_attribute("aria-pressed", "true")
         alice.locator("#compose textarea").fill(first)
         alice.locator("#compose button").click()
-        bob_row = bob.locator("#chat-list").get_by_role("button", name=re.compile(alice_name))
-        badge = bob_row.locator(".chat-unread")
         expect(badge).to_have_text("1", timeout=25_000)
+        if engine == "chromium":
+            assert bob.evaluate(notifications) == []
         bob.locator("#lock").click()
         expect(bob.locator("#chat-list button")).to_have_count(0)
+        expect(bob.locator("#chat-notification-status")).to_be_empty()
         bob.locator("#password").fill(bob_password)
         bob.locator("#enter").click()
         expect(badge).to_have_text("1")
+        expect(mute).to_have_attribute("aria-pressed", "true")
+        mute.click()
+        expect(mute).to_have_attribute("aria-pressed", "false")
+        alice.locator("#compose textarea").fill(second)
+        alice.locator("#compose button").click()
+        expect(badge).to_have_text("2", timeout=25_000)
+        if engine == "chromium":
+            bob.wait_for_function(f"async () => (await ({notifications})()).length === 1")
+            assert bob.evaluate(notifications) == [{"title": "SecureMesh", "body": "Новое сообщение", "data": None}]
+        bob.locator("#lock").click()
+        if engine == "chromium":
+            bob.wait_for_function(f"async () => (await ({notifications})()).length === 0")
+        expect(mute).to_have_count(0)
+        bob.set_viewport_size({"width": 1280, "height": 900})
+        bob.locator("#password").fill(bob_password)
+        bob.locator("#enter").click()
+        expect(mute).to_have_attribute("aria-pressed", "false")
+        expect(badge).to_have_text("2")
         bob_row.click()
         expect(bob.locator("#messages").get_by_text(first, exact=True)).to_be_visible()
         bob.locator("#messages li").last.scroll_into_view_if_needed()
@@ -585,7 +627,7 @@ def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
         alice.set_viewport_size({"width": 390, "height": 844})
         expect(alice.locator("#chat-sidebar")).to_be_hidden()
         expect(alice.locator("#to-chats")).to_be_visible()
-        expect(alice.locator("#messages time")).to_have_count(2)
+        expect(alice.locator("#messages time")).to_have_count(3)
         expect(alice.locator("#compose button")).to_be_in_viewport(ratio=1)
         if evidence:
             alice.screenshot(path=target / "phone.png", animations="disabled")
@@ -644,16 +686,16 @@ def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
         expect(bob.locator("#messages").get_by_text(queued, exact=True)).to_be_visible(timeout=20_000)
         expect(row).to_contain_text("Принято сервером")
 
-        assert len(traffic) == 3, "Expected three durably stored encrypted messages"
+        assert len(traffic) == 4, "Expected four durably stored encrypted messages"
         assert len({row["conversationId"] for row in traffic}) == 1
-        assert len({row["clientMessageId"] for row in traffic}) == 3
+        assert len({row["clientMessageId"] for row in traffic}) == 4
         for row in traffic:
             assert set(row) == {"conversationId", "clientMessageId", "mlsEpoch", "envelopeKind", "ciphertext"}
             wire = base64.b64decode(row["ciphertext"], validate=True)
             assert row["envelopeKind"] == 1 and len(wire) > 32
-            assert not any(word.encode() in wire for word in (first, reply, queued))
+            assert not any(word.encode() in wire for word in (first, second, reply, queued))
         expect(bob.locator("#compose textarea")).to_have_value("")
-        exercise_archive(browser, alice, app_origin, alice_code, bob_name, [first, reply, queued], next_draft, options)
+        exercise_archive(browser, alice, app_origin, alice_code, bob_name, [first, second, reply, queued], next_draft, options)
         alice.reload()
         alice.locator("#password").fill(alice_password)
         alice.locator("#enter").click()
