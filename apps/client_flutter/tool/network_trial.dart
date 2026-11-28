@@ -44,6 +44,20 @@ Future<void> main(List<String> args) async {
   var stop = false;
   var retries = 0, httpsRequests = 0;
   final errors = <String>[];
+  List<Map<String, Object>> transportCounters() => [
+    for (final t in transports)
+      {
+        'mode': t.mode,
+        'upgrade_attempts': t.upgradeAttempts,
+        'upgrade_timeouts': t.upgradeTimeouts,
+        'upgrade_io_failures': t.upgradeIoFailures,
+        'hello_timeouts': t.helloTimeouts,
+        'frame_timeouts': t.frameTimeouts,
+        'fallback_attempts': t.fallbackAttempts,
+        'fallback_timeouts': t.fallbackTimeouts,
+        'fallback_io_failures': t.fallbackIoFailures,
+      },
+  ];
   Timer? reporting;
   try {
     for (final device in fixture['devices'] as List) {
@@ -124,6 +138,7 @@ Future<void> main(List<String> args) async {
           'received': received.length,
           'elapsed_seconds': now(),
           'retries': retries,
+          'transports': transportCounters(),
         }),
       );
     });
@@ -275,6 +290,7 @@ Future<void> main(List<String> args) async {
       'elapsed_seconds': now(),
       'client_process_peak_rss_bytes': ProcessInfo.maxRss,
       'retries': retries,
+      'transports': transportCounters(),
       'recent_errors': errors,
       'https_requests': httpsRequests,
       'wss_application_bytes_sent': transports
