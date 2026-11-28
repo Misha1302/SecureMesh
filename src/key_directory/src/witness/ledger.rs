@@ -2,7 +2,7 @@ use super::{unix_time_seconds, Observation, Policy, Vote};
 use crate::{Checkpoint, Client};
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::{Signer, SigningKey};
-use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, Transaction, TransactionBehavior};
 use std::{path::Path, time::Duration};
 
 /// Only public checkpoints are stored here. The signing key belongs to the operator.
@@ -10,6 +10,59 @@ pub struct Witness {
     db: Connection,
     policy: Policy,
     slot: u8,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use rusqlite::Transaction;
+
+    #[test]
+    fn observation_serializes_with_concurrent_durable_advance() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("witness.db");
+        let keys = [21, 24, 25, 26].map(|seed| SigningKey::from_bytes(&[seed; 32]));
+        let signing = keys[0].clone();
+        let vrf = SigningKey::from_bytes(&[22; 32]).verifying_key().to_bytes();
+        let policy = Policy::new(
+            [23; 32],
+            vrf,
+            keys.each_ref().map(|key| key.verifying_key().to_bytes()),
+        )?;
+        let old = Checkpoint {
+            epoch: 5,
+            root: [27; 32],
+        };
+        let next = Checkpoint {
+            epoch: 6,
+            root: [28; 32],
+        };
+        Witness::provision(&path, policy.clone(), 0, old)?;
+
+        let blocker = Connection::open(&path)?;
+        let tx = Transaction::new_unchecked(&blocker, TransactionBehavior::Immediate)?;
+        tx.execute(
+            "UPDATE witness_head SET epoch=?,parent=root,root=? WHERE singleton=1",
+            params![i64::try_from(next.epoch)?, next.root],
+        )?;
+        let thread_path = path.clone();
+        let thread_policy = policy.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let observer = std::thread::spawn(move || -> Result<Observation> {
+            let witness = Witness::open(&thread_path, thread_policy, 0)?;
+            started_tx.send(()).unwrap();
+            witness.observe_current(&signing)
+        });
+        started_rx.recv()?;
+        // Let observe_current contend on BEGIN IMMEDIATE while the advancement
+        // remains uncommitted. It must read only after the durable commit.
+        std::thread::sleep(Duration::from_millis(100));
+        tx.commit()?;
+        let observation = observer.join().expect("observer thread panicked")?;
+        assert_eq!(observation.checkpoint(), next);
+        Ok(())
+    }
 }
 
 impl Witness {
@@ -134,12 +187,13 @@ impl Witness {
             key.verifying_key() == self.policy.keys[usize::from(self.slot)],
             "wrong signing key"
         );
-        Observation::sign(
-            &self.policy,
-            self.slot,
-            self.checkpoint()?,
-            unix_time_seconds()?,
-            key,
-        )
+        // Serialize the read, timestamp, and signature with durable checkpoint
+        // advancement so an observation cannot race an in-flight cosign commit.
+        let tx = Transaction::new_unchecked(&self.db, TransactionBehavior::Immediate)?;
+        let checkpoint = self.checkpoint()?;
+        let observed_at = unix_time_seconds()?;
+        let observation = Observation::sign(&self.policy, self.slot, checkpoint, observed_at, key)?;
+        tx.commit()?;
+        Ok(observation)
     }
 }
