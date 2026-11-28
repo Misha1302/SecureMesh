@@ -200,6 +200,7 @@ main:has(#conversations:not([hidden])) #title {
 }
 #chat-list button[aria-current] { background: var(--bubble); }
 .chat-mute { flex-shrink: 0; margin: 0; padding-inline: .55rem; background: transparent; }
+.chat-mute:focus-visible { outline-offset: -3px; }
 .chat-mute[aria-pressed="true"] { background: var(--bubble); color: var(--text); }
 .chat-mute[aria-disabled="true"] { opacity: .6; }
 #chat-notification-status:empty { display: none; }
