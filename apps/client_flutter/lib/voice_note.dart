@@ -206,7 +206,16 @@ class _VoicePlayerState extends State<VoicePlayer> {
                   : widget.tr('Воспроизвести', 'Play'),
               onPressed: busy || failed
                   ? null
-                  : () => run((p) => playing ? p.pause() : p.resume()),
+                  : () => run((p) async {
+                      if (playing) {
+                        await p.pause();
+                      } else {
+                        if (position == Duration.zero) {
+                          await p.seek(Duration.zero);
+                        }
+                        await p.resume();
+                      }
+                    }),
               icon: Icon(playing ? Icons.pause : Icons.play_arrow),
             ),
             Expanded(

@@ -132,6 +132,9 @@ void main() {
     player.positions.add(const Duration(seconds: 10));
     await tester.pump();
     expect(memory.read('chat-a', 'clip'), Duration.zero);
+    await tester.pump();
+    await play();
+    expect(player.calls, [saved, 'play', Duration.zero, 'play']);
     await tester.pumpWidget(const SizedBox());
   });
 
