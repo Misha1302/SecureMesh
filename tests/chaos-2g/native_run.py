@@ -35,6 +35,10 @@ def link_counts(name):
     return {direction: info['stats64'][direction]['bytes'] for direction in ('rx', 'tx')}
 
 
+def qdisc_stats(name):
+    return docker('exec', '-T', name, 'tc', '-s', 'qdisc', 'show', 'dev', 'eth0')
+
+
 def configure(name, rate, rtt, loss, seed, jitter=0):
     # Run the checked-out profile definition even when reusing a cached proxy image.
     script = (ROOT / 'tests/chaos-2g/configure.sh').read_text()
@@ -76,6 +80,7 @@ def simulate_outage(root, process, setup, seed, check_server):
     (root / 'outage-active').touch()
     await_marker(root / 'offline-queued', process, 45)
     time.sleep(max(0, started + OUTAGE_SECONDS - time.monotonic()))
+    before_restore = {name: qdisc_stats(name) for name in setup}
     during = check_server()
     if len(during) != 2 * OUTAGE_BASELINE or len({tuple(row) for row in during}) != len(during):
         raise RuntimeError('Server accepted messages during blackout or baseline is invalid')
@@ -84,7 +89,8 @@ def simulate_outage(root, process, setup, seed, check_server):
     restore_at = time.monotonic()
     restored = {name: configure(name, *EDGE[:3], seed + i * 100, EDGE[3])
                 for i, name in enumerate(setup)}
-    return dict(blocked_qdiscs=blocked, restored_qdiscs=restored, server_rows_before_restore=len(during),
+    return dict(blocked_qdiscs=blocked, blocked_qdisc_stats_before_restore=before_restore,
+                restored_qdiscs=restored, server_rows_before_restore=len(during),
                 minimum_blackout_seconds=restore_at - started,
                 reconfiguration_seconds=time.monotonic() - restore_at)
 
@@ -200,7 +206,7 @@ def main():
                         for name, before in initial_links.items():
                             after = link_counts(name)
                             result['proxy_eth0_bytes'][name] = {k: after[k] - before[k] for k in before}
-                            result[name + '_tc_stats'] = docker('exec','-T',name,'tc','-s','qdisc','show','dev','eth0')
+                            result[name + '_tc_stats'] = qdisc_stats(name)
                         output.write_text(json.dumps(result,indent=2)+'\n')
                         if coordination_error is not None:
                             raise RuntimeError(coordination_error)

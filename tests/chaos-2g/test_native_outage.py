@@ -25,6 +25,7 @@ class OutageCoordination(unittest.TestCase):
 
             with (
                 patch.object(native_run, 'configure', side_effect=configure),
+                patch.object(native_run, 'qdisc_stats', side_effect=lambda name: f'{name}: dropped 42'),
                 patch.object(native_run, 'await_marker', side_effect=await_marker),
                 patch.object(native_run.time, 'monotonic', side_effect=[10, 13, 70.05, 70.5]),
                 patch.object(native_run.time, 'sleep', side_effect=lambda duration: events.append(duration)),
@@ -47,6 +48,7 @@ class OutageCoordination(unittest.TestCase):
                 ('netem-b', 100, 600, 1, 107, 0),
             ])
             self.assertEqual(result['server_rows_before_restore'], 6)
+            self.assertEqual(set(result['blocked_qdisc_stats_before_restore']), {'netem-a', 'netem-b'})
             self.assertGreaterEqual(result['minimum_blackout_seconds'], 60)
             self.assertEqual(result['blocked_qdiscs'], {'netem-a': 'netem-a: 100%', 'netem-b': 'netem-b: 100%'})
 
