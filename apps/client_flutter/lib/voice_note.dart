@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
 import 'voice_wave.dart';
+import 'voice_transcription.dart';
 
 typedef VoiceLabel = String Function(String, String);
 
@@ -60,12 +61,14 @@ class VoicePlayer extends StatefulWidget {
     this.resumeAt = Duration.zero,
     this.onPosition,
     this.makePlayer = AudioPlayer.new,
+    this.transcription = const LocalVoiceTranscription(),
   });
   final Uint8List bytes;
   final VoiceLabel tr;
   final Duration resumeAt;
   final ValueChanged<Duration>? onPosition;
   final AudioPlayer Function() makePlayer;
+  final LocalVoiceTranscription transcription;
   @override
   State<VoicePlayer> createState() => _VoicePlayerState();
 }
@@ -82,6 +85,8 @@ class _VoicePlayerState extends State<VoicePlayer> {
   Directory? scratch;
   RandomAccessFile? lease;
   Future<void>? action;
+  bool transcriptionAvailable = false, transcribing = false;
+  String? transcript;
 
   @override
   void initState() {
@@ -89,6 +94,11 @@ class _VoicePlayerState extends State<VoicePlayer> {
     duration = voiceDuration(widget.bytes);
     peaks = voicePeaks(widget.bytes);
     position = clamp(widget.resumeAt);
+    unawaited(
+      widget.transcription.available.then((value) {
+        if (mounted) setState(() => transcriptionAvailable = value);
+      }),
+    );
   }
 
   Duration clamp(Duration value) =>
@@ -245,6 +255,48 @@ class _VoicePlayerState extends State<VoicePlayer> {
             ),
           ],
         ),
+        if (transcriptionAvailable) ...[
+          if (transcript != null) SelectableText(transcript!),
+          TextButton.icon(
+            onPressed: transcribing
+                ? null
+                : () async {
+                    setState(() => transcribing = true);
+                    try {
+                      final value = await widget.transcription.transcribe(
+                        widget.bytes,
+                      );
+                      if (mounted) setState(() => transcript = value);
+                    } catch (_) {
+                      if (mounted) {
+                        setState(
+                          () => transcript = widget.tr(
+                            'Не удалось распознать локально.',
+                            'Local transcription failed.',
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) setState(() => transcribing = false);
+                    }
+                  },
+            icon: transcribing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.transcribe),
+            label: Text(
+              transcribing
+                  ? widget.tr(
+                      'Распознавание на устройстве…',
+                      'Transcribing on device…',
+                    )
+                  : widget.tr('Распознать локально', 'Transcribe locally'),
+            ),
+          ),
+        ],
         PopupMenuButton<double>(
           tooltip: widget.tr('Скорость воспроизведения', 'Playback speed'),
           enabled: !busy && !failed && !rateUnavailable,
