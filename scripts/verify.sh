@@ -39,6 +39,8 @@ check migrations .local/venv/bin/python tests/integration/migrations.py
 check account-removal .local/venv/bin/python tests/integration/account_removal.py
 check private-blobs .local/venv/bin/python tests/integration/private_blobs.py
 check verification-email-queue .local/venv/bin/python tests/integration/verification_email_queue.py
+check account-recovery .local/venv/bin/python tests/integration/account_recovery.py
+check contact-blocks .local/venv/bin/python tests/integration/contact_blocks.py
 check mls-directory .local/venv/bin/python tests/integration/directory.py
 check public-channels .local/venv/bin/python tests/integration/public_channels.py
 check restore-v2 .local/venv/bin/python tests/integration/restore_v2.py
