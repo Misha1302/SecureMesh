@@ -2,11 +2,14 @@
 """Verify durable registration and bounded transactional mail using local PostgreSQL and Mailpit."""
 import base64
 import concurrent.futures
+import json
 import os
 import secrets
 import socket
 import subprocess
 import time
+import urllib.parse
+import urllib.request
 import uuid
 
 import delivery as test
@@ -38,6 +41,7 @@ def main():
             offline.bind(('127.0.0.1', 0))
             os.environ['VerificationEmail__MailpitPort'] = str(offline.getsockname()[1])
             os.environ['VerificationEmail__Provider'] = 'Mailpit'
+            os.environ['VerificationEmail__MaxAttemptsPerUtcHour'] = '60'
             with test.Server(database) as api:
                 username = 'mail_' + uuid.uuid4().hex[:16]
                 email = username + '@securemesh.test'
@@ -47,6 +51,7 @@ def main():
                 assert sql('SELECT count(*) FROM users') == '1'
                 assert sql('SELECT count(*) FROM email_tokens') == '1'
                 wait_for('SELECT attempts FROM verification_email_queue', '1')
+                assert sql('SELECT attempts FROM verification_email_budget') == '1'
                 assert sql("SELECT payload LIKE '%securemesh.test%' FROM verification_email_queue") == 'f'
 
                 # The same pending delivery must survive stopping the process.
@@ -102,10 +107,89 @@ def main():
                 test.request('/v1/auth/verify-email', dict(token=replacement), expected=204)
                 assert test.request(resend_path, resend, expected=202) is None
                 assert sql('SELECT count(*) FROM email_tokens') == '0'
+        verify_hourly_budget(database, sql, wait_for)
     finally:
         subprocess.run(['dropdb', database], env=pg, check=True)
 
-    print('Passed local verification email outage, restart, retry, token, and resend checks.')
+    print('Passed local verification email outage, restart, retry, token, resend and shared hourly budget checks.')
+
+
+def verify_hourly_budget(database, sql, wait_for):
+    def mail_count(email):
+        query = urllib.parse.urlencode({'query': 'to:' + email})
+        with urllib.request.urlopen(f'http://127.0.0.1:58028/api/v1/search?{query}', timeout=3) as result:
+            return len(json.load(result)['messages'])
+
+    def register():
+        username = 'mail_' + uuid.uuid4().hex[:16]
+        email = username + '@securemesh.test'
+        password = secrets.token_urlsafe(24)
+        test.request('/v1/auth/register', dict(username=username, email=email, password=password), expected=202)
+        return username, email, password
+
+    def simulate_new_utc_hour():
+        # The next lease sees a budget from a previous UTC hour.
+        sql("UPDATE verification_email_budget SET hour_started_at=date_trunc('hour',now(),'UTC')-interval '1 hour'")
+
+    os.environ['VerificationEmail__MailpitPort'] = '51028'
+    os.environ['VerificationEmail__MaxAttemptsPerUtcHour'] = '1'
+    simulate_new_utc_hour()
+    with test.Server(database) as first:
+        username, resend_recipient, password = register()
+        test.verification_token(resend_recipient)
+        wait_for('SELECT count(*) FROM verification_email_queue', '0')
+        assert sql('SELECT attempts FROM verification_email_budget') == '1'
+
+        first_origin = test.BASE
+        test.BASE = 'https://127.0.0.1:5196'
+        try:
+            with test.Server(database):
+                # Make the existing token eligible for resend without waiting five minutes.
+                sql("UPDATE email_tokens SET expires_at=now()-interval '1 second'")
+                test.request('/v1/auth/resend-verification', dict(username=username, password=password), expected=202)
+                _, initial_recipient, _ = register()
+                expired_user, expired_recipient, _ = register()
+                untouched = sql("""
+                    SELECT bool_and(q.attempts=0 AND q.expires_at=t.expires_at AND q.expires_at>now())
+                    FROM verification_email_queue q JOIN email_tokens t ON t.hash=q.token_hash
+                    """)
+                assert untouched == 't'
+                assert sql('SELECT count(*) FROM verification_email_queue') == '3'
+                first.stop()
+                test.BASE = first_origin
+                first.start()
+                test.BASE = 'https://127.0.0.1:5196'
+
+                duration = 1.5
+                time.sleep(duration)
+                assert mail_count(resend_recipient) == 1
+                assert mail_count(initial_recipient) == 0
+                assert mail_count(expired_recipient) == 0
+                assert sql('SELECT attempts FROM verification_email_budget') == '1'
+                assert sql('SELECT count(*) FROM verification_email_queue WHERE attempts=0') == '3'
+
+                # This message's verification window ends before there is more capacity.
+                sql(f"""
+                    WITH expired AS (
+                        UPDATE email_tokens SET expires_at=now()-interval '1 second'
+                        WHERE user_id=(SELECT id FROM users WHERE username='{expired_user}') RETURNING hash
+                    )
+                    UPDATE verification_email_queue q SET expires_at=now()-interval '1 second'
+                    FROM expired WHERE q.token_hash=expired.hash
+                    """)
+                wait_for('SELECT count(*) FROM verification_email_queue', '2')
+                simulate_new_utc_hour()
+                wait_for('SELECT count(*) FROM verification_email_queue', '1')
+                assert mail_count(resend_recipient) + mail_count(initial_recipient) == 2
+                assert mail_count(expired_recipient) == 0
+                assert sql('SELECT attempts FROM verification_email_budget') == '1'
+                simulate_new_utc_hour()
+                wait_for('SELECT count(*) FROM verification_email_queue', '0')
+                assert mail_count(resend_recipient) == 2
+                assert mail_count(initial_recipient) == 1
+                assert mail_count(expired_recipient) == 0
+        finally:
+            test.BASE = first_origin
 
 
 if __name__ == '__main__':

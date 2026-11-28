@@ -50,19 +50,31 @@ internal sealed class VerificationEmailQueue(
 
     private async Task<bool> DeliverNextAsync(CancellationToken cancellationToken)
     {
-        // Commit the lease before SMTP. An interrupted attempt can be retried after the lease expires.
+        // Reserve one provider attempt in the same statement as the queue lease.
+        // The reservation covers failures and process loss so retries also count against the cap.
         await using var claim = db.CreateCommand("""
             WITH candidate AS (
                 SELECT token_hash FROM verification_email_queue
                 WHERE next_attempt_at <= now() AND expires_at > now() AND attempts < $1
                 ORDER BY next_attempt_at LIMIT 1 FOR UPDATE SKIP LOCKED
+            ), reservation AS (
+                INSERT INTO verification_email_budget AS budget (singleton,hour_started_at,attempts)
+                SELECT true,date_trunc('hour',now(),'UTC'),1 FROM candidate
+                ON CONFLICT (singleton) DO UPDATE
+                SET hour_started_at=excluded.hour_started_at,
+                    attempts=CASE WHEN budget.hour_started_at=excluded.hour_started_at
+                        THEN budget.attempts+1 ELSE 1 END
+                WHERE budget.hour_started_at < excluded.hour_started_at
+                    OR (budget.hour_started_at=excluded.hour_started_at AND budget.attempts < $2)
+                RETURNING singleton
             )
             UPDATE verification_email_queue q
             SET attempts=q.attempts+1, next_attempt_at=now()+interval '30 seconds'
-            FROM candidate WHERE q.token_hash=candidate.token_hash
+            FROM candidate CROSS JOIN reservation WHERE q.token_hash=candidate.token_hash
             RETURNING q.token_hash,q.payload,q.attempts
             """);
         claim.Parameters.AddWithValue(MaxAttempts);
+        claim.Parameters.AddWithValue(sender.MaxAttemptsPerUtcHour);
         byte[] hash;
         string payload;
         int attempt;

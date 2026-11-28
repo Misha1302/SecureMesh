@@ -8,9 +8,14 @@ internal sealed class VerificationEmail
     private readonly string sender = "no-reply@securemesh.test";
     private readonly NetworkCredential? credentials;
     private readonly int mailpitPort;
+    public int MaxAttemptsPerUtcHour { get; }
 
     public VerificationEmail(IConfiguration configuration)
     {
+        MaxAttemptsPerUtcHour = configuration.GetValue("VerificationEmail:MaxAttemptsPerUtcHour", 60);
+        if (MaxAttemptsPerUtcHour < 1)
+            throw new InvalidOperationException("VerificationEmail:MaxAttemptsPerUtcHour must be positive.");
+
         var provider = configuration["VerificationEmail:Provider"];
         if (provider is null or "Mailpit")
         {
