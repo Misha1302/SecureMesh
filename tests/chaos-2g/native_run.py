@@ -32,6 +32,11 @@ PROFILES = {
 def docker(*args):return subprocess.check_output(COMPOSE+list(args),cwd=ROOT,text=True)
 
 
+def link_counts(name):
+    info, = json.loads(docker('exec', '-T', name, 'ip', '-j', '-s', 'link', 'show', 'dev', 'eth0'))
+    return {direction: info['stats64'][direction]['bytes'] for direction in ('rx', 'tx')}
+
+
 def configure(name, rate, rtt, loss, seed, jitter=0):
     # Run the checked-out profile definition even when reusing a cached proxy image.
     script = (ROOT / 'tests/chaos-2g/configure.sh').read_text()
@@ -57,7 +62,7 @@ def main():
                 if output.exists():
                     stamp=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%f')
                     output.rename(output.with_name(output.stem+'.previous-'+stamp+'.json'))
-                fixture=root/'fixture.json';fixture.write_text(json.dumps(dict(profile=args.profile,seed=seed,count=args.count,group=group,output=str(output),progress=str(ROOT/'.local/native-network-progress.json'),cert=str(ROOT/'.local/tls.pem'),library=str(ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so'),devices=[dict(id=who['device'].identity,path=str(who['device'].path),passphrase=who['device'].password,session=who['session'],endpoint=f'https://127.0.0.1:{15990+i}') for i,who in enumerate((a,b))])));fixture.chmod(0o600)
+                fixture=root/'fixture.json';fixture.write_text(json.dumps(dict(clock_ticks_per_second=os.sysconf("SC_CLK_TCK"),profile=args.profile,seed=seed,count=args.count,group=group,output=str(output),progress=str(ROOT/'.local/native-network-progress.json'),cert=str(ROOT/'.local/tls.pem'),library=str(ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so'),devices=[dict(id=who['device'].identity,path=str(who['device'].path),passphrase=who['device'].password,session=who['session'],endpoint=f'https://127.0.0.1:{15990+i}') for i,who in enumerate((a,b))])));fixture.chmod(0o600)
                 source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
                 binary_hashes={str(p.relative_to(ROOT)):hashlib.file_digest(p.open('rb'),'sha256').hexdigest() for p in [ROOT/'src/crypto_core/target/debug/libsecuremesh_crypto.so',ROOT/'src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll']}
                 source_hashes={str(p.relative_to(ROOT)):hashlib.file_digest(p.open('rb'),'sha256').hexdigest() for p in [ROOT/'apps/client_flutter/lib/delivery_client.dart',ROOT/'apps/client_flutter/lib/transport.dart',ROOT/'apps/client_flutter/lib/session.dart',ROOT/'apps/client_flutter/lib/tls_client.dart',ROOT/'apps/client_flutter/tool/network_trial.dart']}
@@ -72,6 +77,7 @@ def main():
                         for i,name in enumerate(('netem-a','netem-b')):setup[name]=configure(name,rate,rtt,loss,seed+i*100,jitter)
                         progress_path = ROOT / '.local/native-network-progress.json'
                         progress_path.unlink(missing_ok=True)
+                        initial_links = {name: link_counts(name) for name in setup}
                         process.stdin.write('RUN\n');process.stdin.flush()
                         timed_out = False
                         try:
@@ -105,7 +111,10 @@ def main():
                                       rate_kbps_each_direction=rate, rtt_ms=rtt, packet_loss_percent=loss,
                                       jitter_ms_each_direction=jitter, setup=setup, source_head_at_start=source_head,
                                       binary_sha256=binary_hashes, source_sha256=source_hashes)
-                        for name in ('netem-a','netem-b'):
+                        result['proxy_eth0_bytes'] = {}
+                        for name, before in initial_links.items():
+                            after = link_counts(name)
+                            result['proxy_eth0_bytes'][name] = {k: after[k] - before[k] for k in before}
                             result[name + '_tc_stats'] = docker('exec','-T',name,'tc','-s','qdisc','show','dev','eth0')
                         output.write_text(json.dumps(result,indent=2)+'\n')
                         if result.get("outcome") == "incomplete" and process.returncode == 0:

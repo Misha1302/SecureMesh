@@ -24,6 +24,13 @@ double percentile(List<double> values, double p) {
   return sorted[max(0, (sorted.length * p).ceil() - 1)];
 }
 
+// Linux /proc/PID/stat fields 14 and 15 aggregate all process threads.
+int processCpuTicks() {
+  final stat = File('/proc/self/stat').readAsStringSync();
+  final fields = stat.substring(stat.lastIndexOf(')') + 2).split(' ');
+  return int.parse(fields[11]) + int.parse(fields[12]);
+}
+
 Future<void> main(List<String> args) async {
   final fixture = jsonDecode(File(args.single).readAsStringSync()) as Map;
   await RustLib.init(
@@ -128,6 +135,7 @@ Future<void> main(List<String> args) async {
     stdout.writeln('WARM_READY');
     await stdout.flush();
     await stdin.transform(utf8.decoder).transform(const LineSplitter()).first;
+    final initialCpuTicks = processCpuTicks();
     clock.start();
     reporting = Timer.periodic(const Duration(seconds: 10), (_) {
       File(fixture['progress'] as String).writeAsStringSync(
@@ -288,6 +296,8 @@ Future<void> main(List<String> args) async {
       'duplicates': 0,
       'missing_ids': 0,
       'elapsed_seconds': now(),
+      if (fixture['clock_ticks_per_second'] case final int hz)
+        'client_process_cpu_seconds': (processCpuTicks() - initialCpuTicks) / hz,
       'client_process_peak_rss_bytes': ProcessInfo.maxRss,
       'retries': retries,
       'transports': transportCounters(),
