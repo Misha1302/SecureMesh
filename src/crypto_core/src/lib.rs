@@ -75,6 +75,26 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+const OUTBOX_DISPATCH_QUERY: &str = "SELECT o.rowid,o.group_id,o.id,o.envelope,c.id IS NOT NULL
+    FROM outgoing o LEFT JOIN call_signal_ids c
+      ON c.g=o.group_id AND c.id=o.id AND c.outbound=1
+    WHERE o.status='queued' AND (c.id IS NULL OR (c.until>unixepoch() AND EXISTS(
+      SELECT 1 FROM call_sessions s WHERE s.g=c.g AND s.call=c.call AND s.until>unixepoch())
+      AND NOT EXISTS(SELECT 1 FROM outgoing earlier JOIN call_signal_ids prior
+        ON prior.g=earlier.group_id AND prior.id=earlier.id
+        WHERE prior.g=c.g AND prior.call=c.call AND prior.outbound=1 AND prior.until>unixepoch()
+          AND earlier.status='queued' AND earlier.rowid<o.rowid)))
+    ORDER BY o.rowid LIMIT 100";
+
+fn dispatch_window_allows(
+    first_pending: &mut std::collections::HashMap<String, i64>,
+    group_id: String,
+    rowid: i64,
+) -> bool {
+    let window = i64::from(SenderRatchetConfiguration::default().out_of_order_tolerance()).max(1);
+    let first = first_pending.entry(group_id).or_insert(rowid);
+    rowid - *first < window
+}
 
 #[derive(Default)]
 struct JsonCodec;
@@ -795,17 +815,8 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
             Ok(json!({"pending": pending}))
         }
         "outbox" => {
-            let mut q = db.prepare(
-                "SELECT o.rowid, o.group_id, o.envelope FROM outgoing o LEFT JOIN call_signal_ids c ON c.g=o.group_id AND c.id=o.id AND c.outbound=1
-                 WHERE o.status='queued' AND (c.id IS NULL OR (c.until>unixepoch() AND EXISTS(
-                   SELECT 1 FROM call_sessions s WHERE s.g=c.g AND s.call=c.call AND s.until>unixepoch())
-                   AND NOT EXISTS(SELECT 1 FROM outgoing earlier JOIN call_signal_ids prior ON prior.g=earlier.group_id AND prior.id=earlier.id
-                     WHERE prior.g=c.g AND prior.call=c.call AND prior.outbound=1 AND prior.until>unixepoch()
-                     AND earlier.status='queued' AND earlier.rowid<o.rowid)))
-                 ORDER BY o.rowid LIMIT 100",
-            )?;
+            let mut q = db.prepare(OUTBOX_DISPATCH_QUERY)?;
             let dispatch = req["dispatch"].as_bool().unwrap_or(false);
-            let window = i64::from(SenderRatchetConfiguration::default().out_of_order_tolerance());
             let mut first_pending = std::collections::HashMap::<String, i64>::new();
             let mut rows = q.query([])?;
             let mut values = Vec::new();
@@ -816,12 +827,11 @@ fn execute(db: &Connection, p: &Provider, req: &Value) -> Result<Value> {
                     // Gaps from other groups only make this bound conservative.
                     let order = row.get::<_, i64>(0)?;
                     let group = row.get::<_, String>(1)?;
-                    let first = first_pending.entry(group).or_insert(order);
-                    if order - *first >= window.max(1) {
+                    if !dispatch_window_allows(&mut first_pending, group, order) {
                         continue;
                     }
                 }
-                values.push(serde_json::from_str::<Value>(&row.get::<_, String>(2)?)?);
+                values.push(serde_json::from_str::<Value>(&row.get::<_, String>(3)?)?);
             }
             Ok(json!({"messages":values}))
         }
@@ -1075,4 +1085,85 @@ pub(crate) fn transact(db: &Connection, req: &Value) -> Result<String> {
     }
     db.execute_batch("COMMIT")?;
     Ok(serde_json::to_string(&result)?)
+}
+
+/// Read-only context for one queued MLS application message while its profile
+/// database remains under `BEGIN IMMEDIATE`. This is evidence for a caller's
+/// additional gates, not transport authorization by itself.
+pub(crate) fn queued_dispatch_snapshot(
+    db: &Connection,
+    group_id: &str,
+    message_id: &str,
+) -> Result<api::QueuedDispatchSnapshot> {
+    ensure!(
+        uuid::Uuid::parse_str(message_id).is_ok(),
+        "invalid message id"
+    );
+    let p = Provider {
+        crypto: RustCrypto::default(),
+        storage: SqliteStorageProvider::new(db),
+    };
+    let group = load_group(&p, group_id)?;
+    ensure!(
+        group.is_active() && group.pending_commit().is_none(),
+        "MLS group unavailable"
+    );
+    check_group(db, &group)?;
+    let mut query = db.prepare(OUTBOX_DISPATCH_QUERY)?;
+    let mut rows = query.query([])?;
+    let mut first_pending = std::collections::HashMap::<String, i64>::new();
+    let mut envelope_raw = None;
+    while let Some(row) = rows.next()? {
+        let order = row.get::<_, i64>(0)?;
+        let queued_group = row.get::<_, String>(1)?;
+        let queued_id = row.get::<_, String>(2)?;
+        if !dispatch_window_allows(&mut first_pending, queued_group.clone(), order) {
+            continue;
+        }
+        if queued_group == group_id && queued_id == message_id {
+            ensure!(
+                !row.get::<_, bool>(4)?,
+                "control messages use the call path"
+            );
+            envelope_raw = Some(row.get::<_, String>(3)?);
+            break;
+        }
+    }
+    let envelope_raw = envelope_raw.context("message is outside the dispatch window")?;
+    let envelope: Value = serde_json::from_str(&envelope_raw)?;
+    ensure!(
+        envelope["group"].as_str() == Some(group_id)
+            && envelope["id"].as_str() == Some(message_id)
+            && envelope["kind"].as_i64() == Some(1),
+        "queued message binding mismatch"
+    );
+    let envelope_epoch = envelope["epoch"]
+        .as_u64()
+        .context("missing envelope epoch")?;
+    let ciphertext = B64.decode(s(&envelope, "ciphertext")?)?;
+    let mls = MlsMessageIn::tls_deserialize_exact(&ciphertext)?.try_into_protocol_message()?;
+    let current_epoch = group.epoch().as_u64();
+    ensure!(
+        envelope_epoch == current_epoch
+            && mls.epoch().as_u64() == current_epoch
+            && mls.group_id() == &GroupId::from_slice(group_id.as_bytes())
+            && mls.content_type() == ContentType::Application
+            && mls.wire_format() == WireFormat::PrivateMessage,
+        "queued message epoch is stale"
+    );
+    let members = roster::members(&group)?
+        .into_iter()
+        .map(|(device_id, signing_key)| api::DispatchMember {
+            device_id,
+            signing_key,
+        })
+        .collect();
+    Ok(api::QueuedDispatchSnapshot {
+        group_id: group_id.to_owned(),
+        message_id: message_id.to_owned(),
+        envelope: envelope_raw,
+        current_epoch,
+        envelope_epoch,
+        members,
+    })
 }
