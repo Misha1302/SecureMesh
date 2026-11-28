@@ -308,13 +308,14 @@ public static class PublicChannels
             JOIN channel_catalog ch ON ch.id=s.channel_id AND NOT ch.invite_only
             JOIN public_channel_posts p ON p.channel_id=ch.id AND p.body IS NOT NULL
             WHERE s.user_id=$1 AND (p.published_at,p.seq)<($2,$3)
-            ORDER BY p.published_at DESC,p.seq DESC LIMIT 21
+            ORDER BY p.published_at DESC,p.seq DESC LIMIT 9
             """, actor.UserId, timestamp, seq);
         await using var r = await cmd.ExecuteReaderAsync();
         var items = new List<object>(); string? last = null; bool more = false;
         while (await r.ReadAsync())
         {
-            if (items.Count == 20) { more = true; break; }
+            // Eight maximum-length Unicode posts fit the native transport’s 256 KiB limit.
+            if (items.Count == 8) { more = true; break; }
             var published = r.GetDateTime(2); var postSeq = r.GetInt64(0);
             last = $"{published.Ticks}~{postSeq}";
             items.Add(new { seq = postSeq, body = r.GetString(1), publishedAt = published,

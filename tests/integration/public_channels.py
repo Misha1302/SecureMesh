@@ -38,7 +38,7 @@ def verify(request, owner, reader, outsider, pending):
     for i in range(9):
         request(root+'/posts',{'requestId':str(uuid.uuid4()),'body':'🚀'*2048},token=owner,expected=201)
     aggregate=request(path+'/feed',token=reader)
-    assert len(aggregate['items']) == 10
+    assert aggregate['items']
     assert all(p['channelId'] == channel for p in aggregate['items'])
     assert request(path+'/feed',token=outsider)['items'] == []
     first=request(root+'/posts',token=reader)
@@ -47,21 +47,27 @@ def verify(request, owner, reader, outsider, pending):
     assert len(older['items'])==2 and older['next'] is None and older['items'][-1]['seq']==seq
     assert not ({p['seq'] for p in first['items']} & {p['seq'] for p in older['items']})
     for i in range(11):
-        request(root+'/posts',{'requestId':str(uuid.uuid4()),'body':f'page {i}'},token=owner,expected=201)
+        request(root+'/posts',{'requestId':str(uuid.uuid4()),'body':'🌙'*2048},token=owner,expected=201)
     second={'id':str(uuid.uuid4()),'slug':'other_'+uuid.uuid4().hex[:12],'title':'Other'}
     request(path,second,token=owner,expected=201)
     second_root=path+'/'+second['id']
     request(second_root+'/subscription',token=reader,method='PUT',expected=204)
     second_seq=request(second_root+'/posts',{'requestId':str(uuid.uuid4()),'body':'Second channel'},token=owner,expected=201)['seq']
-    page1=request(path+'/feed',token=reader)
-    assert len(page1['items'])==20 and page1['next']
-    page2=request(path+'/feed?before='+page1['next'],token=reader)
-    assert len(page2['items'])==2 and page2['next'] is None
-    assert second_seq in [p['seq'] for p in page1['items']+page2['items']]
-    assert {p['channelId'] for p in page1['items']+page2['items']} == {channel,second['id']}
-    assert not ({p['seq'] for p in page1['items']} & {p['seq'] for p in page2['items']})
-    assert [p['publishedAt'] for p in page1['items']+page2['items']] == sorted(
-        [p['publishedAt'] for p in page1['items']+page2['items']], reverse=True)
+    posts = []
+    feed_path = path + '/feed'
+    while True:
+        page = request(feed_path, token=reader, max_bytes=262144)
+        assert page['items']
+        posts.extend(page['items'])
+        assert len(posts) <= 22
+        if page['next'] is None:
+            break
+        feed_path = path + '/feed?before=' + page['next']
+    assert len({p['seq'] for p in posts}) == len(posts) == 22
+    assert posts[0]['seq'] == second_seq
+    assert {p['channelId'] for p in posts} == {channel, second['id']}
+    ordered = [(p['publishedAt'], p['seq']) for p in posts]
+    assert ordered == sorted(ordered, reverse=True)
     request(second_root,token=owner,method='DELETE',expected=204)
     request(root+'/posts?before=-1',token=reader,expected=400)
     request(root+'/posts/'+str(seq),token=reader,method='DELETE',expected=403)

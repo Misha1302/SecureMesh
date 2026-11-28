@@ -31,7 +31,7 @@ from websockets.sync.client import connect
 TLS=ssl.create_default_context(cafile=str(ROOT/'.local/tls.pem'))
 BASE='https://127.0.0.1:5090'
 
-def request(path,data=None,token=None,method=None,expected=200):
+def request(path,data=None,token=None,method=None,expected=200,max_bytes=None):
     body=None if data is None else json.dumps(data).encode()
     headers={'Content-Type':'application/json'}
     if token: headers['Authorization']='Bearer '+token
@@ -41,6 +41,8 @@ def request(path,data=None,token=None,method=None,expected=200):
             status=r.status; raw=r.read()
     except urllib.error.HTTPError as e: status=e.code; raw=e.read()
     assert status==expected, f'{path}: expected {expected}, got {status}: {raw[:300]!r}'
+    if max_bytes is not None:
+        assert len(raw) <= max_bytes, f"{path}: {len(raw)} bytes exceeds {max_bytes}"
     return json.loads(raw) if raw else None
 
 def login(username,password,device,expected=200,client_os=None):
