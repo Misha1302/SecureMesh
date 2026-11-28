@@ -54,3 +54,16 @@ running from another worktree. The driver validates live cursor-paged ingestion.
 The coordinator then reopens the SQLCipher stores independently, checks exact
 recipient order against the PostgreSQL sequence, and retransmits three original
 envelopes to verify stable durable ACKs and an unchanged server row set.
+
+The recorded Linux run passed on `0383b09` with API and Rust artifacts built
+from the worktree. The native producer committed all 1,000 envelopes to
+SQLCipher in 1.77 seconds and exited with SIGKILL. PostgreSQL had zero
+conversation messages at that point. After reopening the profiles, native WSS
+replay and receipt confirmation took 33.89 seconds. Durable recipient ingest
+latencies were 17.60 seconds p50, 32.29 seconds p95 and 33.49 seconds p99.
+The recipient used 168 nonempty sync pages of up to six envelopes. One
+retryable 503 was observed. Both stores and PostgreSQL agreed on all 1,000
+messages at MLS epoch 1, with zero missing, unexpected or duplicate IDs.
+The sender's outbox drained, the recipient cursor and server receipt reached
+1,000, and three immutable resends returned the original sequences.
+[Result and artifact hashes](evidence/native-offline-backlog.json)
