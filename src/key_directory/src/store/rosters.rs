@@ -101,7 +101,7 @@ impl Store {
         Ok(())
     }
 
-    fn pinned_roster(&self, account: Uuid) -> Result<(VerifyingKey, Option<Vec<u8>>)> {
+    pub(super) fn pinned_roster(&self, account: Uuid) -> Result<(VerifyingKey, Option<Vec<u8>>)> {
         let (root, bytes): ([u8;32],Option<Vec<u8>>) = self.db.query_row(
           "SELECT root,signed_roster FROM kt_account_roster WHERE owner=? AND vrf=? AND account=?",
           params![self.owner,self.vrf_key,account.as_bytes()],|r|Ok((r.get(0)?,r.get(1)?)))

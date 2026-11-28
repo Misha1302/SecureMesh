@@ -122,3 +122,41 @@ directory_store accept-roster "$PROFILE" "$OWNER" "$VRF" "$ACCOUNT_ID" later-loo
 `Store::verify_package_set` — следующий изолированный reader-слой. Вызывающая сторона передаёт ожидаемый локальный checkpoint, свежее lookup-доказательство уже принятого roster и по одному KeyPackage с отдельным AKD lookup-доказательством на каждое активное устройство. Чтение и проверка выполняются внутри одной SQLite `IMMEDIATE` транзакции. Reader требует, чтобы expected checkpoint совпал с закреплённым, roster из каталога побайтно совпал с owner-signed roster в профиле, набор UUID был непустым, точным и без повторов, а каждый ключ устройства совпал с roster. KeyPackage до 16 КиБ проверяется штатным OpenMLS validator по полному BasicCredential и leaf signing key. Результат `VerifiedPackageSet` содержит AccountId, checkpoint, версию roster и только проверенные пакеты.
 
 Этот снимок не утверждает актуальность checkpoint относительно удалённого каталога и не является разрешением на отправку. Свежесть/кворум checkpoint и сериализация проверки с реальной передачей в транспорт остаются обязательной отдельной частью delivery gate.
+
+### Owner-signed username resolution
+
+`names::publication` constructs two private AKD labels scoped to the enrolled
+witness policy fingerprint (directory identity, VRF key and fixed witnesses).
+One indexes the exact canonical username, matching `[a-z0-9_]{3,32}`, and one
+indexes the 16-byte account UUID. The directory operator sees submitted names.
+The owner signs the claim locally with the account root. Submit both leaves in
+one AKD publication. The signed bytes are the v1 claim domain including its NUL,
+32-byte policy fingerprint, UUID, 32-byte Ed25519 public root, next forward and
+reverse AKD versions (each a big-endian u64), and username bytes. Append the
+64-byte signature. Both values are identical. Each label's first version is 1.
+Writers must serialize competing claims and verify resulting proofs before
+reporting acceptance. Signing conflicting claims for the same slot gives the
+directory a choice of which authorized claim to publish.
+
+`Store::discover_name` checks both inclusion proofs at one local checkpoint
+enrolled with that policy, including matching publication epochs and both AKD
+versions. First contact after a rename also requires complete authenticated
+reverse-label history back to version 1. Every record must carry the same UUID
+and root and a valid signature for its actual AKD version. The verifier rejects
+history above 32 records or 256 KiB. Independently provisioned pins can resolve
+beyond this bound. An initial false registration or directory reassignment to
+a different account requires independent human authentication to detect on
+first contact. Name allocation and expiry policy belong to the registrar.
+
+A rename updates the new forward label and the existing reverse label together.
+The old name stops resolving for that account even if its old leaf remains.
+Reassignment creates a separate contact with its own root and reverse record.
+For an existing conversation, pass its original UUID to
+`Store::verify_pinned_name`. This checks the immutable SQLCipher account-root
+pin. No API here reassigns a conversation or promotes discovery into a verified
+pin. A result describes a particular local head. Roster and package verification
+must use the same head, with freshness and dispatch decided separately.
+The SQLCipher writer accepts the returned batch through its existing
+idempotent `Writer::publish` API. `Writer::name_evidence` serves the pair and
+optional complete history in one read transaction. The consuming client uses
+its own enrolled checkpoint for verification.

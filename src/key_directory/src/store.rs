@@ -253,6 +253,7 @@ fn record(
     Ok(Advancement::AlreadyCommitted)
 }
 
+mod names;
 mod rosters;
 pub use rosters::{DeviceKeyPackageEvidence, VerifiedKeyPackage, VerifiedPackageSet};
 #[cfg(test)]

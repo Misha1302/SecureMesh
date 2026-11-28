@@ -1,5 +1,7 @@
 //! Local single-database AKD publisher. All records and receipts are server data.
+mod names;
 mod records;
+pub use names::NameEvidence;
 
 use crate::{encode_consistency, encode_lookup, Checkpoint};
 use akd::{
