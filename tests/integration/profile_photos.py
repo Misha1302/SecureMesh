@@ -29,6 +29,16 @@ def verify(request, owner, peer, outsider, pending, group):
     fetch(v1, token=outsider, expected=404)
     fetch(v1, token=pending, expected=403)
     fetch(v1, room=str(uuid.uuid4()), expected=404)
+    for blocker in (owner, peer):
+        target = next(chat['peerName'] for chat in request('/v1/conversations', token=blocker)
+                      if chat['id'] == group)
+        route = '/v1/contact-blocks/' + target
+        request(route, method='PUT', token=blocker, expected=204)
+        assert row()['peerPhotoVersion'] is None
+        fetch(v1, expected=404)
+        assert request(path, token=owner) == {'pixels': first}
+        request(route, method='DELETE', token=blocker, expected=204)
+        assert row()['peerPhotoVersion'] == v1 and fetch(v1) == {'pixels': first}
     v2 = put(second)['photoVersion']
     assert v2 != v1 and fetch(v2) == {'pixels': second}
     fetch(v1, expected=404)

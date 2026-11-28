@@ -104,19 +104,24 @@ public static class MlsDirectory
         app.MapPost("/v1/conversations/establish",Establish);
         app.MapGet("/v1/conversations",async(HttpContext ctx,NpgsqlDataSource db)=>
         {
-            var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync();
+            var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
+            await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
+            await Sql.LockTrustedDeliverySession(c,actor,ctx.RequestAborted);
             await using var cmd=Sql.Cmd(c,"""
                 SELECT c.id,d.id,d.public_key,u.username,u.display_name,p.version FROM conversation_devices own JOIN conversations c ON c.id=own.conversation_id
                 JOIN members peer ON peer.conversation_id=c.id
                 JOIN devices d ON d.id=peer.device_id JOIN users u ON u.id=d.user_id
-                LEFT JOIN profile_photos p ON p.user_id=u.id
+                LEFT JOIN profile_photos p ON p.user_id=u.id AND d.trusted AND NOT d.revoked
+                  AND NOT EXISTS (SELECT 1 FROM contact_blocks WHERE (owner_id,blocked_id) IN ((u.id,$2),($2,u.id)))
                 LEFT JOIN conversation_bootstraps b ON b.conversation_id=c.id
                 WHERE own.device_id=$1 AND d.user_id<>$2 AND (SELECT count(*) FROM members WHERE conversation_id=c.id)=2
                   AND (b.conversation_id IS NULL OR b.sender_device=$1 OR b.received OR own.join_seq>0)
                 ORDER BY c.id LIMIT 100
                 """,actor.DeviceId,actor.UserId);
-            await using var r=await cmd.ExecuteReaderAsync();var rows=new List<object>();
-            while(await r.ReadAsync()) rows.Add(new{id=r.GetGuid(0),peerDevice=r.GetGuid(1),peerKey=Convert.ToBase64String((byte[])r[2]),peerName=r.GetString(3),peerDisplayName=r.IsDBNull(4)?null:r.GetString(4),peerPhotoVersion=r.IsDBNull(5)?(Guid?)null:r.GetGuid(5),mode="E2EE_PRIVATE"});
+            var rows=new List<object>();
+            await using (var r=await cmd.ExecuteReaderAsync(ctx.RequestAborted))
+                while(await r.ReadAsync(ctx.RequestAborted)) rows.Add(new{id=r.GetGuid(0),peerDevice=r.GetGuid(1),peerKey=Convert.ToBase64String((byte[])r[2]),peerName=r.GetString(3),peerDisplayName=r.IsDBNull(4)?null:r.GetString(4),peerPhotoVersion=r.IsDBNull(5)?(Guid?)null:r.GetGuid(5),mode="E2EE_PRIVATE"});
+            await tx.CommitAsync(ctx.RequestAborted);
             return Results.Ok(rows);
         });
         app.MapGet("/v1/crypto/welcomes",async(HttpContext ctx,NpgsqlDataSource db)=>

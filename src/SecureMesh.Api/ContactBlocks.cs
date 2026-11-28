@@ -12,13 +12,18 @@ internal static class ContactBlocks
         {
             var actor = await Sql.Authenticate(ctx, db);
             await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
+            await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
+            await Sql.LockTrustedDeliverySession(c, actor, ctx.RequestAborted);
             await using var command = Sql.Cmd(c, """
                 SELECT u.username FROM contact_blocks b JOIN users u ON u.id=b.blocked_id
                 WHERE b.owner_id=$1 ORDER BY u.username
                 """, actor.UserId);
-            await using var rows = await command.ExecuteReaderAsync(ctx.RequestAborted);
             var items = new List<string>();
-            while (await rows.ReadAsync(ctx.RequestAborted)) items.Add(rows.GetString(0));
+            await using (var rows = await command.ExecuteReaderAsync(ctx.RequestAborted))
+            {
+                while (await rows.ReadAsync(ctx.RequestAborted)) items.Add(rows.GetString(0));
+            }
+            await tx.CommitAsync(ctx.RequestAborted);
             return Results.Ok(new { items });
         });
         routes.MapPut("/{username}", (string username, HttpContext ctx, NpgsqlDataSource db) =>
@@ -48,6 +53,7 @@ internal static class ContactBlocks
         await using var pairLock = Sql.Cmd(c, "SELECT id FROM users WHERE id=ANY($1) ORDER BY id FOR UPDATE",
             new[] { actor.UserId, target });
         await pairLock.ExecuteNonQueryAsync(ct);
+        await Sql.LockTrustedDeliverySession(c, actor, ct);
         if (block)
         {
             await using var insert = Sql.Cmd(c, """

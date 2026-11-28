@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -46,6 +47,34 @@ void main() {
     final tile = await readPhoto(XFile.fromData(png.buffer.asUint8List()));
     expect(tile.length, 6912);
     expect(tile.sublist(3 * 24 * 48, 3 * 24 * 48 + 3), [255, 0, 0]);
+  });
+  testWidgets('a late avatar response stays hidden after contact blocking', (
+    tester,
+  ) async {
+    final reply = Completer<Map<String, String>>();
+    var requests = 0;
+    Widget view(String? route) => MaterialApp(
+      home: PeerAvatar(
+        route: route,
+        username: 'alice',
+        fetch: (path, {data, method}) {
+          requests++;
+          return reply.future;
+        },
+      ),
+    );
+    await tester.pumpWidget(view('/photo/visible'));
+    await tester.pumpWidget(view(null));
+    reply.complete({
+      'pixels': base64Encode(Uint8List(photoSide * photoSide * 3)),
+    });
+    await tester.pump();
+    expect(requests, 1);
+    expect(
+      tester.widget<CircleAvatar>(find.byType(CircleAvatar)).foregroundImage,
+      isNull,
+    );
+    expect(find.text('A'), findsOneWidget);
   });
   testWidgets(
     'Selecting a photo needs explicit Save; removing clears only on Save',
