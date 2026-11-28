@@ -61,20 +61,22 @@ class VoicePlayer extends StatefulWidget {
     this.resumeAt = Duration.zero,
     this.onPosition,
     this.makePlayer = AudioPlayer.new,
-    this.transcription = const LocalVoiceTranscription(),
+    this.transcription,
   });
   final Uint8List bytes;
   final VoiceLabel tr;
   final Duration resumeAt;
   final ValueChanged<Duration>? onPosition;
   final AudioPlayer Function() makePlayer;
-  final LocalVoiceTranscription transcription;
+  final LocalVoiceTranscription? transcription;
   @override
   State<VoicePlayer> createState() => _VoicePlayerState();
 }
 
 class _VoicePlayerState extends State<VoicePlayer> {
   AudioPlayer? player;
+  late final LocalVoiceTranscription transcription =
+      widget.transcription ?? LocalVoiceTranscription();
   late final Duration duration;
   late final List<double> peaks;
   double rate = 1;
@@ -95,7 +97,7 @@ class _VoicePlayerState extends State<VoicePlayer> {
     peaks = voicePeaks(widget.bytes);
     position = clamp(widget.resumeAt);
     unawaited(
-      widget.transcription.available.then((value) {
+      transcription.available.then((value) {
         if (mounted) setState(() => transcriptionAvailable = value);
       }),
     );
@@ -183,6 +185,7 @@ class _VoicePlayerState extends State<VoicePlayer> {
 
   @override
   void dispose() {
+    transcription.cancel();
     unawaited(release().catchError((_) {}));
     super.dispose();
   }
@@ -263,7 +266,7 @@ class _VoicePlayerState extends State<VoicePlayer> {
                 : () async {
                     setState(() => transcribing = true);
                     try {
-                      final value = await widget.transcription.transcribe(
+                      final value = await transcription.transcribe(
                         widget.bytes,
                       );
                       if (mounted) setState(() => transcript = value);

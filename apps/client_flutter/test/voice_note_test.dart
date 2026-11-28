@@ -45,7 +45,8 @@ class Mic extends Fake implements AudioRecorder {
 }
 
 class _LocalTranscription extends LocalVoiceTranscription {
-  _LocalTranscription(this.enabled, this.result);
+  _LocalTranscription(this.enabled, this.result)
+    : super(modelPath: '/missing/model');
   final bool enabled;
   final String result;
   Uint8List? input;
