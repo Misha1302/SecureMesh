@@ -43,6 +43,7 @@ const codes = {
   INVALID_CREDENTIALS: "Проверьте пароль и подтверждение почты.",
   SESSION_REQUIRED: "Войдите в аккаунт ещё раз.",
   SESSION_EXPIRED: "Срок сессии истёк. Очередь сохранена.",
+  attachment: "Вложение не удалось подготовить или открыть. Проверьте формат, размер файла и очередь отправки.",
   size: "Недостаточно места или превышен лимит файла.",
   DEVICE_ENROLLMENT_REQUIRED:
     "Это устройство ожидает независимого подтверждения.",
@@ -395,6 +396,8 @@ function renderChats() {
   byId("peer").textContent = "@" + chat.peerName;
   show("reconfirm-chat", Boolean(chat.bindingConflict));
   show("compose", !chat.bindingConflict);
+  show("send-photo", !chat.bindingConflict && chat.active !== false);
+  if (opened.renderedGroup !== selected) byId("send-photo").reset();
   if (opened.renderedGroup !== selected) byId("reconfirm-chat").reset();
   const messages = byId("messages");
   const count = opened.visibleMessages ?? 100;
@@ -421,7 +424,7 @@ function renderChats() {
   for (const message of rows) {
     const row = element("li");
     row.append(element("span", message.text));
-    if (message.attachment?.media === "photo") {
+    if (message.attachment?.media === "photo" && message.status !== "queued") {
       const name = typeof message.attachment.name === "string" ? message.attachment.name : "Фото";
       const current = opened;
       const group = selected;
@@ -463,6 +466,7 @@ byId("to-chats").onclick = () => {
   selected = null;
   composeRevision++;
   byId("compose").reset();
+  byId("send-photo").reset();
   renderChats();
   for (const button of byId("chat-list").querySelectorAll("button[data-chat]")) {
     if (button.dataset.chat === old) button.focus();
@@ -715,6 +719,15 @@ bind(byId("compose"), async () => {
   await current.mesh.send(group, text, current.getDraft(group)?.revision);
   if (opened !== current) return;
   if (selected === group && composeRevision === revision) form.reset();
+  renderChats();
+});
+bind(byId("send-photo"), async () => {
+  const current = opened, group = selected, form = byId("send-photo");
+  const file = form.elements.photo.files[0];
+  if (!current || !group || !file) return;
+  await current.mesh.sendPhoto(group, file);
+  if (opened !== current || selected !== group) return;
+  if (form.elements.photo.files[0] === file) form.reset();
   renderChats();
 });
 function archiveValid(value) {

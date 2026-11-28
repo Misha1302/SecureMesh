@@ -122,3 +122,51 @@ export function photoHeader(bytes) {
   if (!frame || (canvas && (frame.width !== canvas.width || frame.height !== canvas.height))) invalid();
   return frame;
 }
+
+export const outgoingPhotoLimit = 1024 * 1024;
+
+export async function normalizeSelectedPhoto(file, active) {
+  const invalid = () => { throw Object.assign(new Error("Unsupported or oversized photo"), {code: "attachment"}); };
+  if (!(file instanceof File) || file.size === 0 || file.size > 4 * outgoingPhotoLimit) invalid();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let source;
+  try {
+    active();
+    const { mime } = photoHeader(bytes);
+    if (mime === "image/png") {
+      const view = new DataView(bytes.buffer);
+      for (let offset = 8; offset < bytes.length;) {
+        if (offset + 12 > bytes.length) invalid();
+        const type = view.getUint32(offset + 4);
+        if (type === 0x6163544c || type === 0x6663544c || type === 0x66644154) invalid();
+        offset += 12 + view.getUint32(offset);
+        if (offset > bytes.length) invalid();
+      }
+    }
+    source = new Blob([bytes], { type: mime });
+  } finally {
+    bytes.fill(0);
+  }
+
+  let bitmap, canvas;
+  try {
+    bitmap = await createImageBitmap(source);
+    active();
+    if (!bitmap.width || !bitmap.height || bitmap.width > 8192 || bitmap.height > 8192 ||
+        bitmap.width * bitmap.height > 16_000_000) invalid();
+    const scale = Math.min(1, 960 / Math.max(bitmap.width, bitmap.height));
+    canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) invalid();
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const normalized = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+    active();
+    if (normalized?.type !== "image/jpeg" || normalized.size === 0 || normalized.size > outgoingPhotoLimit) invalid();
+    return new Uint8Array(await normalized.arrayBuffer());
+  } finally {
+    bitmap?.close();
+    if (canvas) canvas.width = canvas.height = 0;
+  }
+}

@@ -1,4 +1,4 @@
-import { photoHeader } from "./private-image.js";
+import { normalizeSelectedPhoto, outgoingPhotoLimit, photoHeader } from "./private-image.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const usernamePattern = /^[a-z0-9_]{3,32}$/;
@@ -468,6 +468,44 @@ export function createMessenger(ctx) {
     return id;
   }
 
+  let preparingPhoto = false;
+  async function sendPhoto(group, file) {
+    const chat = readChat(group);
+    const generationAtStart = privateImageGeneration;
+    const active = () => {
+      requireValue(generationAtStart === privateImageGeneration && selected === group &&
+        samePeer(chat, readChat(group)), "locked", "The conversation changed");
+      ensureUsable(readChat(group));
+    };
+    active();
+    requireValue(!preparingPhoto, "attachment", "Another photo is being prepared");
+    preparingPhoto = true;
+    let bytes;
+    try {
+      bytes = await normalizeSelectedPhoto(file, active);
+      active();
+      const id = crypto.randomUUID();
+      const text = "Фото";
+      await ctx.run("queue", { group, id, text, blobId: crypto.randomUUID(), photo: encodeBase64(bytes) },
+        (draft, envelope) => {
+          active();
+          const data = transport(draft);
+          ensureUsable(data.chats[group]);
+          requireValue(Object.values(data.outbox).filter((entry) => entry.photo).length < 4,
+            "attachment", "Too many photos are waiting to send");
+          data.outbox[id] = envelope;
+          data.chats[group].messages.push({ id, text, attachment: envelope.photo.descriptor,
+            direction: "outgoing", status: "queued", recordedAt: Date.now() });
+        });
+      preferredSend = group;
+      if (running) schedule(0);
+      return id;
+    } finally {
+      bytes?.fill(0);
+      preparingPhoto = false;
+    }
+  }
+
   async function flushOne(entry) {
     const chat = readChat(entry.group);
     const assertQueued = () => {
@@ -475,7 +513,9 @@ export function createMessenger(ctx) {
       ensureUsable(current);
       const saved = state().outbox?.[entry.id];
       requireValue(samePeer(chat, current) && saved?.group === entry.group &&
-        saved.epoch === entry.epoch && saved.kind === entry.kind && saved.ciphertext === entry.ciphertext,
+        saved.epoch === entry.epoch && saved.kind === entry.kind && saved.ciphertext === entry.ciphertext &&
+        saved.photo?.sealed === entry.photo?.sealed &&
+        saved.photo?.descriptor?.blobId === entry.photo?.descriptor?.blobId,
       "conflict", "The queued message or its contact changed");
       return current;
     };
@@ -499,6 +539,18 @@ export function createMessenger(ctx) {
     const digest = await ciphertextDigest(entry.ciphertext);
     let ack;
     try {
+      if (entry.photo) {
+        const { descriptor, sealed } = entry.photo;
+        requireValue(Number.isSafeInteger(descriptor.size) && descriptor.size > 0 &&
+          descriptor.size <= outgoingPhotoLimit, "attachment", "Invalid queued photo size");
+        const ciphertext = base64(sealed, descriptor.size + 16);
+        try {
+          await ctx.api(`/v1/conversations/${uuid(entry.group)}/blobs/${uuid(descriptor.blobId)}`,
+            ciphertext, "PUT", handoff);
+        } finally {
+          ciphertext.fill(0);
+        }
+      }
       ack = await ctx.api("/v1/messages", {
         conversationId: entry.group, clientMessageId: entry.id, mlsEpoch: entry.epoch,
         envelopeKind: entry.kind, ciphertext: entry.ciphertext,
@@ -513,12 +565,13 @@ export function createMessenger(ctx) {
       if (!(latest.epoch > entry.epoch) || !text ||
           Object.values(latest.envelopes).some((old) => old.id === entry.id)) throw error;
       // A definite epoch rejection allows this unsaved ID to be re-encrypted.
-      await ctx.run("queue", { group: entry.group, id: entry.id, text }, (draft, replacement) => {
+      await ctx.run("queue", { group: entry.group, id: entry.id, text,
+        ...(entry.photo && { attachment: entry.photo.descriptor }) }, (draft, replacement) => {
         const data = transport(draft);
         ensureUsable(data.chats[entry.group]);
         requireValue(data.outbox[entry.id]?.ciphertext === entry.ciphertext && replacement.epoch > entry.epoch,
           "conflict", "The queued message changed");
-        data.outbox[entry.id] = replacement;
+        data.outbox[entry.id] = entry.photo ? { ...replacement, photo: entry.photo } : replacement;
       });
       return flushOne(state().outbox[entry.id]);
     }
@@ -778,6 +831,6 @@ export function createMessenger(ctx) {
     globalThis.removeEventListener?.("online", wake);
   }
 
-  return { refresh, invite, accept, establish, join, reconfirmChat, send, tick, select, start, stop,
+  return { refresh, invite, accept, establish, join, reconfirmChat, send, sendPhoto, tick, select, start, stop,
     openPhoto, releasePhoto };
 }

@@ -88,12 +88,13 @@ async function exchange(path, data, method = data === undefined ? "GET" : "POST"
     require(isToken(token), "SESSION_INVALID");
     headers.Authorization = `Bearer ${token}`;
   }
-  if (data !== undefined) headers["Content-Type"] = "application/json";
+  const binary = data instanceof Uint8Array;
+  if (data !== undefined) headers["Content-Type"] = binary ? "application/octet-stream" : "application/json";
   let response;
   try {
     response = await fetch(url.href, {
       method, headers,
-      body: data === undefined ? undefined : JSON.stringify(data),
+      body: data === undefined || binary ? data : JSON.stringify(data),
       redirect: "error", credentials: "omit", cache: "no-store",
       referrerPolicy: "no-referrer", mode: "cors",
     });
@@ -101,6 +102,7 @@ async function exchange(path, data, method = data === undefined ? "GET" : "POST"
     throw new AccountError("NETWORK_UNAVAILABLE");
   }
   require(!response.redirected && (!response.url || response.url === url.href), "SERVER_ORIGIN_MISMATCH");
+  if (binary && (response.status === 201 || response.status === 204)) return;
   let body;
   if (response.status !== 204 && response.status !== 202) {
     const json = /^application\/(?:json|problem\+json)(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "");
@@ -113,7 +115,7 @@ async function exchange(path, data, method = data === undefined ? "GET" : "POST"
       ? body.code : "SERVER_REQUEST_FAILED";
     throw new AccountError(code, response.status);
   }
-  require(body !== undefined || response.status === 202 || response.status === 204);
+  require(!binary && (body !== undefined || response.status === 202 || response.status === 204));
   return body;
 }
 
@@ -467,6 +469,12 @@ export function createAccount(ctx) {
     require(!/^\/v[12]\/auth\/(?:register|resend-verification|verify-email|challenge|login|reauthenticate|refresh)(?:\/|$)/.test(url.pathname), "INVALID_API_PATH");
     if (/^\/v1\/messages\/?$/i.test(url.pathname))
       require(typeof handoff === "function", "DELIVERY_GUARD_REQUIRED");
+    if (/^\/v1\/conversations\/[0-9a-f-]{36}\/blobs\/[0-9a-f-]{36}$/i.test(url.pathname) && method === "PUT") {
+      require(typeof handoff === "function", "DELIVERY_GUARD_REQUIRED");
+      require(data instanceof Uint8Array && data.length > 16 && data.length <= 1024 * 1024 + 16, "INVALID_BLOB");
+    } else {
+      require(!(data instanceof Uint8Array), "INVALID_API_PATH");
+    }
     return authenticated((session) => exchange(path, data, method, session.accessToken), handoff);
   }
 

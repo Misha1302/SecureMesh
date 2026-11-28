@@ -316,6 +316,37 @@ replaceKey = false;
 malformedTail = false;
 await restored.reconfirmChat(group, originalCode);
 
+// A pin conflict observed during a sealed upload must still stop the MLS
+// descriptor before it can leave the browser. Retry retains the exact bytes.
+const photoId = randomUUID(), blobId = randomUUID();
+await alice.ctx.run("queue", {group, id: photoId, blobId, text: "Фото", photo: "AA=="}, (draft, entry) => {
+  draft.messenger.outbox[photoId] = entry;
+  draft.messenger.chats[group].messages.push({id: photoId, direction: "outgoing", text: "Фото"});
+});
+const queuedPhoto = structuredClone(alice.ctx.state().messenger.outbox[photoId]);
+const blobPath = `/v1/conversations/${group}/blobs/${blobId}`;
+let uploaded = 0;
+alice.ctx.api = (path, data, method, guard) => {
+  if (path !== blobPath) return realApi(path, data, method, guard);
+  assert.equal(method, "PUT");
+  assert.equal(Buffer.from(data).toString("base64"), queuedPhoto.photo.sealed);
+  return guard(async () => {
+    uploaded++;
+    omitChats = false;
+    replaceKey = true;
+    await restored.refresh();
+  });
+};
+await assert.rejects(restored.tick(), {code: "changed-key"});
+assert.equal(uploaded, 1);
+assert.equal(sendCalls.length, beforeDelay + 1); // Earlier text drained before the photo.
+assert.deepEqual(alice.ctx.state().messenger.outbox[photoId], queuedPhoto);
+await restored.tick();
+assert.equal(uploaded, 1);
+replaceKey = false;
+await restored.reconfirmChat(group, originalCode);
+alice.ctx.api = realApi;
+
 // Even a queued, valid ciphertext cannot leave a restored snapshot missing its original pin.
 await alice.ctx.update((draft) => {
   const saved = JSON.parse(draft.snapshot);
@@ -326,8 +357,8 @@ await alice.ctx.update((draft) => {
 });
 await assert.rejects(restored.tick(), { code: "changed-key" });
 assert(alice.ctx.state().messenger.chats[group].bindingConflict);
-assert(alice.ctx.state().messenger.outbox[delayed]);
-assert.equal(sendCalls.length, beforeDelay);
+assert(alice.ctx.state().messenger.outbox[photoId]);
+assert.equal(sendCalls.length, beforeDelay + 1);
 
 // Keep the background directory cadence independent of the active thread and
 // prove that every idle group eventually gets a turn in the bounded sync slot.
