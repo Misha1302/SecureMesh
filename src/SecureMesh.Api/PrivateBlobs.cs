@@ -106,6 +106,7 @@ public static partial class PrivateBlobs
         var actor = await Sql.Authenticate(ctx, db);
         await using var c = await db.OpenConnectionAsync(ct);
         await using var tx = await c.BeginTransactionAsync(ct);
+        await Sql.LockTrustedDeliverySession(c, actor, ct);
         await LockMember(c, group, actor.DeviceId, ct);
         // Use PostgreSQL's bytea slice for the bounded range used by native clients.
         // Other HTTP range forms retain the framework's standard file handling.

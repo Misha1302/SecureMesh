@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check deterministic HTTP and WSS delivery ordering against a real account reset."""
 import concurrent.futures
+import json
 import os
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ from unittest.mock import patch
 import delivery as d
 from account_recovery import mail_token
 from directory import establish
-from private_blobs import database, postgres
+from private_blobs import blob, database, postgres
 
 
 def scalar(db, query):
@@ -96,6 +97,11 @@ def run(db, root):
     # Reset holds the account lock while blocked on the old session. HTTP and WSS authenticate
     # against the still-visible old session, then wait on the in-transaction share lock.
     access = d.login(sender['username'], password, device)['accessToken']
+    blob_path = f"/v1/conversations/{group}/blobs/{uuid.uuid4()}"
+    ciphertext = os.urandom(37)
+    blob(blob_path, access, 'PUT', 201, ciphertext)
+    assert blob(blob_path, access, 'GET', 200) == ciphertext
+    assert blob(blob_path, access, 'GET', 206, extra={'Range':'bytes=2-6'}) == ciphertext[2:7]
     next_code = newest_code(email, previous=first_code)
     message = device.call('queue', group=group, id=str(uuid.uuid4()), text='Recovery won before delivery')
     streams = [d.Stream(access, device) for _ in range(3)]
@@ -104,7 +110,7 @@ def run(db, root):
     ack_frame = d.wire.Frame(protocol_version=1, kind=d.wire.PROCESSED_ACK)
     ack_frame.processed_ack.conversation_id = uuid.UUID(group).bytes
     ack_frame.processed_ack.highest_contiguous_persisted_sequence = 1
-    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
         try:
             with hold_row(db, f"SELECT id FROM sessions WHERE device_id='{uuid.UUID(device.identity)}' AND NOT revoked FOR UPDATE"):
                 reset = pool.submit(complete, next_code, password + '-again')
@@ -114,17 +120,21 @@ def run(db, root):
                     pool.submit(d.request, f'/v1/sync?conversationId={group}', token=access, expected=401),
                     pool.submit(d.request, '/v1/acks', dict(conversationId=group, sequence=1), token=access, expected=401),
                 ]
+                reads = [pool.submit(blob, blob_path, access, 'GET', 401, extra=headers)
+                         for headers in ({}, {'Range': 'bytes=2-6'})]
                 websocket = [
                     pool.submit(streams[0].send, message, group),
                     pool.submit(streams[1].exchange, sync_frame),
                     pool.submit(streams[2].exchange, ack_frame),
                 ]
-                wait_for(db, "wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE id=$1 FOR SHARE%'", 6)
+                wait_for(db, "wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE id=$1 FOR SHARE%'", 8)
                 # The transaction locks only the recovering account. Its peer can still read the group.
                 peer = d.request(f'/v1/sync?conversationId={group}', token=receiver['session']['accessToken'])
                 assert len(peer['messages']) == 1
             reset.result(timeout=10)
             assert all(operation.result(timeout=10) == {'code': 'AUTH_REQUIRED'} for operation in http)
+            for operation in reads:
+                assert json.loads(operation.result(timeout=10)) == {'code': 'AUTH_REQUIRED'}
             for operation in websocket:
                 frame = operation.result(timeout=10)
                 assert frame.kind == d.wire.SERVER_ERROR and frame.server_error.code == 401

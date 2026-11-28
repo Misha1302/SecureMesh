@@ -216,6 +216,19 @@ fake = () => new Response(Uint8Array.from([1, 2, 3, 4]), { status: 200,
 await assert.rejects(account.apiBytes(`/v1/conversations/${userId}/blobs/${challengeId}`, 3), /ATTACHMENT_SIZE/);
 await assert.rejects(account.apiBytes("/v1/conversations/not-a-uuid/blobs/not-a-uuid", 3), /INVALID_API_PATH/);
 
+const blobRoute = `/v1/conversations/${userId}/blobs/${challengeId}`;
+fake = () => request({code: "BLOB_NOT_FOUND"}, 404);
+await assert.rejects(account.apiBytes(blobRoute, 3), {code: "BLOB_NOT_FOUND", status: 404});
+for (const declared of [false, true]) {
+  let cancelled = false;
+  fake = () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(4097)); },
+    cancel() { cancelled = true; },
+  }), {status: 403, headers: {"Content-Type":"application/json", ...(declared ? {"Content-Length":"4097"} : {})}});
+  await assert.rejects(account.apiBytes(blobRoute, 3), {code:"SERVER_REQUEST_FAILED",status:403});
+  assert(cancelled);
+}
+
 let release;
 let rotationCount = 0;
 const blocked = new Promise((resolve) => { release = resolve; });

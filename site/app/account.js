@@ -132,30 +132,43 @@ async function exchangeBytes(path, token, maxBytes) {
     throw new AccountError("NETWORK_UNAVAILABLE");
   }
   require(!response.redirected && (!response.url || response.url === url.href), "SERVER_ORIGIN_MISMATCH");
+  async function rejectBody(code) {
+    await response.body?.cancel().catch(() => {});
+    throw new AccountError(code, response.status);
+  }
   if (!response.ok) {
     let code = "SERVER_REQUEST_FAILED";
     if (/^application\/(?:json|problem\+json)(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) {
       try {
-        const body = await response.json();
+        const body = JSON.parse(utf8.decode(await readBoundedBody(response, 4096)));
         if (typeof body?.code === "string" && /^[A-Z][A-Z0-9_]{0,83}$/.test(body.code)) code = body.code;
-      } catch { /* Keep the stable generic error. */ }
+      } catch { /* The HTTP status still drives the normal authentication retry. */ }
+      throw new AccountError(code, response.status);
     }
-    throw new AccountError(code, response.status);
+    return rejectBody(code);
   }
-  require(response.status === 200 && /^application\/octet-stream(?:\s*;|$)/i.test(response.headers.get("content-type") ?? ""), "ACCOUNT_RESPONSE_MISMATCH");
+  if (response.status !== 200 || !/^application\/octet-stream(?:\s*;|$)/i.test(response.headers.get("content-type") ?? ""))
+    return rejectBody("ACCOUNT_RESPONSE_MISMATCH");
+  return readBoundedBody(response, maxBytes);
+}
+
+async function readBoundedBody(response, maxBytes) {
   const declared = response.headers.get("content-length");
-  if (declared !== null) require(/^\d+$/.test(declared) && Number(declared) > 0 && Number(declared) <= maxBytes, "ATTACHMENT_SIZE");
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) <= 0 || Number(declared) > maxBytes)) {
+    await response.body?.cancel().catch(() => {});
+    throw new AccountError("ATTACHMENT_SIZE");
+  }
   require(response.body?.getReader, "ACCOUNT_RESPONSE_MISMATCH");
   const reader = response.body.getReader();
-  const chunks = [];
+  const bytes = new Uint8Array(declared === null ? maxBytes : Number(declared));
   let total = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      require(value.byteLength <= bytes.length - total, "ATTACHMENT_SIZE");
+      bytes.set(value, total);
       total += value.byteLength;
-      require(total <= maxBytes, "ATTACHMENT_SIZE");
-      chunks.push(value);
     }
   } catch (error) {
     await reader.cancel().catch(() => {});
@@ -163,13 +176,7 @@ async function exchangeBytes(path, token, maxBytes) {
     throw new AccountError("NETWORK_UNAVAILABLE");
   }
   require(total > 0 && (declared === null || total === Number(declared)), "ATTACHMENT_SIZE");
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+  return bytes.subarray(0, total);
 }
 
 function checkChallenge(challenge, binding) {
