@@ -121,8 +121,12 @@ def exchange(root, origin, api_port, pin, engine):
             else:
                 route.fulfill(response=response)
 
-        page.route("**/v1/conversations/*/blobs/*", lose_reply)
-        page.route("**/v1/messages", lose_message_reply)
+        # Playwright only intercepts these cross-origin requests on Chromium
+        # when this page is controlled by the PWA service worker.
+        inject_loss = engine == "chromium"
+        if inject_loss:
+            page.route("**/v1/conversations/*/blobs/*", lose_reply)
+            page.route("**/v1/messages", lose_message_reply)
         raw_png = base64.b64decode(png)
 
         def png_chunk(tag, content):
@@ -146,25 +150,31 @@ def exchange(root, origin, api_port, pin, engine):
         sent = page.locator("#messages li.out").last
         expect(sent.get_by_text("Фото", exact=True)).to_be_visible()
         expect(sent.get_by_text("Принято сервером")).to_be_visible(timeout=40_000)
-        assert len(uploads) >= 2 and len(submissions) >= 2, (len(uploads), len(submissions))
-        assert all(record == uploads[0] for record in uploads)
-        assert all(record == submissions[0] for record in submissions)
-        envelope = submissions[0]
-        assert set(envelope) == {"conversationId", "clientMessageId", "mlsEpoch", "envelopeKind", "ciphertext"}
-        blob_url, sealed = uploads[0]
-        assert b"original-private-name" not in sealed and b"local-only-source-metadata" not in sealed
+        if inject_loss:
+            assert len(uploads) >= 2 and len(submissions) >= 2, (len(uploads), len(submissions))
+            assert all(record == uploads[0] for record in uploads)
+            assert all(record == submissions[0] for record in submissions)
+            envelope = submissions[0]
+            assert set(envelope) == {"conversationId", "clientMessageId", "mlsEpoch", "envelopeKind", "ciphertext"}
         header = {"Authorization": "Bearer " + session["accessToken"]}
         rows = direct.get(f"/v1/sync?conversationId={group}&limit=10", headers=header)
         assert rows.ok, (rows.status, rows.text())
-        events = [row for row in rows.json()["messages"] if row["clientMessageId"] == envelope["clientMessageId"]]
+        events = [row for row in rows.json()["messages"] if row["senderDeviceId"] == package["recipient"]]
         assert len(events) == 1
         row = events[0]
+        if inject_loss:
+            assert row["clientMessageId"] == envelope["clientMessageId"]
         received = device.call("process", group=group, ciphertext=row["ciphertext"], sender=package["recipient"],
                                epoch=row["mlsEpoch"], kind=row["envelopeKind"])
         assert received["attachment"]["name"] == "photo.jpg" and received["attachment"]["media"] == "photo"
-        mid = envelope["clientMessageId"]
+        mid = row["clientMessageId"]
         remote = direct.get(f"/v1/conversations/{group}/blobs/{received['attachment']['blobId']}", headers=header)
-        assert remote.ok and remote.body() == sealed and blob_url.endswith(received["attachment"]["blobId"])
+        assert remote.ok
+        sealed = remote.body()
+        assert b"original-private-name" not in sealed and b"local-only-source-metadata" not in sealed
+        if inject_loss:
+            blob_url, uploaded = uploads[0]
+            assert sealed == uploaded and blob_url.endswith(received["attachment"]["blobId"])
         tampered = sealed[:-1] + bytes([sealed[-1] ^ 1])
         device.call("attachment_open", reject=True, group=group, id=mid, ciphertext=base64.b64encode(tampered).decode())
         opened = device.call("attachment_open", group=group, id=mid, ciphertext=base64.b64encode(sealed).decode())
@@ -184,4 +194,6 @@ if __name__ == "__main__":
         root = Path(root)
         with live.origins(root, db) as (origin, port, pin):
             exchange(root, origin, port, pin, engine)
-    print("Private photo interoperability over TLS in both directions; byte-identical retry and preview cleanup")
+    print(f"Private photo interoperability over TLS in both directions and preview cleanup ({engine}).")
+    if engine == "chromium":
+        print("Lost upload and message responses recovered with byte-identical retries.")
