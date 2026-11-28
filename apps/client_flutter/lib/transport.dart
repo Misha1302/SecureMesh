@@ -30,9 +30,12 @@ class MeshTransport {
     required this.token,
     required this.http,
     required this.https,
-    this.timeout = const Duration(seconds: 15),
+    Duration? timeout,
+    Duration? upgradeTimeout,
     this.probeDelay = const Duration(seconds: 30),
-  }) {
+  }) : timeout = timeout ?? const Duration(seconds: 40),
+       upgradeTimeout =
+           upgradeTimeout ?? timeout ?? const Duration(seconds: 45) {
     if (endpoint.scheme != 'https' || endpoint.userInfo.isNotEmpty) {
       throw ArgumentError('TLS_REQUIRED');
     }
@@ -43,7 +46,16 @@ class MeshTransport {
   final String Function() token;
   final HttpClient http;
   final HttpsRequest https;
-  final Duration timeout, probeDelay;
+  final Duration timeout, upgradeTimeout, probeDelay;
+  int upgradeAttempts = 0,
+      upgradeTimeouts = 0,
+      upgradeIoFailures = 0,
+      helloTimeouts = 0,
+      frameTimeouts = 0,
+      fallbackAttempts = 0,
+      fallbackTimeouts = 0,
+      fallbackIoFailures = 0;
+  Future<void> _fallbackTail = Future<void>.value();
   WebSocket? _socket;
   Socket? _rawSocket;
   final Map<String, Completer<wire.Frame>> _pending = {};
@@ -141,7 +153,17 @@ class MeshTransport {
     final key = base64Encode(frame.requestId);
     _pending[key] = pending;
     // Install the timeout/error listener before sending on a possibly dead socket.
-    final future = pending.future.timeout(timeout);
+    final future = pending.future.timeout(
+      timeout,
+      onTimeout: () {
+        if (frame.kind == wire.FrameKind.HELLO) {
+          helloTimeouts++;
+        } else {
+          frameTimeouts++;
+        }
+        throw TimeoutException('STREAM_RESPONSE_TIMEOUT');
+      },
+    );
     try {
       sentApplicationBytes += prefix.length + bytes.length;
       _socket!.add(Uint8List.fromList([...prefix, ...bytes]));
@@ -237,16 +259,19 @@ class MeshTransport {
 
     late WebSocket socket;
     try {
+      upgradeAttempts++;
       socket = await connect().timeout(
-        timeout,
+        upgradeTimeout,
         onTimeout: () {
+          upgradeTimeouts++;
           abandoned = true;
           upgrade?.abort();
           raw?.destroy();
           throw TimeoutException('STREAM_CONNECT_TIMEOUT');
         },
       );
-    } catch (_) {
+    } catch (error) {
+      if (error is IOException) upgradeIoFailures++;
       abandoned = true;
       upgrade?.abort();
       raw?.destroy();
@@ -271,18 +296,23 @@ class MeshTransport {
       },
       cancelOnError: true,
     );
-    final hello = await _exchange(
-      wire.Frame(
-        kind: wire.FrameKind.HELLO,
-        hello: wire.Hello(
-          supportedVersions: [1],
-          clientDeviceId: uuidBytes(device),
+    try {
+      final hello = await _exchange(
+        wire.Frame(
+          kind: wire.FrameKind.HELLO,
+          hello: wire.Hello(
+            supportedVersions: [1],
+            clientDeviceId: uuidBytes(device),
+          ),
         ),
-      ),
-    );
-    if (hello.kind != wire.FrameKind.HELLO ||
-        !hello.hello.supportedVersions.contains(1)) {
-      throw ApiFailure(502, 'INVALID_HELLO');
+      );
+      if (hello.kind != wire.FrameKind.HELLO ||
+          !hello.hello.supportedVersions.contains(1)) {
+        throw ApiFailure(502, 'INVALID_HELLO');
+      }
+    } catch (_) {
+      if (identical(socket, _socket)) _disconnect();
+      rethrow;
     }
     mode = 'wss';
   }
@@ -298,27 +328,49 @@ class MeshTransport {
     _operations++;
     try {
       if (!DateTime.now().isBefore(_probeAfter)) {
+        WebSocket? owner;
         try {
           await _connect();
+          owner = _socket;
+          if (owner == null) throw const SocketException('STREAM_DISCONNECTED');
           return decode(await _exchange(frame));
         } on ApiFailure catch (failure) {
-          // Refresh remains HTTPS-only. Do not retry a rejected epoch/ID/key over
-          // another transport as if it were an ambiguous network failure.
           if (failure.status != 401) {
-            if (failure.status == 502) _disconnect();
+            if (failure.status == 502 &&
+                owner != null &&
+                identical(owner, _socket)) {
+              _disconnect();
+            }
             rethrow;
           }
-          _disconnect();
         } on TimeoutException {
-          _disconnect();
+          // The operation remains durable across fallback.
         } on IOException {
-          _disconnect();
+          // A closed stream can finish its old requests after a replacement opens.
         }
-        _probeAfter = DateTime.now().add(probeDelay);
+        if (owner != null && identical(owner, _socket)) _disconnect();
+        if (_socket == null) _probeAfter = DateTime.now().add(probeDelay);
       }
-      if (_closed) throw const SocketException('TRANSPORT_CLOSED');
-      mode = 'https';
-      return await https(route, data: data);
+      // A broken multiplexed stream can release all send and sync slots at
+      // once. Reuse a single HTTPS connection while the weak link recovers.
+      final previous = _fallbackTail;
+      final done = Completer<void>();
+      _fallbackTail = done.future;
+      try {
+        await previous;
+        if (_closed) throw const SocketException('TRANSPORT_CLOSED');
+        if (_socket == null) mode = 'https';
+        fallbackAttempts++;
+        return await https(route, data: data);
+      } on TimeoutException {
+        fallbackTimeouts++;
+        rethrow;
+      } on IOException {
+        if (!_closed) fallbackIoFailures++;
+        rethrow;
+      } finally {
+        done.complete();
+      }
     } finally {
       _operations--;
     }

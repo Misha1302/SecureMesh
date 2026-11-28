@@ -4,7 +4,7 @@ import 'dart:io';
 /// connection task. Close the resulting socket before it loses its owner.
 HttpClient meshTlsClient(
   SecurityContext context, {
-  Duration connectionTimeout = const Duration(seconds: 12),
+  Duration connectionTimeout = const Duration(seconds: 30),
 }) {
   final client = HttpClient(context: context)
     ..connectionTimeout = connectionTimeout;
