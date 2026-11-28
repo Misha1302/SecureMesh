@@ -16,6 +16,8 @@ check() {
 check bundle python3 tools/verify_bundle.py
 check build dotnet build src/SecureMesh.Api --no-restore
 check crypto-build cargo build --locked --manifest-path src/crypto_core/Cargo.toml
+check directory-bootstrap cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test directory_bootstrap
+check key-directory-proofs cargo test --locked --manifest-path src/key_directory/Cargo.toml
 check profile-schema cargo test --locked --manifest-path src/crypto_core/Cargo.toml --lib profile_schema
 check encrypted-drafts cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test conversation_drafts
 check encrypted-replies cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test message_replies
@@ -36,6 +38,7 @@ check enrollment-quota .local/venv/bin/python tests/integration/enrollment_quota
 check migrations .local/venv/bin/python tests/integration/migrations.py
 check account-removal .local/venv/bin/python tests/integration/account_removal.py
 check private-blobs .local/venv/bin/python tests/integration/private_blobs.py
+check verification-email-queue .local/venv/bin/python tests/integration/verification_email_queue.py
 check mls-directory .local/venv/bin/python tests/integration/directory.py
 check public-channels .local/venv/bin/python tests/integration/public_channels.py
 check restore-v2 .local/venv/bin/python tests/integration/restore_v2.py
