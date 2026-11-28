@@ -78,6 +78,12 @@ def exchange(root, origin, api_port, pin):
         preview = page.locator("#messages img.private-photo-preview")
         expect(preview).to_be_visible()
         assert preview.evaluate("async img => { await img.decode(); return [img.naturalWidth, img.naturalHeight]; }") == [2, 1]
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.locator("#to-chats").click()
+        expect(preview).to_have_count(0)
+        page.locator("#chat-list").get_by_role("button", name=re.compile(name)).click()
+        page.get_by_role("button", name="Посмотреть фото").click()
+        expect(preview).to_be_visible()
         page.locator("#lock").click()
         expect(preview).to_have_count(0)
         direct.dispose()

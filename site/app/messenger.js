@@ -99,20 +99,15 @@ export function createMessenger(ctx) {
   let rateLimitFailure;
   const remoteBlocked = new Map();
   const reconfirming = new Set();
-  const privateImageUrls = new Map();
+  const privateImageUrls = new Set();
   let privateImageGeneration = 0;
 
-  function photoKey(group, id) { return `${uuid(group)}:${uuid(id)}`; }
-  function photoUrl(group, id) { return privateImageUrls.get(photoKey(group, id)); }
-  function releasePhoto(group, id) {
-    const key = photoKey(group, id);
-    const url = privateImageUrls.get(key);
-    if (url) URL.revokeObjectURL(url);
-    privateImageUrls.delete(key);
+  function releasePhoto(url) {
+    if (privateImageUrls.delete(url)) URL.revokeObjectURL(url);
   }
   function clearPhotos() {
     privateImageGeneration++;
-    for (const url of privateImageUrls.values()) URL.revokeObjectURL(url);
+    for (const url of privateImageUrls) URL.revokeObjectURL(url);
     privateImageUrls.clear();
   }
 
@@ -125,9 +120,6 @@ export function createMessenger(ctx) {
       info.size > 0 && info.size <= privateAttachmentLimit &&
       typeof info.name === "string" && info.name.length <= 255,
       "attachment", "This encrypted attachment is not a supported image");
-    const key = photoKey(group, id);
-    const cached = privateImageUrls.get(key);
-    if (cached) return cached;
     const generationAtStart = privateImageGeneration;
     const active = () => requireValue(generationAtStart === privateImageGeneration,
       "locked", "The private image view was closed");
@@ -178,7 +170,7 @@ export function createMessenger(ctx) {
         "attachment", "The image preview could not be encoded safely");
       active();
       const url = URL.createObjectURL(safeBlob);
-      privateImageUrls.set(key, url);
+      privateImageUrls.add(url);
       return url;
     } finally {
       bitmap?.close();
@@ -787,5 +779,5 @@ export function createMessenger(ctx) {
   }
 
   return { refresh, invite, accept, establish, join, reconfirmChat, send, tick, select, start, stop,
-    openPhoto, photoUrl, releasePhoto };
+    openPhoto, releasePhoto };
 }

@@ -40,12 +40,12 @@ def main():
         page.goto(origin + "/app/index.html")
         page.evaluate("""async () => {
           const { privatePhotoControl } = await import('/app/private-image.js');
-          window.releaseCount = 0;
+          window.released = [];
           const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pWQAAAAASUVORK5CYII='), c => c.charCodeAt(0));
           window.control = privatePhotoControl({
             name: 'photo.png',
             open: async () => URL.createObjectURL(new Blob([png], { type: 'image/png' })),
-            release: () => { window.releaseCount++; },
+            release: url => { window.released.push(url); URL.revokeObjectURL(url); },
             onError: error => { throw error; },
           });
           document.body.append(window.control.element);
@@ -56,9 +56,10 @@ def main():
         expect(image).to_be_visible()
         expect(image).to_have_attribute("alt", "photo.png")
         image.evaluate("img => img.decode()")
+        displayed = image.get_attribute("src")
         page.get_by_role("button", name="Скрыть фото").click()
         expect(page.locator("img.private-photo-preview")).to_have_count(0)
-        assert page.evaluate("window.releaseCount") == 1
+        assert page.evaluate("window.released") == [displayed]
 
         # Disposal while the asynchronous open is pending releases a late URL.
         page.evaluate("""async () => {
@@ -67,7 +68,7 @@ def main():
           window.late = privatePhotoControl({
             name: 'late.png',
             open: () => new Promise(resolve => { resolveOpen = resolve; }),
-            release: () => { window.releaseCount++; },
+            release: url => { window.released.push(url); URL.revokeObjectURL(url); },
             onError: () => {},
           });
           document.body.append(window.late.element);
@@ -75,9 +76,13 @@ def main():
           window.late.dispose();
           window.resolveLate = resolveOpen;
         }""")
-        page.evaluate("window.resolveLate(URL.createObjectURL(new Blob(['x'], {type:'image/png'})))")
+        late = page.evaluate("""() => {
+          const url = URL.createObjectURL(new Blob(['x'], {type:'image/png'}));
+          window.resolveLate(url);
+          return url;
+        }""")
         page.wait_for_timeout(0)
-        assert page.evaluate("window.releaseCount") == 2
+        assert page.evaluate("window.released") == [displayed, late]
         assert page.locator("img.private-photo-preview").count() == 0
         browser.close()
     print("Private photo Chromium lifecycle passed.")

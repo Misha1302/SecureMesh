@@ -203,12 +203,16 @@ function attach(handle, worker) {
   instance.mesh = createMessenger({ ...ctx, api: instance.account.api, apiBytes: instance.account.apiBytes });
   return instance;
 }
+function disposePhotoControls(current) {
+  for (const control of current?.photoControls ?? []) control.dispose();
+  current?.photoControls?.clear();
+}
+
 function lock() {
   generation++;
   const current = opened;
   opened = null;
-  for (const control of current?.photoControls ?? []) control.dispose();
-  if (current) current.photoControls = new Set();
+  disposePhotoControls(current);
   current?.mesh.stop();
   current?.worker.stop();
   current?.close();
@@ -380,7 +384,14 @@ function renderChats() {
   byId("conversations").classList.toggle("thread-open", Boolean(chat));
   show("thread-placeholder", !chat);
   show("thread", Boolean(chat));
-  if (!chat) return;
+  if (!chat) {
+    disposePhotoControls(opened);
+    opened.mesh.select(null);
+    opened.timelineSignature = null;
+    opened.renderedGroup = null;
+    byId("messages").replaceChildren();
+    return;
+  }
   byId("peer").textContent = "@" + chat.peerName;
   show("reconfirm-chat", Boolean(chat.bindingConflict));
   show("compose", !chat.bindingConflict);
@@ -404,8 +415,8 @@ function renderChats() {
     rows.some((message) => message.id === previousFirst);
   opened.renderedGroup = selected;
   opened.timelineSignature = version;
-  for (const control of opened.photoControls ?? []) control.dispose();
-  opened.photoControls = new Set();
+  disposePhotoControls(opened);
+  opened.photoControls ??= new Set();
   messages.replaceChildren();
   for (const message of rows) {
     const row = element("li");
@@ -417,7 +428,7 @@ function renderChats() {
       const control = privatePhotoControl({
         name,
         open: () => current.mesh.openPhoto(group, message),
-        release: () => current.mesh.releasePhoto(group, message.id),
+        release: (url) => current.mesh.releasePhoto(url),
         onError: (error) => {
           if (opened === current) notice(errorMessage(error));
         },

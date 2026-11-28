@@ -11,7 +11,7 @@ export function privatePhotoControl({ name, open, release, onError }) {
   let disposed = false;
 
   const hide = () => {
-    if (url) release();
+    if (url) release(url);
     url = null;
     image?.remove();
     image = null;
@@ -29,7 +29,7 @@ export function privatePhotoControl({ name, open, release, onError }) {
     try {
       const result = await open();
       if (disposed) {
-        release();
+        release(result);
         return;
       }
       url = result;
