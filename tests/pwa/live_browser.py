@@ -374,7 +374,9 @@ def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
         preference.check()
         expect(alice.locator("#security-email-status")).to_have_text("Сохранено")
         panel.locator("summary").click()
-        panel.locator("summary").click()
+        with alice.expect_response(lambda r: r.url == API_ORIGIN + "/v1/users/me/security-email" and r.request.method == "GET"):
+            panel.locator("summary").click()
+        expect(alice.locator("#security-email-status")).to_have_text("")
         expect(preference).to_be_enabled()
         expect(preference).to_be_checked()
         alice.context.set_offline(True)
