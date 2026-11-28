@@ -96,3 +96,5 @@ jobs:
             .local/venv/bin/python tests/pwa/live_browser.py --browser "$browser"
           done
           .local/venv/bin/python tests/pwa/recovery_browser.py
+          .local/venv/bin/python tests/pwa/private_image_browser.py
+          .local/venv/bin/python tests/pwa/native_photo_browser.py
