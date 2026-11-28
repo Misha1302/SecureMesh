@@ -12,6 +12,12 @@ The criterion set before measurement is zero missing, unexpected or duplicate ID
 
 Use the standard checkout's netem lock and Compose project if running from another worktree. The host ports 5090, 15990 and 15991 are shared with other network trials. The default 20-message run covers this standalone outage. The combined interruption schedule, the 1000-message offline qualification and physical radio tests remain separate.
 
-## Observed result
+## Observed results
 
-Seed 7 with 10 messages per direction passed on implementation `4b2a73d`, which includes the active polling change `b274d89`. The minimum concurrent blackout was 60.81 s. PostgreSQL held six baseline records before restoration, while both senders retained seven offline messages. After restoration, the server and recipients accounted for all 20 unique IDs, with zero missing, duplicate or unexpected IDs. Recovery p50 was 14.61 s and p95/p99 were 15.51 s for the 14 queued messages. Both routes recorded dropped packets during the cutoff. The raw data includes the Dart source and executable library hashes. [Seed 7 evidence](evidence/native-netem-edge-outage-7-10.json)
+All three seeds passed with 10 messages per direction on implementation `4b2a73d`, which includes the active polling change `b274d89`. Source, executable and library hashes match across all three trials. Each cutoff dropped packets on both routes. PostgreSQL held six baseline rows before restoration and each sender retained seven offline messages. After restoration the server and recipients accounted for all 20 unique message IDs, with zero missing, duplicate or unexpected IDs in each trial.
+
+| Seed | Minimum concurrent blackout (s) | Recovery p50 (s) | Recovery p95 (s) | Recovery p99 (s) | Raw evidence |
+|---:|---:|---:|---:|---:|--- |
+| 7 | 60.81 | 14.61 | 15.51 | 15.51 | [JSON](evidence/native-netem-edge-outage-7-10.json) |
+| 19 | 60.41 | 6.63 | 10.11 | 10.11 | [JSON](evidence/native-netem-edge-outage-19-10.json) |
+| 41 | 60.48 | 10.08 | 13.88 | 13.88 | [JSON](evidence/native-netem-edge-outage-41-10.json) |
