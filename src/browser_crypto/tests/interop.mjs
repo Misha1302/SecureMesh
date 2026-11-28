@@ -78,6 +78,9 @@ try {
     assert.deepEqual(prepare(request), invite);
     const join = { ...invite.binding, op: "directory_join", signature: invite.signature };
     assert.throws(() => accept({ ...join, lease: randomUUID() }));
+    if (!senderIsBrowser) {
+      assert.throws(() => accept({ ...join, reference: alice.public_key }), /Welcome KeyPackage reference mismatch/);
+    }
     assert.equal(accept(join).epoch, 1);
     assert.equal(accept(join).already_joined, true);
 

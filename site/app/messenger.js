@@ -176,7 +176,9 @@ export function createMessenger(ctx) {
   }
 
   async function postAccept(id, accepted) {
-    const result = await ctx.api("/v1/crypto/keypackages", { payload: accepted.keypackage });
+    const result = await ctx.api("/v1/crypto/keypackages", {
+      payload: accepted.keypackage, invitationId: accepted.offeredFor,
+    });
     requireValue(result?.reference === accepted.reference, "format", "Invalid key package publication response");
     await ctx.api(`/v1/chat-requests/${id}/accept`, {});
     await ctx.update((draft) => { transport(draft).accepted[id].posted = true; });
@@ -194,7 +196,7 @@ export function createMessenger(ctx) {
         const accepted = transport(draft).accepted;
         requireValue(!accepted[id] || samePeer(accepted[id], peer),
           "changed-key", "The invitation sender changed");
-        accepted[id] ??= { ...peer, keypackage: result.keypackage, reference: result.reference, posted: false };
+        accepted[id] ??= { ...peer, offeredFor: id, keypackage: result.keypackage, reference: result.reference, posted: false };
       });
     }
     const pending = state().accepted[id];
@@ -262,7 +264,7 @@ export function createMessenger(ctx) {
     const group = uuid(welcome.group);
     const invitation = uuid(welcome.invitation);
     const accepted = state().accepted?.[invitation];
-    requireValue(accepted?.posted && accepted.peerDevice === welcome.sender && accepted.peerKey === welcome.senderKey &&
+    requireValue(accepted?.posted && accepted.reference === welcome.reference && accepted.peerDevice === welcome.sender && accepted.peerKey === welcome.senderKey &&
       welcome.recipient === await identity(), "invitation", "Welcome does not match the verified invitation");
     await pin(accepted, undefined, true);
     const { lease, sender, recipient, reference, signature } = welcome;
@@ -271,7 +273,7 @@ export function createMessenger(ctx) {
       group, invitation, lease, sender, recipient, reference, signature, welcome: welcome.welcome,
     }, (draft) => {
       const binding = transport(draft).accepted[invitation];
-      requireValue(!binding.joined || binding.joined === group,
+      requireValue(binding.reference === reference && (!binding.joined || binding.joined === group),
         "invitation", "This invitation already has a conversation");
       saveChat(draft, group, accepted, true);
       binding.joined = group;

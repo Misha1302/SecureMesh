@@ -14,7 +14,7 @@ cargo +1.100.0 build --locked --manifest-path src/crypto_core/Cargo.toml
 node src/browser_crypto/tests/interop.mjs
 ```
 
-The interoperability test loads the generated WebAssembly module, creates a disposable SQLCipher native profile, checks the v2 credential vector, verifies key packages with the native validator, exchanges signed MLS invitations and text in both directions, and applies a native rekey. It also checks pin replacement rejection, invitation tampering, envelope bindings, and replay rejection. A Node pass covers wasm and native wire interoperability. Verify Safari, IndexedDB and iPhone home-screen behavior on their respective runners.
+The interoperability test loads the generated WebAssembly module, creates a disposable SQLCipher native profile, checks the v2 credential vector, verifies key packages with the native validator, exchanges signed MLS invitations and text in both directions, and applies a native rekey. It also checks pin replacement rejection, invitation tampering, MLS Welcome recipient references, envelope bindings, and replay rejection. A new PWA invitation publishes a dedicated KeyPackage. Joining compares the signed reference against the reference saved with local consent and the actual recipient entry inside the MLS Welcome. Existing PWA conversations retain their previous state. A Node pass covers wasm and native wire interoperability. Verify Safari, IndexedDB and iPhone home-screen behavior on their respective runners.
 
 ## Caller contract
 

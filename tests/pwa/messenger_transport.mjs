@@ -49,6 +49,7 @@ function client(username) {
       // The real database stores the validated reference. The fixture receives
       // the WASM result separately below and checks the published package bytes.
       const published = packages.get(device);
+      assert.equal(invitations.get(data.invitationId)?.recipient, username);
       assert.equal(data.payload, published.keypackage);
       return { reference: published.reference };
     }
@@ -165,6 +166,7 @@ const accepted = (await a.refresh()).requests[0];
 const group = await a.establish(accepted, await fingerprint(bob.own.public_key));
 const welcome = (await b.refresh()).welcomes[0];
 await assert.rejects(b.join({ ...welcome, senderKey: bob.own.public_key }), { code: "invitation" });
+await assert.rejects(b.join({ ...welcome, reference: alice.own.public_key }), { code: "invitation" });
 assert.equal(await b.join(welcome), group);
 
 const first = await a.send(group, "first queue entry 🔐");

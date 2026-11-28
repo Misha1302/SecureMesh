@@ -162,6 +162,17 @@ fn roster(profile: &Profile, group: &MlsGroup) -> Result<Roster> {
 fn transcript(req: &Value, welcome: &[u8]) -> Result<Vec<u8>> {
     let reference = bytes(req, "reference", 32)?;
     ensure!(reference.len() == 32, "invalid package reference");
+    let MlsMessageBodyIn::Welcome(parsed) = MlsMessageIn::tls_deserialize_exact(welcome)?.extract()
+    else {
+        bail!("expected MLS Welcome");
+    };
+    let [secret] = parsed.secrets() else {
+        bail!("expected one Welcome recipient");
+    };
+    ensure!(
+        secret.new_member().as_slice() == reference,
+        "Welcome KeyPackage reference mismatch"
+    );
     Ok(format!(
         "SecureMesh/conversation-establish/v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n1",
         coordinate(req, "group")?,
