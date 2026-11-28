@@ -235,7 +235,13 @@ main:has(#conversations:not([hidden])) #title {
 #messages li.out { justify-self: end; background: var(--bubble); }
 #messages .private-photo-preview { display: block; max-width: min(100%, 36rem); max-height: 28rem; margin: .65rem 0; border-radius: .65rem; object-fit: contain; }
 #messages small { display: flex; gap: .45rem; align-items: baseline; justify-content: end; font-size: .8125rem; margin-top: .2rem; }
-#compose { margin: 0; border-top: 1px solid var(--line); }
+.message-actions { position: relative; display: flex; align-items: center; gap: .4rem; border-top: 1px solid var(--line); }
+.message-actions:has(#compose[hidden]) { display: none; }
+#compose { margin: 0; min-width: 0; flex: 1; }
+#photo-picker { margin: 0; }
+#photo-picker summary { padding: .7rem .5rem; cursor: pointer; color: var(--accent); }
+#send-photo { position: absolute; bottom: 100%; inset-inline-start: 0; z-index: 1; background: var(--card); border: 1px solid var(--line); padding: .85rem; margin: 0; width: min(100%, 24rem); }
+#send-photo input { max-width: 100%; }
 #compose textarea { flex: 1; min-width: 0; margin: 0; resize: vertical; max-height: 28dvh; }
 @media(max-width: 44rem) {
   #conversations { display: block; height: auto; border: 0; overflow: visible; margin: .5rem 0; }

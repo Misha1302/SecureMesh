@@ -396,8 +396,11 @@ function renderChats() {
   byId("peer").textContent = "@" + chat.peerName;
   show("reconfirm-chat", Boolean(chat.bindingConflict));
   show("compose", !chat.bindingConflict);
-  show("send-photo", !chat.bindingConflict && chat.active !== false);
-  if (opened.renderedGroup !== selected) byId("send-photo").reset();
+  show("photo-picker", !chat.bindingConflict && chat.active !== false);
+  if (opened.renderedGroup !== selected || chat.bindingConflict) {
+    byId("send-photo").reset();
+    byId("photo-picker").open = false;
+  }
   if (opened.renderedGroup !== selected) byId("reconfirm-chat").reset();
   const messages = byId("messages");
   const count = opened.visibleMessages ?? 100;
@@ -727,7 +730,10 @@ bind(byId("send-photo"), async () => {
   if (!current || !group || !file) return;
   await current.mesh.sendPhoto(group, file);
   if (opened !== current || selected !== group) return;
-  if (form.elements.photo.files[0] === file) form.reset();
+  if (form.elements.photo.files[0] === file) {
+    form.reset();
+    byId("photo-picker").open = false;
+  }
   renderChats();
 });
 function archiveValid(value) {

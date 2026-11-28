@@ -133,14 +133,19 @@
             <label>Прежний код устройства<input name="code" required autocomplete="off" spellcheck="false" /></label>
             <button>Проверить и возобновить отправку</button>
           </form>
-          <form id="compose">
-            <textarea aria-label="Сообщение" placeholder="Сообщение" name="text" required maxlength="4000" rows="2"></textarea>
-            <button>Отправить</button>
-          </form>
-          <form id="send-photo">
-            <label>Фото<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required /></label>
-            <button>Отправить фото</button>
-          </form>
+          <div class="message-actions">
+            <details id="photo-picker">
+              <summary aria-label="Прикрепить фото">Фото</summary>
+              <form id="send-photo">
+                <label>Выберите фото<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required /></label>
+                <button>Отправить фото</button>
+              </form>
+            </details>
+            <form id="compose">
+              <textarea aria-label="Сообщение" placeholder="Сообщение" name="text" required maxlength="4000" rows="2"></textarea>
+              <button>Отправить</button>
+            </form>
+          </div>
         </section>
       </section>
       <details id="security-email" hidden>

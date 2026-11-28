@@ -87,6 +87,7 @@ def exchange(root, origin, api_port, pin, engine):
         page.locator("#chat-list").get_by_role("button", name=re.compile(name)).click()
         page.get_by_role("button", name="Посмотреть фото").click()
         expect(preview).to_be_visible()
+        page.locator("#photo-picker summary").click()
         ours = page.locator("#send-photo")
         file = ours.locator("input")
         uploads, submissions = [], []
