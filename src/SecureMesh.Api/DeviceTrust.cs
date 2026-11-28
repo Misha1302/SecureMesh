@@ -22,7 +22,7 @@ public static class DeviceTrust
             var actor = await Sql.Authenticate(ctx, db, false);
             await using var c = await db.OpenConnectionAsync();
             await using var tx = await c.BeginTransactionAsync();
-            await LockAccount(c, actor.UserId);
+            await Sql.LockAuthenticatedProfileOwner(c, actor, requireTrusted: false, ctx.RequestAborted);
             byte[] key;
             await using (var cmd = Sql.Cmd(c, "SELECT public_key FROM devices WHERE id=$1 AND NOT trusted AND NOT revoked", actor.DeviceId))
                 key = await cmd.ExecuteScalarAsync() as byte[] ?? throw new ApiError(409, "DEVICE_NOT_PENDING");
@@ -51,7 +51,7 @@ public static class DeviceTrust
             var actor = await Sql.Authenticate(ctx, db, false);
             await using var c = await db.OpenConnectionAsync();
             await using var tx = await c.BeginTransactionAsync();
-            await LockAccount(c, actor.UserId);
+            await Sql.LockAuthenticatedProfileOwner(c, actor, requireTrusted: false, ctx.RequestAborted);
             byte[] payload, key;
             await using (var cmd = Sql.Cmd(c, """
                 SELECT e.payload,d.public_key FROM device_enrollments e JOIN devices d ON d.id=e.device_id
@@ -97,7 +97,7 @@ public static class DeviceTrust
             var actor = await Sql.Authenticate(ctx, db);
             await using var c = await db.OpenConnectionAsync();
             await using var tx = await c.BeginTransactionAsync();
-            await LockAccount(c, actor.UserId);
+            await Sql.LockAuthenticatedProfileOwner(c, actor, requireTrusted: true, ctx.RequestAborted);
             byte[] approverKey;
             await using (var cmd = Sql.Cmd(c, "SELECT public_key FROM devices WHERE id=$1 AND user_id=$2 AND trusted AND NOT revoked", actor.DeviceId, actor.UserId))
                 approverKey = await cmd.ExecuteScalarAsync() as byte[] ?? throw new ApiError(403, "APPROVER_NOT_TRUSTED");
@@ -126,7 +126,7 @@ public static class DeviceTrust
         {
             var actor=await Sql.Authenticate(ctx,db,false);
             await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
-            await LockAccount(c,actor.UserId);
+            await Sql.LockAuthenticatedProfileOwner(c, actor, requireTrusted: false, ctx.RequestAborted);
             byte[] grant,key;bool activated;
             await using(var cmd=Sql.Cmd(c,"""
                 SELECT e.grant_signature,d.public_key,e.activated_at IS NOT NULL
@@ -151,9 +151,4 @@ public static class DeviceTrust
         });
     }
 
-    private static async Task LockAccount(NpgsqlConnection c, Guid user)
-    {
-        await using var cmd = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", user);
-        await cmd.ExecuteScalarAsync();
-    }
 }

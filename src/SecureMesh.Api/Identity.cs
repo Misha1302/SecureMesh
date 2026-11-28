@@ -11,7 +11,7 @@ namespace SecureMesh;
 public sealed record Registration(string Username, string Email, string? Password = null, string? Credential = null, string? DisplayName = null);
 public sealed record Verification(string Token);
 public sealed record AccountRecoveryRequest(string Email);
-public sealed record AccountRecoveryCompletion(string Token, string? Password = null, string? Credential = null);
+public sealed record AccountRecoveryCompletion(string Token, string? Password = null, string? Credential = null, string? Username = null);
 public sealed record VerificationResend(string Username, string? Password = null, string? Credential = null);
 public sealed record Challenge(string Username, Guid DeviceId);
 public sealed record Login(string Username, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, string? ClientOs = null, string? Password = null, string? Credential = null, Guid? ExpectedUserId = null, string? ExpectedTrustState = null);
@@ -178,7 +178,8 @@ public static class Identity
             int version, CancellationToken cancellationToken)
         {
             var secret = Passwords.Input(version, input.Password, input.Credential);
-            if (secret is null || input.Token is null ||
+            if (secret is null || input.Token is null || input.Username is null ||
+                !Regex.IsMatch(input.Username, "^[a-z0-9_]{3,32}$") ||
                 !Regex.IsMatch(input.Token, "^[a-f0-9]{64}$") ||
                 (version == 1 && new StringInfo(secret).LengthInTextElements < 16))
                 throw new ApiError(400, "INVALID_RECOVERY");
@@ -189,10 +190,12 @@ public static class Identity
             await using (var lookup = db.CreateCommand("""
                 SELECT u.id,u.username,u.password_hash FROM users u
                 JOIN email_tokens t ON t.user_id=u.id
-                WHERE t.hash=$1 AND t.purpose='account_recovery' AND t.expires_at>statement_timestamp() AND u.verified
+                WHERE t.hash=$1 AND t.purpose='account_recovery' AND t.expires_at>statement_timestamp()
+                  AND u.verified AND u.username=$2
                 """))
             {
                 lookup.Parameters.AddWithValue(tokenHash);
+                lookup.Parameters.AddWithValue(input.Username);
                 await using var row = await lookup.ExecuteReaderAsync(cancellationToken);
                 if (!await row.ReadAsync(cancellationToken)) throw new ApiError(400, "INVALID_RECOVERY");
                 user = row.GetGuid(0);
@@ -228,7 +231,7 @@ public static class Identity
                 await revoke.ExecuteNonQueryAsync(cancellationToken);
             await using (var challenges = Sql.Cmd(c, "DELETE FROM auth_challenges WHERE username=$1", username))
                 await challenges.ExecuteNonQueryAsync(cancellationToken);
-            await using (var enrollments = Sql.Cmd(c, "DELETE FROM device_enrollments WHERE user_id=$1", user))
+            await using (var enrollments = Sql.Cmd(c, "DELETE FROM device_enrollments WHERE user_id=$1 AND activated_at IS NULL", user))
                 await enrollments.ExecuteNonQueryAsync(cancellationToken);
             await using (var tokens = Sql.Cmd(c, "DELETE FROM email_tokens WHERE user_id=$1", user))
                 await tokens.ExecuteNonQueryAsync(cancellationToken);
@@ -268,7 +271,7 @@ public static class Identity
             await using var tx=await c.BeginTransactionAsync();
             if (existingDeviceOnly && input.ExpectedUserId != user) throw new ApiError(403, "REAUTHENTICATION_MISMATCH");
             // Serialize device enrollment for the account; concurrent first-login cannot enroll hidden devices.
-            await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 AND username=$2 AND verified FOR UPDATE",user,input.Username))
+            await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 AND username=$2 AND verified AND password_hash=$3 FOR UPDATE",user,input.Username,phc))
                 if(await cmd.ExecuteScalarAsync() is null) throw new ApiError(401,"INVALID_CREDENTIALS");
             byte[] payload;
             await using(var cmd=Sql.Cmd(c,"DELETE FROM auth_challenges WHERE id=$1 AND username=$2 AND device_id=$3 AND expires_at>now() RETURNING payload",input.ChallengeId,input.Username,input.DeviceId))
@@ -307,7 +310,13 @@ public static class Identity
         {
             await using var c=await db.OpenConnectionAsync(); await using var tx=await c.BeginTransactionAsync();
             Guid id,device,family; bool used,revoked;
-            await using(var cmd=Sql.Cmd(c,"SELECT id,device_id,family,used,revoked FROM sessions WHERE refresh_hash=$1 AND refresh_expires_at>now() FOR UPDATE",Sql.Hash(input.Token)))
+            var refreshHash = Sql.Hash(input.Token);
+            Guid owner;
+            await using (var lookup = Sql.Cmd(c, "SELECT d.user_id FROM sessions s JOIN devices d ON d.id=s.device_id WHERE s.refresh_hash=$1", refreshHash))
+                owner = await lookup.ExecuteScalarAsync() as Guid? ?? throw new ApiError(401, "INVALID_REFRESH");
+            await using (var account = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", owner))
+                if (await account.ExecuteScalarAsync() is null) throw new ApiError(401, "INVALID_REFRESH");
+            await using(var cmd=Sql.Cmd(c,"SELECT id,device_id,family,used,revoked FROM sessions WHERE refresh_hash=$1 AND refresh_expires_at>now() FOR UPDATE",refreshHash))
             await using(var r=await cmd.ExecuteReaderAsync())
             {
                 if(!await r.ReadAsync()) throw new ApiError(401,"INVALID_REFRESH");
@@ -318,7 +327,7 @@ public static class Identity
                 await using var revoke=Sql.Cmd(c,"UPDATE sessions SET revoked=true WHERE family=$1",family); await revoke.ExecuteNonQueryAsync();
                 await tx.CommitAsync(); throw new ApiError(401,"REFRESH_REUSE");
             }
-            await using(var cmd=Sql.Cmd(c,"SELECT id FROM devices WHERE id=$1 AND NOT revoked FOR UPDATE",device))
+            await using(var cmd=Sql.Cmd(c,"SELECT id FROM devices WHERE id=$1 AND user_id=$2 AND NOT revoked FOR UPDATE",device,owner))
                 if(await cmd.ExecuteScalarAsync() is null) throw new ApiError(401,"DEVICE_REVOKED");
             await using(var cmd=Sql.Cmd(c,"""
                 UPDATE sessions SET used=true WHERE id=$1 AND refresh_expires_at>statement_timestamp()
