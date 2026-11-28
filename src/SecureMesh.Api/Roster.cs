@@ -134,6 +134,7 @@ public static class Roster
                 await tx.CommitAsync();return Results.Ok(new{durable=true,seq=t.Seq,digest=t.Digest,alreadySaved=true});
             }
         }
+        await ConversationMessageBlocks.RequireOpen(c,t.Group,ctx.RequestAborted);
         if(epoch!=t.Epoch || last!=t.Seq-1) throw new ApiError(409,"ROSTER_POSITION_CONFLICT");
         if(t.Action=="add")
         {

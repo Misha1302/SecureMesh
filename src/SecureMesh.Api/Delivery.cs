@@ -46,6 +46,7 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         }
         if(existing is not null) {await tx.CommitAsync(ct); return existing;}
         if(removed) throw new ApiError(409,"CONVERSATION_READ_ONLY");
+        await ConversationMessageBlocks.RequireOpen(c,input.ConversationId,ct);
         // Revocation does not remove an MLS leaf. Serialize acceptance with device
         // revocation so no new envelope can be saved for a known stale roster.
         await using(var cmd=Sql.Cmd(c,"""

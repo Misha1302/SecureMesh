@@ -205,7 +205,20 @@ assert.equal(bob.ctx.state().messenger.chats[group].cursor, "");
 assert.deepEqual(bob.ctx.state().messenger.chats[group].messages, []);
 wrongSender = false;
 const second = await a.send(group, "second queue entry");
+const blockedRetry = structuredClone(alice.ctx.state().messenger.outbox[second]);
+const apiBeforeBlock = alice.ctx.api;
+alice.ctx.api = (path, ...args) => {
+  if (path === "/v1/messages")
+    throw Object.assign(new Error("delivery paused"), { code: "CONVERSATION_MESSAGES_BLOCKED", status: 409 });
+  return apiBeforeBlock(path, ...args);
+};
+await assert.rejects(reopened.tick(), { code: "CONVERSATION_MESSAGES_BLOCKED" });
+assert.deepEqual(alice.ctx.state().messenger.outbox[second], blockedRetry);
+assert.equal(alice.ctx.state().messenger.chats[group].messages.at(-1).status, "queued");
+alice.ctx.api = apiBeforeBlock;
 await reopened.tick();
+assert.equal(sendCalls.at(-1).ciphertext, blockedRetry.ciphertext);
+assert.equal(sendCalls.at(-1).clientMessageId, second);
 bob.failOn(second);
 await assert.rejects(b.tick(), /vault write failure/);
 assert.equal(bob.ctx.state().messenger.chats[group].cursor, "");

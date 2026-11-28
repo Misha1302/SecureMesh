@@ -74,6 +74,7 @@ app.MapSessionInactivity();
 app.MapAccountRemoval();
 app.MapProfilePhotos();
 app.MapProfileText();
+app.MapConversationMessageBlocks();
 app.MapPublicChannels();
 app.MapPrivateBlobs();
 app.MapDeviceTrust();

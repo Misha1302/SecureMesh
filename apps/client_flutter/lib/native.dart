@@ -1109,6 +1109,13 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         );
       } else if (failure is ApiFailure && failure.status == 401) {
         requireSignIn();
+      } else if (failure is ApiFailure &&
+          failure.code == 'CONVERSATION_MESSAGES_BLOCKED') {
+        connectionState = 'server';
+        error = tr(
+          'Доставка сообщений в этом чате приостановлена. Очередь сохранена.',
+          'Message delivery in this chat is paused. Your queue is saved.',
+        );
       } else if (failure is ApiFailure) {
         connectionState = 'server';
         error = tr(

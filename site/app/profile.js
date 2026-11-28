@@ -34,6 +34,7 @@ const codes = {
   conflict: "Профиль изменился в другой вкладке. Откройте его заново.",
   verification: "Код не совпал. Сверьте отпечаток по независимому каналу.",
   "changed-key": "Ключ собеседника изменился. Отправка остановлена.",
+  CONVERSATION_MESSAGES_BLOCKED: "Доставка сообщений в этом чате приостановлена. Очередь сохранена.",
   "handoff-unavailable": "Браузер не может защитить отправку между вкладками.",
   NETWORK_UNAVAILABLE:
     "Нет соединения с совместимым сервером. Проверьте сеть и доступность API.",
@@ -241,6 +242,9 @@ function clearPeerProfile() {
   show("peer-profile", false);
   clearPeerFields();
   byId("peer-invitations").open = false;
+  byId("peer-messages").open = false;
+  byId("dm-block").disabled = true;
+  byId("dm-block-note").textContent = "";
   byId("peer-block").disabled = true;
   byId("peer-block").textContent = "Проверить блокировку";
   byId("peer-block-note").textContent = "";
@@ -369,6 +373,60 @@ byId("peer-block").onclick = async () => {
     return;
   }
   await loadPeerProfile(view);
+};
+
+const messageBlockWrites = new Map();
+
+async function messageBlockControl(view, change = false) {
+  const panel = byId("peer-messages"), button = byId("dm-block"), note = byId("dm-block-note");
+  const active = () => panel.open && activePeerProfile(view) && view.messageBlockRequest === token;
+  const token = view.messageBlockRequest = Symbol();
+  const route = `/v1/conversations/${view.group}/message-block`;
+  const method = change ? (view.messageBlockOwn ? "DELETE" : "PUT") : "GET";
+  const key = `${view.blockKey}:${view.group}`;
+  view.messageBlockOwn = undefined;
+  button.disabled = true;
+  note.textContent = change ? "Сохранение…" : "Проверка…";
+  try {
+    await messageBlockWrites.get(key)?.catch(() => {});
+    if (!active()) return;
+    const request = view.current.account.api(route, undefined, method);
+    if (change) messageBlockWrites.set(key, request);
+    let result;
+    try {
+      result = await request;
+    } finally {
+      if (messageBlockWrites.get(key) === request) messageBlockWrites.delete(key);
+    }
+    if (!active()) return;
+    if (typeof result?.blockedByYou !== "boolean" || typeof result.paused !== "boolean")
+      throw failure("format");
+    view.messageBlockOwn = result.blockedByYou;
+    view.current.pausedConversations ??= new Set();
+    if (result.blockedByYou) view.current.pausedConversations.add(view.group);
+    else view.current.pausedConversations.delete(view.group);
+    button.textContent = result.blockedByYou ? "Снять блокировку сообщений" : "Заблокировать сообщения";
+    note.textContent = result.paused ? "Доставка сообщений в этом чате приостановлена." : "Доставка сообщений разрешена.";
+    renderChats();
+    if (change && !result.paused) view.current.mesh.tick().catch(() => {});
+  } catch {
+    if (!active()) return;
+    button.textContent = "Повторить проверку";
+    note.textContent = "Не удалось подтвердить состояние блокировки.";
+  } finally {
+    if (active()) button.disabled = false;
+  }
+}
+byId("peer-messages").ontoggle = () => {
+  const view = peerProfileView;
+  if (!view) return;
+  if (byId("peer-messages").open) void messageBlockControl(view);
+  else view.messageBlockRequest = undefined;
+};
+byId("dm-block").onclick = () => {
+  const view = peerProfileView;
+  if (view && activePeerProfile(view) && !byId("dm-block").disabled)
+    void messageBlockControl(view, view.messageBlockOwn !== undefined);
 };
 
 function lock() {
@@ -778,8 +836,9 @@ function renderChats() {
   }
   byId("peer").textContent = "@" + chat.peerName;
   show("reconfirm-chat", Boolean(chat.bindingConflict));
-  show("compose", !chat.bindingConflict);
-  show("photo-picker", !chat.bindingConflict && chat.active !== false);
+  const paused = opened.pausedConversations?.has(selected);
+  show("compose", !chat.bindingConflict && !paused);
+  show("photo-picker", !chat.bindingConflict && !paused && chat.active !== false);
   if (opened.renderedGroup !== selected || chat.bindingConflict) {
     byId("send-photo").reset();
     byId("photo-picker").open = false;
