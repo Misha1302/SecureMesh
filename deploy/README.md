@@ -67,3 +67,21 @@ The local integration test renders this template with a loopback listener, a pri
 ```
 
 The test checks native and PWA-sized PUT/GET round trips, rejection one byte above the cap, standard and part request limits, rejection of URL aliases at the elevated size, browser preflight and WSS HELLO/PING.
+
+### Channel pin rollback
+
+Apply migration `202611280113_ChannelPinCleanup` before allowing a binary
+built before pin support to write to a database that has pins. Keep the
+schema and its triggers in place when rolling back the API binary. PostgreSQL
+clears a pin and advances its revision when either release deletes the pinned
+publication, so a later publish can purge the expired tombstone.
+
+Run the mixed-version test on the local PostgreSQL fixture using complete build
+outputs from a release before migration 112 and a release with migration 112
+but without 113. Build the current API first.
+
+```sh
+.local/venv/bin/python tests/integration/channel_pin_rollout.py \
+  --pre-pin /path/to/pre-pin/SecureMesh.Api.dll \
+  --pin-only /path/to/pin-only/SecureMesh.Api.dll
+```

@@ -77,6 +77,7 @@ def main():
                 '202611280110_ChannelComments',
                 '202611280111_ProfileTextVisibility',
                 '202611280112_ChannelPin',
+                '202611280113_ChannelPinCleanup',
             ]
             assert result.strip().splitlines() == expected
             print(f'PASS: {len(expected)} EF migrations on a fresh PostgreSQL database; idempotent restart preserves trust and device metadata.')
