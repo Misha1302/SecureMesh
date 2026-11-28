@@ -38,6 +38,7 @@ Future<void> main(List<String> args) async {
       count = fixture['count'] as int,
       seed = fixture['seed'] as int;
   final sent = <String, Map<String, dynamic>>{}, received = <String, double>{};
+  final expectedTexts = <String, String>{};
   final clock = Stopwatch();
   double now() => clock.elapsedMicroseconds / 1000000;
   var stop = false;
@@ -126,7 +127,7 @@ Future<void> main(List<String> args) async {
         }),
       );
     });
-    final interval = fixture['profile'] == 'gprs' ? 1000 : 1500;
+    final interval = fixture['profile'] == 'severe' ? 1500 : 1000;
     Future<void> offer(int index) async {
       final rng = Random(seed + index),
           alphabet = 'abcПривет🌍'.runes.map(String.fromCharCode).toList();
@@ -140,6 +141,7 @@ Future<void> main(List<String> args) async {
           characters,
           (_) => alphabet[rng.nextInt(alphabet.length)],
         ).join();
+        expectedTexts[id] = text;
         sent[id] = {
           'id': id,
           'sender': (fixture['devices'] as List)[index]['id'],
@@ -176,7 +178,12 @@ Future<void> main(List<String> args) async {
           }
           for (final event in history) {
             final id = event['id'] as String;
-            if (!sent.containsKey(id)) throw StateError('UNEXPECTED_MESSAGE');
+            final expected = sent[id];
+            if (expected == null) throw StateError('UNEXPECTED_MESSAGE');
+            if (expected['sender'] != fixture['devices'][1 - index]['id'] ||
+                event['text'] != expectedTexts[id]) {
+              throw StateError('RECIPIENT_OR_CONTENT_MISMATCH');
+            }
             received.putIfAbsent(id, now);
           }
         } on ApiFailure catch (e) {
@@ -266,6 +273,7 @@ Future<void> main(List<String> args) async {
       'duplicates': 0,
       'missing_ids': 0,
       'elapsed_seconds': now(),
+      'client_process_peak_rss_bytes': ProcessInfo.maxRss,
       'retries': retries,
       'recent_errors': errors,
       'https_requests': httpsRequests,
@@ -282,8 +290,10 @@ Future<void> main(List<String> args) async {
       '${const JsonEncoder.withIndent('  ').convert(result)}\n',
     );
     stdout.writeln(jsonEncode({...result}..remove('records')));
-    if (fixture['profile'] == 'gprs' && result['delivery_p95'] as double > 15) {
-      throw StateError('GPRS_P95_EXCEEDED_15_SECONDS');
+    const limits = {'gprs': 15, '3g': 8, '4g': 5, '5g': 5};
+    final limit = limits[fixture['profile']];
+    if (limit != null && (result['delivery_p95'] as double) > limit) {
+      throw StateError('DELIVERY_P95_EXCEEDED_${limit}_SECONDS');
     }
   } finally {
     reporting?.cancel();
