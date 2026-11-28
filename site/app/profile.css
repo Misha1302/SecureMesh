@@ -154,9 +154,6 @@ li.out {
 small {
   display: block;
 }
-#chat-list button {
-  margin: 0.25rem;
-}
 :focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
@@ -187,8 +184,10 @@ main:has(#conversations:not([hidden])) #title {
 }
 #chat-sidebar .bar h2, .thread-header h2 { margin: 0; }
 #chat-sidebar .bar { margin-bottom: .6rem; }
-#chat-list button {
+.chat-list-row { display: flex; align-items: center; gap: .25rem; }
+#chat-list button[data-chat] {
   width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   text-align: start;
@@ -200,6 +199,11 @@ main:has(#conversations:not([hidden])) #title {
   color: var(--text);
 }
 #chat-list button[aria-current] { background: var(--bubble); }
+.chat-mute { flex-shrink: 0; margin: 0; padding-inline: .55rem; background: transparent; }
+.chat-mute:focus-visible { outline-offset: -3px; }
+.chat-mute[aria-pressed="true"] { background: var(--bubble); color: var(--text); }
+.chat-mute[aria-disabled="true"] { opacity: .6; }
+#chat-notification-status:empty { display: none; }
 .chat-avatar {
   display: grid;
   place-items: center;

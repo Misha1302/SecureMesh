@@ -106,6 +106,12 @@
         <aside id="chat-sidebar" aria-label="Список чатов">
           <div class="bar"><h2>Чаты</h2><button id="refresh">Обновить</button></div>
           <div id="chat-list"></div>
+          <details id="chat-notifications">
+            <summary>Уведомления браузера</summary>
+            <p>О новых сообщениях в других чатах, пока профиль разблокирован. Имя собеседника и текст сообщения скрыты.</p>
+            <button type="button" id="chat-notification-permission" hidden>Разрешить уведомления</button>
+            <p id="chat-notification-status" role="status"></p>
+          </details>
           <form id="invite">
             <label>Новый диалог<input name="peer" required placeholder="@username"
                 autocapitalize="none" spellcheck="false" /></label>

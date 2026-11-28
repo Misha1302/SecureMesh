@@ -95,7 +95,11 @@ function rpc() {
   };
 }
 function attach(handle, worker) {
-  const instance = { handle, worker };
+  const instance = {
+    handle, worker,
+    received: new Map(Object.values(handle.state.messenger?.chats ?? {}).map(chat => [chat.id, chat.receivedCount ?? 0])),
+    muteWrites: new Set(),
+  };
   opened = instance;
   let tail = Promise.resolve();
   let timer;
@@ -205,6 +209,10 @@ function attach(handle, worker) {
   instance.markRead = (group, count) => change(draft => {
     const chat = draft.messenger.chats[group];
     if (chat) chat.readCount = Math.max(chat.readCount ?? 0, Math.min(count, chat.receivedCount ?? 0));
+  });
+  instance.setMuted = (group, muted) => change(draft => {
+    const chat = draft.messenger?.chats[group];
+    if (chat) chat.notificationsMuted = muted;
   });
   instance.account = createAccount(ctx);
   instance.mesh = createMessenger({
@@ -438,6 +446,7 @@ function lock() {
   clearPeerProfile();
   const current = opened;
   opened = null;
+  clearChatNotifications(current);
   disposePhotoControls(current);
   stopWatchingUnread();
   current?.mesh.stop();
@@ -670,6 +679,7 @@ function layout() {
     clearProfileText();
     clearPeerProfile();
     clearChatSearch();
+    clearChatNotifications(opened);
   }
   show("security-email", trusted);
   if (!trusted) {
@@ -703,6 +713,79 @@ function element(tag, text) {
   return node;
 }
 const chatClock = new Intl.DateTimeFormat("ru", {hour: "2-digit", minute: "2-digit"});
+const notificationTag = "securemesh-incoming";
+let notificationTail = Promise.resolve();
+
+function notificationPermission() {
+  if (typeof globalThis.Notification?.requestPermission === "function" && navigator.serviceWorker) {
+    return Notification.permission;
+  }
+}
+
+function renderNotificationPermission() {
+  const permission = notificationPermission();
+  show("chat-notification-permission", permission === "default");
+  byId("chat-notification-status").textContent = {
+    granted: "Уведомления разрешены.",
+    denied: "Уведомления заблокированы в настройках браузера.",
+    default: "",
+  }[permission] ?? "Этот браузер не поддерживает уведомления приложения.";
+}
+
+byId("chat-notifications").ontoggle = () => {
+  if (opened && byId("chat-notifications").open) renderNotificationPermission();
+};
+byId("chat-notification-permission").onclick = async () => {
+  const current = opened;
+  if (!current || notificationPermission() !== "default") return;
+  const button = byId("chat-notification-permission");
+  button.disabled = true;
+  try {
+    await Notification.requestPermission();
+  } catch {
+    // Permission prompts may be unavailable in the browser's current window.
+  } finally {
+    button.disabled = false;
+  }
+  if (opened === current && !byId("conversations").hidden) {
+    renderNotificationPermission();
+    if (button.hidden) byId("chat-notifications").querySelector("summary").focus();
+  }
+};
+
+function clearChatNotifications(current) {
+  byId("chat-notifications").open = false;
+  show("chat-notification-permission", false);
+  byId("chat-notification-status").textContent = "";
+  if (!current?.hasBrowserNotice) return;
+  current.hasBrowserNotice = false;
+  notificationTail = notificationTail.then(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    for (const notice of await registration?.getNotifications({ tag: notificationTag }) ?? []) notice.close();
+  }).catch(() => {});
+}
+
+function notifyNewMessages(current, chats) {
+  const arrivals = [];
+  for (const { id, receivedCount = 0, readCount = 0, notificationsMuted } of Object.values(chats)) {
+    const previous = current.received.get(id) ?? 0;
+    current.received.set(id, receivedCount);
+    if (receivedCount > Math.max(previous, readCount) && id !== selected && notificationsMuted !== true) arrivals.push(id);
+  }
+  if (!arrivals.length || document.hidden || notificationPermission() !== "granted") return;
+  current.hasBrowserNotice = true;
+  notificationTail = notificationTail.then(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (opened !== current || document.hidden || byId("conversations").hidden || !registration?.active) return;
+    const chats = current.handle.state.messenger?.chats;
+    if (!arrivals.some(id => {
+      const chat = chats?.[id];
+      return id !== selected && chat && chat.notificationsMuted !== true && (chat.receivedCount ?? 0) > (chat.readCount ?? 0);
+    })) return;
+    await registration.showNotification("SecureMesh", { body: "Новое сообщение", tag: notificationTag, renotify: true });
+  }).catch(() => {});
+}
+
 let unreadWatch;
 function stopWatchingUnread() {
   unreadWatch?.observer.disconnect();
@@ -831,6 +914,7 @@ function centerSearchMatch(timeline, row) {
 
 function renderChats() {
   const chats = opened?.handle.state.messenger?.chats ?? {};
+  notifyNewMessages(opened, chats);
   const list = byId("chat-list");
   const identities = Object.values(chats).map(({ id, peerName }) => [
     id,
@@ -841,6 +925,8 @@ function renderChats() {
     opened.listSignature = signature;
     list.replaceChildren();
     for (const [id, peerName] of identities) {
+      const row = element("div");
+      row.className = "chat-list-row";
       const btn = element("button");
       const avatar = element("span", peerName.slice(0, 1).toUpperCase());
       avatar.className = "chat-avatar";
@@ -849,7 +935,9 @@ function renderChats() {
       body.className = "chat-row-text";
       const preview = element("span");
       preview.className = "chat-preview";
-      body.append(element("strong", "@" + peerName), preview);
+      const label = element("strong", "@" + peerName);
+      label.id = `chat-label-${id}`;
+      body.append(label, preview);
       const unread = element("span");
       unread.className = "chat-unread";
       unread.hidden = true;
@@ -866,13 +954,36 @@ function renderChats() {
         renderChats();
         if (window.matchMedia("(max-width: 44rem)").matches) byId("peer").focus();
       };
-      list.append(btn);
+      const mute = element("button", "Без звука");
+      mute.type = "button";
+      mute.className = "chat-mute";
+      mute.setAttribute("aria-describedby", label.id);
+      mute.onclick = async () => {
+        const current = opened;
+        const chat = current?.handle.state.messenger?.chats[id];
+        if (!chat || current.muteWrites.has(id)) return;
+        current.muteWrites.add(id);
+        mute.setAttribute("aria-disabled", "true");
+        try {
+          await current.setMuted(id, chat.notificationsMuted !== true);
+        } catch (error) {
+          if (opened === current) notice(errorMessage(error));
+        } finally {
+          current.muteWrites.delete(id);
+          if (opened === current) renderChats();
+        }
+      };
+      row.append(btn, mute);
+      list.append(row);
     }
     if (!identities.length)
       list.textContent = "Здесь появятся проверенные диалоги.";
   }
   for (const button of list.querySelectorAll("button[data-chat]")) {
     const id = button.dataset.chat;
+    const mute = button.nextElementSibling;
+    mute.setAttribute("aria-pressed", String(chats[id].notificationsMuted === true));
+    mute.setAttribute("aria-disabled", String(opened.muteWrites.has(id)));
     const unread = button.querySelector(".chat-unread");
     const count = (chats[id].receivedCount ?? 0) - (chats[id].readCount ?? 0);
     unread.hidden = count <= 0;
