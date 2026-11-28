@@ -222,13 +222,9 @@ function disposePhotoControls(current) {
 }
 
 let peerProfileView;
+const peerBlockWrites = new Map();
 
-function clearPeerProfile() {
-  peerProfileView = undefined;
-  const button = byId("peer-profile-open");
-  button.textContent = "Анкета собеседника";
-  button.setAttribute("aria-expanded", "false");
-  show("peer-profile", false);
+function clearPeerFields() {
   byId("peer-profile-note").textContent = "";
   for (const id of ["peer-profile-status", "peer-profile-bio"]) {
     byId(id).textContent = "";
@@ -236,18 +232,30 @@ function clearPeerProfile() {
   }
 }
 
+function clearPeerProfile() {
+  peerProfileView = undefined;
+  const button = byId("peer-profile-open");
+  button.textContent = "Анкета собеседника";
+  button.setAttribute("aria-expanded", "false");
+  show("peer-profile", false);
+  clearPeerFields();
+  byId("peer-block-note").textContent = "";
+}
+
 function peerProfileContext() {
   const state = opened?.handle.state;
   if (!selected || !state?.session || state.session.refreshPending ||
       !state.enrollmentVerified || state.trustState !== "DEVICE_TRUSTED" ||
       !opened.mesh.canViewPeer(selected)) return;
-  const { peerDevice, peerKey } = state.messenger.chats[selected];
-  return { current: opened, group: selected, peerDevice, peerKey };
+  const { peerDevice, peerKey, peerName } = state.messenger.chats[selected];
+  return { current: opened, group: selected, peerDevice, peerKey, peerName,
+    blockKey: `${state.userId}:${peerName}` };
 }
 
 function samePeerProfile(view, context) {
   return view && context && view.current === context.current && view.group === context.group &&
-    view.peerDevice === context.peerDevice && view.peerKey === context.peerKey;
+    view.peerDevice === context.peerDevice && view.peerKey === context.peerKey &&
+    view.peerName === context.peerName;
 }
 
 byId("peer-profile-open").onclick = async () => {
@@ -262,11 +270,40 @@ byId("peer-profile-open").onclick = async () => {
   button.textContent = "Закрыть анкету";
   button.setAttribute("aria-expanded", "true");
   show("peer-profile", true);
+  await loadPeerProfile(view);
+};
+
+function activePeerProfile(view) {
+  return peerProfileView === view && !document.hidden && samePeerProfile(view, peerProfileContext());
+}
+
+async function loadPeerProfile(view) {
+  const read = view.read = Symbol();
+  const active = () => activePeerProfile(view) && view.read === read;
+  const button = byId("peer-block");
   const note = byId("peer-profile-note");
+  const blockNote = byId("peer-block-note");
+  clearPeerFields();
+  blockNote.textContent = "";
+  button.textContent = "Проверка блокировки…";
+  button.disabled = true;
+  view.blocked = undefined;
   note.textContent = "Загрузка…";
-  const active = () => peerProfileView === view && !document.hidden &&
-    samePeerProfile(view, peerProfileContext());
   try {
+    // Reopening the same contact waits for any explicit preceding mutation.
+    await peerBlockWrites.get(view.blockKey)?.catch(() => {});
+    if (!active()) return;
+    const blocks = await view.current.account.api("/v1/contact-blocks");
+    if (!active()) return;
+    if (!Array.isArray(blocks?.items) || !blocks.items.every(name => typeof name === "string"))
+      throw failure("format");
+    view.blocked = blocks.items.includes(view.peerName);
+    button.textContent = view.blocked ? "Разблокировать" : "Заблокировать приглашения";
+    button.disabled = false;
+    if (view.blocked) {
+      note.textContent = "Нет доступных сведений.";
+      return;
+    }
     const result = await view.current.account.api(
       `/v1/conversations/${view.group}/profile-text/${view.peerDevice}`,
     );
@@ -283,8 +320,46 @@ byId("peer-profile-open").onclick = async () => {
     }
     note.textContent = result.status || result.bio ? "" : "Нет доступных сведений.";
   } catch {
-    if (active()) note.textContent = "Анкета недоступна.";
+    if (!active()) return;
+    note.textContent = "Анкета недоступна.";
+    if (view.blocked === undefined) button.textContent = "Повторить проверку";
+    button.disabled = false;
   }
+}
+
+byId("peer-block").onclick = async () => {
+  const view = peerProfileView;
+  if (!view || !activePeerProfile(view)) return;
+  const button = byId("peer-block");
+  if (button.disabled) return;
+  if (view.blocked === undefined) {
+    await loadPeerProfile(view);
+    return;
+  }
+  const method = view.blocked ? "DELETE" : "PUT";
+  view.read = undefined;
+  clearPeerFields();
+  button.disabled = true;
+  byId("peer-block-note").textContent = "Сохранение…";
+  const request = view.current.account.api(`/v1/contact-blocks/${encodeURIComponent(view.peerName)}`, undefined, method);
+  peerBlockWrites.set(view.blockKey, request);
+  let failed = false;
+  try {
+    await request;
+  } catch {
+    failed = true;
+  } finally {
+    if (peerBlockWrites.get(view.blockKey) === request) peerBlockWrites.delete(view.blockKey);
+  }
+  if (!activePeerProfile(view)) return;
+  if (failed) {
+    view.blocked = undefined;
+    button.textContent = "Повторить проверку";
+    button.disabled = false;
+    byId("peer-block-note").textContent = "Не удалось подтвердить изменение. Проверьте состояние перед повтором.";
+    return;
+  }
+  await loadPeerProfile(view);
 };
 
 function lock() {
