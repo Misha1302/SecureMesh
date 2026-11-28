@@ -13,6 +13,7 @@ import 'session.dart';
 import 'session_inactivity.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
+import 'chat_background.dart';
 import 'conversation_composer.dart';
 import 'conversation_timeline.dart';
 import 'attachment_transfer.dart';
@@ -825,6 +826,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     NotificationPreferences Function(NotificationPreferences)?
     updateNotificationPolicy,
     bool? backgroundLockPreference,
+    ({String? group, bool dark, String? color})? wallpaper,
   }) {
     final epoch = generation;
     final write = profileWrites.then((_) async {
@@ -844,6 +846,16 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ])
                 key: profile![key],
             };
+      if (wallpaper != null) {
+        updated['chatBackgrounds'] = updateChatBackground(
+          profile,
+          wallpaper.group,
+          wallpaper.dark,
+          wallpaper.color,
+        );
+      } else if (profile!.containsKey('chatBackgrounds')) {
+        updated['chatBackgrounds'] = profile!['chatBackgrounds'];
+      }
       // Preserve a newer privacy choice across concurrent profile/session writes.
       if (updateNotificationPolicy != null) {
         updated[NotificationPreferences.key] = updateNotificationPolicy(
@@ -1401,17 +1413,14 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       if (context.mounted) markConversationSeen(context);
     });
     final scheme = Theme.of(context).colorScheme;
-    final background = switch (profile?['chatBackground']) {
-      'blue' => Color.alphaBlend(
-        scheme.primary.withValues(alpha: .085),
-        scheme.surface,
+    final background = chatBackgroundColor(
+      scheme,
+      chatBackground(
+        profile,
+        profile?['group'] as String?,
+        scheme.brightness == Brightness.dark,
       ),
-      'mint' => Color.alphaBlend(
-        const Color(0xff439779).withValues(alpha: .13),
-        scheme.surface,
-      ),
-      _ => scheme.surface,
-    };
+    );
     final factor = switch (profile?['chatTextSize']) {
       'larger' => 1.15,
       'largest' => 1.3,
@@ -3167,24 +3176,26 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ],
             ),
           ),
-          ListTile(
-            title: Text(tr('Фон переписки', 'Chat background')),
-            subtitle: Wrap(
-              spacing: 8,
-              children: [
-                for (final opt in [
-                  ('default', tr('Обычный', 'Default')),
-                  ('blue', tr('Голубой', 'Blue')),
-                  ('mint', tr('Мятный', 'Mint')),
-                ])
-                  ChoiceChip(
-                    label: Text(opt.$2),
-                    selected:
-                        (profile?['chatBackground'] ?? 'default') == opt.$1,
-                    onSelected: (_) => setChatStyle('chatBackground', opt.$1),
-                  ),
-              ],
-            ),
+          ChatBackgroundSettings(
+            profile: profile,
+            group: profile?['group'] as String?,
+            name: profile?['peerName'] as String?,
+            tr: tr,
+            save: (group, dark, color) async {
+              final epoch = generation;
+              try {
+                await persistProfile(
+                  {},
+                  removedFields: {},
+                  wallpaper: (group: group, dark: dark, color: color),
+                );
+                if (mounted && epoch == generation) setState(() {});
+              } catch (_) {
+                if (mounted && epoch == generation) {
+                  setState(() => appearanceSaveFailed = true);
+                }
+              }
+            },
           ),
           if (appearanceSaveFailed) saveError,
         ],
