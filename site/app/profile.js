@@ -623,6 +623,7 @@ function clearChatSearch() {
 function selectHistoryMatch(state, messages, index) {
   state.index = index;
   state.id = messages[index]?.id;
+  state.direction = messages[index]?.direction;
   state.length = undefined;
   state.center = index >= 0;
 }
@@ -630,9 +631,11 @@ function selectHistoryMatch(state, messages, index) {
 function updateChatSearch(messages) {
   const state = chatSearch;
   if (!state || !state.query) return;
-  // Delivery normally appends. Re-anchor by ID if the current row moved.
-  if (state.id && (messages[state.index]?.id !== state.id || !matchesHistory(messages[state.index], state.query))) {
-    const index = messages.findIndex(message => message.id === state.id && matchesHistory(message, state.query));
+  // Message identifiers are unique per sender in this two-device conversation.
+  const sameMatch = message => message?.id === state.id && message.direction === state.direction &&
+    matchesHistory(message, state.query);
+  if (state.id && !sameMatch(messages[state.index])) {
+    const index = messages.findIndex(sameMatch);
     selectHistoryMatch(state, messages, index >= 0 ? index : findHistory(messages, state.query, messages.length - 1, -1));
   } else if (!state.id && state.length !== messages.length) {
     selectHistoryMatch(state, messages, findHistory(messages, state.query, messages.length - 1, -1));
@@ -688,6 +691,13 @@ for (const direction of ["older", "newer"]) {
     selectHistoryMatch(state, messages, state[direction]);
     renderChats();
   };
+}
+
+function centerSearchMatch(timeline, row) {
+  const bounds = row.getBoundingClientRect();
+  timeline.scrollTop += bounds.top - timeline.getBoundingClientRect().top -
+    (timeline.clientHeight - bounds.height) / 2;
+  chatSearch.center = false;
 }
 
 function renderChats() {
@@ -780,19 +790,22 @@ function renderChats() {
   updateChatSearch(chat.messages);
   const match = chatSearch?.id;
   show("earlier", !match && chat.messages.length > count);
-  const rows = match
-    ? chat.messages.slice(...historyPage(chat.messages.length, chatSearch.index))
-    : chat.messages.slice(-count);
+  const [start, end] = match ? historyPage(chat.messages.length, chatSearch.index) :
+    [Math.max(0, chat.messages.length - count), chat.messages.length];
+  const rows = chat.messages.slice(start, end);
   const version = JSON.stringify([
-    selected, match,
-    rows.map(({ id, status }) => [id, status]),
+    selected, match, chatSearch?.direction,
+    rows.map(({ id, status, direction }) => [id, status, direction]),
   ]);
+  const timeline = byId("timeline");
   if (opened.timelineSignature === version) {
-    if (match) return;
+    if (match) {
+      if (chatSearch.center) centerSearchMatch(timeline, messages.querySelector(".search-match"));
+      return;
+    }
     watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
     return;
   }
-  const timeline = byId("timeline");
   let matchingRow;
   const previousHeight = timeline.scrollHeight;
   const previousTop = timeline.scrollTop;
@@ -806,7 +819,7 @@ function renderChats() {
   disposePhotoControls(opened);
   opened.photoControls ??= new Set();
   messages.replaceChildren();
-  for (const message of rows) {
+  for (const [offset, message] of rows.entries()) {
     const row = element("li");
     row.append(element("span", message.text));
     if (message.attachment?.media === "photo" && message.status !== "queued") {
@@ -836,13 +849,13 @@ function renderChats() {
     }
     row.dir = "auto";
     row.dataset.message = message.id;
-    if (message.id === match) {
+    if (match && start + offset === chatSearch.index) {
       row.classList.add("search-match");
       row.setAttribute("aria-current", "true");
       matchingRow = row;
     }
     if (message.direction === "outgoing") {
-      row.className = "out";
+      row.classList.add("out");
       footer.append(element("span", message.status === "saved" ? "Принято сервером" : "В очереди"));
     }
     if (footer.childNodes.length) row.append(footer);
@@ -852,12 +865,7 @@ function renderChats() {
   else if (newChat || wasAtEnd) timeline.scrollTop = timeline.scrollHeight;
   if (matchingRow) {
     stopWatchingUnread();
-    if (chatSearch.center || !timeline.scrollTop) {
-      const bounds = matchingRow.getBoundingClientRect();
-      timeline.scrollTop += bounds.top - timeline.getBoundingClientRect().top -
-        (timeline.clientHeight - bounds.height) / 2;
-      chatSearch.center = false;
-    }
+    if (chatSearch.center) centerSearchMatch(timeline, matchingRow);
   } else {
     watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
   }

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Verify scoped ingress sizes through real loopback nginx, TLS and the HTTPS API fixture."""
-import asyncio
 import hashlib
 import http.client
 import os
@@ -12,11 +11,9 @@ import sys
 import tempfile
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from unittest.mock import patch
-
-from websockets.asyncio.client import connect
 
 import delivery as d
 from directory import establish
@@ -86,24 +83,6 @@ def exchange(port_number, tls, method, path, body=None, headers=None):
         connection.close()
 
 
-async def verify_stream(endpoint, tls, token, device):
-    async with connect(f"wss://127.0.0.1:{endpoint}/v1/stream", ssl=tls, proxy=None,
-                       additional_headers={"Authorization": "Bearer " + token}, open_timeout=10) as stream:
-        hello = d.wire.Frame(protocol_version=1, kind=d.wire.HELLO)
-        hello.hello.supported_versions.append(1)
-        hello.hello.client_device_id = uuid.UUID(device.identity).bytes
-        ping = d.wire.Frame(protocol_version=1, kind=d.wire.PING)
-        for request, expected in [(hello, d.wire.HELLO), (ping, d.wire.PONG)]:
-            request.request_id = uuid.uuid4().bytes
-            frame = request.SerializeToString()
-            await stream.send(d._VarintBytes(len(frame)) + frame)
-            raw = await asyncio.wait_for(stream.recv(), timeout=10)
-            length, start = d._DecodeVarint(raw, 0)
-            assert length == len(raw) - start
-            reply = d.wire.Frame.FromString(raw[start:])
-            assert reply.request_id == request.request_id and reply.kind == expected
-
-
 def verify(endpoint, tls, group, account):
     token = account["session"]["accessToken"]
     headers = {"Authorization": "Bearer " + token, "Content-Type": "application/octet-stream"}
@@ -120,7 +99,9 @@ def verify(endpoint, tls, group, account):
             assert response["Content-Type"].startswith("text/html"), payload[:120]
         return payload
 
-    asyncio.run(verify_stream(endpoint, tls, token, account["device"]))
+    with patch.object(d, "BASE", f"https://127.0.0.1:{endpoint}"), patch.object(d, "TLS", tls):
+        with closing(d.Stream(token, account["device"])) as stream:
+            assert stream.exchange(d.wire.Frame(protocol_version=1, kind=d.wire.PING)).kind == d.wire.PONG
 
     for size in (WHOLE_BLOB_MAX, PHOTO_MAX):
         route = f"/v1/conversations/{group}/blobs/{uuid.uuid4()}"

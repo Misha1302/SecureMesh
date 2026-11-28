@@ -65,12 +65,15 @@ def exercise(root, origin, port, pin):
         native = PersistentDevice.wrap(device)
         try:
             with patch.object(d, "BASE", endpoint), patch.object(d, "TLS", tls):
-                stream = d.Stream(session["accessToken"], native)
+                stream = None
                 try:
                     group = setup["id"]
 
-                    def send(text):
-                        message = native.call("queue", group=group, text=text, id=str(uuid.uuid4()))
+                    def send(text, message_id=None):
+                        nonlocal stream
+                        if stream is None:
+                            stream = d.Stream(session["accessToken"], native)
+                        message = native.call("queue", group=group, text=text, id=message_id or str(uuid.uuid4()))
                         ack = stream.send(message, group)
                         assert ack.kind == d.wire.DURABLE_ACK
 
@@ -79,6 +82,9 @@ def exercise(root, origin, port, pin):
                     for index in range(100):
                         send(f"Сообщение {index:03}")
                     send(newer)
+                    # The following UI checks can exceed the relay's idle connection deadline.
+                    stream.close()
+                    stream = None
                     messages = page.locator("#messages")
                     expect(messages.get_by_text(newer, exact=True)).to_be_visible(timeout=70_000)
                     expect(messages.get_by_text(older, exact=True)).to_have_count(0)
@@ -100,11 +106,21 @@ def exercise(root, origin, port, pin):
                     page.locator("#chat-search-older").click()
                     expect(match).to_contain_text(older)
                     expect(match).to_be_in_viewport()
+                    page.locator("#timeline").evaluate("el => { el.scrollTop = el.scrollHeight; }")
+                    expect(match).not_to_be_in_viewport()
+                    query.fill("ИГЛА В СТАРОМ")
+                    expect(match).to_be_in_viewport()
+                    query.fill("ИГЛА")
+                    expect(match).to_contain_text(newer)
+                    page.locator("#chat-search-older").click()
+                    expect(match).to_contain_text(older)
                     assert messages.locator("li").count() <= 100
                     expect(page.locator("#compose textarea")).to_have_value("Черновик при поиске")
 
                     page.context.set_offline(False)
                     send(latest)
+                    stream.close()
+                    stream = None
                     # A new delivery updates navigation without taking focus away from the old match.
                     expect(match).to_contain_text(older)
                     next_button = page.locator("#chat-search-newer")
@@ -113,7 +129,7 @@ def exercise(root, origin, port, pin):
                     expect(next_button).to_be_enabled(timeout=25_000)
                     next_button.click()
                     expect(match).to_contain_text(latest)
-                    assert all("ИГЛА" not in unquote(url) + body for url, body in collected)
+                    assert all("игла" not in unquote(url + body).casefold() for url, body in collected)
                     page.locator("#peer-profile-open").click()
                     expect(query).to_have_value("")
                     expect(page.locator("#chat-search")).to_be_hidden()
@@ -149,8 +165,22 @@ def exercise(root, origin, port, pin):
                     d.sync(native, session["accessToken"], group)
                     history = native.call("history", group=group)["events"]
                     assert any(event["text"] == "Черновик при поиске" for event in history)
+                    toggle.click()
+                    query.fill("Черновик")
+                    outgoing_match = messages.locator("li.out.search-match[aria-current=true]")
+                    expect(outgoing_match).to_contain_text("Черновик при поиске")
+                    expect(outgoing_match).to_have_css("outline-style", "solid")
+                    # Each sender has its own ID namespace, including on the same result page.
+                    send("Совпадение идентификатора", outgoing_match.get_attribute("data-message"))
+                    expect(messages.get_by_text("Совпадение идентификатора", exact=True)).to_be_visible(timeout=25_000)
+                    expect(match).to_have_count(1)
+                    expect(outgoing_match).to_have_count(1)
+                    query.fill("идентификатора")
+                    expect(match).to_have_text(re.compile("Совпадение идентификатора"))
+                    expect(match).to_have_count(1)
                 finally:
-                    stream.close()
+                    if stream is not None:
+                        stream.close()
         finally:
             native.close()
             direct.dispose()
