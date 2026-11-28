@@ -51,11 +51,12 @@ def verify(request, owner, reader, outsider, pending, username):
     request(editpath,edit,token=reader,method='PUT',expected=403)
     request(editpath,edit,token=outsider,method='PUT',expected=404)
     request(editpath,edit,token=pending,method='PUT',expected=403)
-    assert request(editpath,edit,token=owner,method='PUT')['revision']==2
-    assert request(editpath,edit,token=owner,method='PUT')['revision']==2
+    saved=request(editpath,edit,token=owner,method='PUT')
+    assert saved['revision']==2 and saved['editedAt']
+    assert request(editpath,edit,token=owner,method='PUT')==saved
     request(editpath,{'expectedRevision':1,'body':'Lost write'},token=owner,method='PUT',expected=409)
     after=request(root+'/posts',token=reader)['items'][0]
-    assert after=={**before,'body':'Corrected','revision':2}
+    assert after=={**before,'body':'Corrected','revision':2,'editedAt':saved['editedAt']}
     request(root+'/subscription',token=reader,method='DELETE',expected=204)
     request(root+'/posts',token=reader,expected=404)
     request(root+'/subscription',token=reader,method='PUT',expected=404)

@@ -291,19 +291,28 @@ public static class PublicChannels
         await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
         await LockAccount(c,actor);
         if(!(await Access(c,id,actor,true)).Owner) throw new ApiError(403,"CHANNEL_OWNER_REQUIRED");
-        await using(var current=Sql.Cmd(c,"SELECT body,revision FROM public_channel_posts WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq))
+        await using(var current=Sql.Cmd(c,"SELECT body,revision,edited_at FROM public_channel_posts WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq))
         await using(var r=await current.ExecuteReaderAsync())
         {
             if(!await r.ReadAsync()) throw new ApiError(404,"CHANNEL_POST_NOT_FOUND");
             var revision=r.GetInt32(1);
             if(r.GetString(0)==body && (revision==input.ExpectedRevision || revision-1==input.ExpectedRevision))
-                return Results.Ok(new{seq,revision});
+                return Results.Ok(new{seq,revision,editedAt=ReadEditTime(r,2)});
             if(revision!=input.ExpectedRevision) throw new ApiError(409,"CHANNEL_POST_CHANGED");
         }
         await Charge(c,actor.UserId,"edit",240);
-        await using var update=Sql.Cmd(c,"UPDATE public_channel_posts SET body=$1,revision=revision+1 WHERE channel_id=$2 AND seq=$3 RETURNING revision",body,id,seq);
-        var next=(int)(await update.ExecuteScalarAsync())!;await tx.CommitAsync();
-        return Results.Ok(new{seq,revision=next});
+        await using var update=Sql.Cmd(c,"""
+            UPDATE public_channel_posts SET body=$1,revision=revision+1,edited_at=statement_timestamp()
+            WHERE channel_id=$2 AND seq=$3 RETURNING revision,edited_at
+            """,body,id,seq);
+        int next; DateTime editedAt;
+        await using(var row=await update.ExecuteReaderAsync())
+        {
+            if(!await row.ReadAsync()) throw new ApiError(404,"CHANNEL_POST_NOT_FOUND");
+            next=row.GetInt32(0); editedAt=row.GetDateTime(1);
+        }
+        await tx.CommitAsync();
+        return Results.Ok(new{seq,revision=next,editedAt});
     }
 
     // Cursor contains the exact database timestamp and globally unique sequence as a tie breaker.
@@ -323,7 +332,7 @@ public static class PublicChannels
         await using var c = await db.OpenConnectionAsync();
         await using var cmd = Sql.Cmd(c, $$"""
             WITH page AS MATERIALIZED (
-                SELECT p.seq,p.body,p.published_at,p.revision,ch.id,ch.slug,ch.title
+                SELECT p.seq,p.body,p.published_at,p.revision,ch.id,ch.slug,ch.title,p.edited_at
                 FROM public_channel_subscriptions s
                 JOIN channel_catalog ch ON ch.id=s.channel_id AND NOT ch.invite_only
                 JOIN public_channel_posts p ON p.channel_id=ch.id AND p.body IS NOT NULL
@@ -346,7 +355,7 @@ public static class PublicChannels
             last = $"{published.Ticks}~{postSeq}";
             items.Add(new { seq = postSeq, body = r.GetString(1), publishedAt = published,
                 revision = r.GetInt32(3), channelId = r.GetGuid(4), slug = r.GetString(5), title = r.GetString(6),
-                reactions = ReadReactions(r,7) });
+                editedAt = ReadEditTime(r,7), reactions = ReadReactions(r,8) });
         }
         return Results.Ok(new { items, next = more ? last : null });
     }
@@ -361,7 +370,7 @@ public static class PublicChannels
         if(!access.Owner && !access.Subscribed) throw new ApiError(403,"CHANNEL_SUBSCRIPTION_REQUIRED");
         await using var cmd=Sql.Cmd(c,$$"""
             WITH page AS MATERIALIZED (
-                SELECT seq,body,published_at,revision FROM public_channel_posts
+                SELECT seq,body,published_at,revision,edited_at FROM public_channel_posts
                 WHERE channel_id=$2 AND body IS NOT NULL AND seq<$3 ORDER BY seq DESC LIMIT 9
             )
             SELECT p.*, reactions.* FROM page p
@@ -374,7 +383,7 @@ public static class PublicChannels
         while(await r.ReadAsync())
         {
             if(items.Count==8){more=true;break;}
-            last=r.GetInt64(0);items.Add(new{seq=last,body=r.GetString(1),publishedAt=r.GetDateTime(2),revision=r.GetInt32(3),reactions=ReadReactions(r,4)});
+            last=r.GetInt64(0);items.Add(new{seq=last,body=r.GetString(1),publishedAt=r.GetDateTime(2),revision=r.GetInt32(3),editedAt=ReadEditTime(r,4),reactions=ReadReactions(r,5)});
         }
         return Results.Ok(new{items,next=more?last:null});
     }
@@ -404,6 +413,9 @@ public static class PublicChannels
         await using var insert=Sql.Cmd(c,"INSERT INTO public_channel_posts(channel_id,request_id,body) VALUES($1,$2,$3) RETURNING seq",id,input.RequestId,body);
         var seq=(long)(await insert.ExecuteScalarAsync())!;await tx.CommitAsync();return Results.Created($"/v1/public-channels/{id}/posts/{seq}",new{seq});
     }
+
+    private static DateTime? ReadEditTime(NpgsqlDataReader row, int index) =>
+        row.IsDBNull(index) ? null : row.GetDateTime(index);
 
     private sealed record ReactionCounts(long Like, long Heart, long Smile, string? Mine);
 

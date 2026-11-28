@@ -1,6 +1,7 @@
 """Public catalog, subscriptions and owner-only publishing through the actual HTTPS API."""
 from pathlib import Path
 import tempfile
+from datetime import datetime
 import uuid
 
 
@@ -50,6 +51,25 @@ def verify(request, owner, reader, outsider, pending):
     assert request(root+'/posts',data,token=owner)['seq']==seq
     request(root+'/posts',{**data,'body':'changed'},token=owner,expected=409)
     request(root+'/posts',{**data,'body':' '},token=owner,expected=400)
+    request(reaction,{'kind':'like'},method='PUT',token=reader)
+    first_post = request(root+'/posts',token=owner)['items'][0]
+    assert first_post['editedAt'] is None
+    edit_route = f'{root}/posts/{seq}'
+    edit = {'expectedRevision':1,'body':'Исправленная публикация'}
+    request(edit_route,edit,method='PUT',expected=401)
+    request(edit_route,edit,method='PUT',token=pending,expected=403)
+    request(edit_route,edit,method='PUT',token=reader,expected=403)
+    saved = request(edit_route,edit,method='PUT',token=owner)
+    assert saved['revision']==2 and saved['seq']==seq
+    assert datetime.fromisoformat(saved['editedAt']) >= datetime.fromisoformat(first_post['publishedAt'])
+    assert request(edit_route,edit,method='PUT',token=owner) == saved
+    assert request(edit_route,{**edit,'expectedRevision':2},method='PUT',token=owner) == saved
+    request(edit_route,{**edit,'body':'Stale overwrite'},method='PUT',token=owner,expected=409)
+    updated = request(root+'/posts',token=reader)['items'][0]
+    assert updated == {**first_post,'revision':2,'body':edit['body'],'editedAt':saved['editedAt'],
+                       'reactions':dict(like=1,heart=0,smile=0,mine='like')}
+    aggregate_edit = request(path+'/feed',token=reader)['items'][0]
+    assert aggregate_edit['editedAt'] == saved['editedAt'] and aggregate_edit['reactions'] == updated['reactions']
     for i in range(9):
         request(root+'/posts',{'requestId':str(uuid.uuid4()),'body':'🚀'*2048},token=owner,expected=201)
     aggregate=request(path+'/feed',token=reader)
@@ -91,6 +111,7 @@ def verify(request, owner, reader, outsider, pending):
     request(root+'/posts/'+str(seq),token=owner,method='DELETE',expected=204)
     request(reaction,{'kind':'like'},method='PUT',token=reader,expected=404)
     request(reaction,method='DELETE',token=owner,expected=404)
+    request(edit_route,{**edit,'expectedRevision':2},method='PUT',token=owner,expected=404)
     request(root+'/posts',data,token=owner,expected=409)
     request(root,token=reader,method='DELETE',expected=403)
     request(root+'/subscription',token=reader,method='DELETE',expected=204)
@@ -162,6 +183,31 @@ def verify_reaction_quota_and_revoke(db, owner, reader, username):
     d.request(root, method='DELETE', token=owner, expected=204)
 
 
+def verify_deleted_post_retry(db, owner):
+    import concurrent.futures
+    import delivery as d
+    from delivery_recovery_serialization import hold_row, scalar, wait_for
+
+    channel = uuid.uuid4()
+    root = f'/v1/public-channels/{channel}'
+    d.request('/v1/public-channels', {'id':str(channel),'slug':'retry_'+uuid.uuid4().hex[:12],
+                                     'title':'Delete retry'}, token=owner, expected=201)
+    publication = {'requestId':str(uuid.uuid4()),'body':'An existing publication'}
+    seq = d.request(root+'/posts', publication, token=owner, expected=201)['seq']
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        with hold_row(db, f"SELECT seq FROM public_channel_posts WHERE seq={int(seq)} FOR UPDATE"):
+            delete = pool.submit(d.request, f'{root}/posts/{seq}', method='DELETE', token=owner, expected=204)
+            wait_for(db, "wait_event_type='Lock' AND query LIKE 'UPDATE public_channel_posts SET body=NULL%'")
+            retry = pool.submit(d.request, root+'/posts', publication, token=owner, expected=409)
+            wait_for(db, "wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE%'")
+        delete.result(timeout=10)
+        assert retry.result(timeout=10)['code'] == 'CHANNEL_POST_CONFLICT'
+    assert d.request(root+'/posts', publication, token=owner, expected=409)['code'] == 'CHANNEL_POST_CONFLICT'
+    assert d.request(root+'/posts', token=owner)['items'] == []
+    assert scalar(db, f"SELECT count(*) FROM public_channel_posts WHERE seq={int(seq)} AND body IS NULL") == '1'
+    d.request(root, method='DELETE', token=owner, expected=204)
+
+
 def main():
     import os
     import subprocess
@@ -179,6 +225,7 @@ def main():
         server.restart()
         invite_channels.verify(d.request,tokens[1],tokens[2],tokens[0],tokens[3],c['username'])
         verify_reaction_quota_and_revoke(db, tokens[0], tokens[1], b['username'])
+        verify_deleted_post_retry(db, tokens[0])
         if '--ui' in sys.argv:
             server.restart()
             env={**os.environ,'SECUREMESH_CHANNEL_FIXTURE_URL':d.BASE,
@@ -191,7 +238,7 @@ def main():
                            '--concurrency=1','integration/public_channels_hosted_test.dart'],
                            cwd=d.ROOT/'apps/client_flutter',env=env,check=True)
 
-    print('PASS public channel ACL, idempotency, reactions, Unicode and feed pagination.')
+    print('PASS public channel ACL, idempotency, edit timestamps, reactions, deletion race, Unicode and feed pagination.')
 
 
 if __name__=='__main__':

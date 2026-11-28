@@ -369,6 +369,25 @@ class _PublicChannelsState extends State<PublicChannels> {
     ];
   }
 
+  String? postEditLabel(Map post) {
+    final value = post['editedAt'];
+    final editedAt = value is String
+        ? DateTime.tryParse(value)?.toLocal()
+        : null;
+    if (editedAt == null) {
+      return (post['revision'] as int? ?? 1) > 1
+          ? tr('Изменено', 'Edited')
+          : null;
+    }
+    final localizations = MaterialLocalizations.of(context);
+    final date = localizations.formatMediumDate(editedAt);
+    final time = localizations.formatTimeOfDay(
+      TimeOfDay.fromDateTime(editedAt),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
+    return tr('Изменено $date, $time', 'Edited $date, $time');
+  }
+
   Widget reactions(Map post, String channel) {
     final summary = post['reactions'];
     if (summary is! Map) return const SizedBox.shrink();
@@ -511,7 +530,14 @@ class _PublicChannelsState extends State<PublicChannels> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${p['title']} · @${p['slug']} · ${MaterialLocalizations.of(context).formatMediumDate(DateTime.parse(p['publishedAt'] as String).toLocal())}',
+                  [
+                    p['title'],
+                    '@${p['slug']}',
+                    MaterialLocalizations.of(context).formatMediumDate(
+                      DateTime.parse(p['publishedAt'] as String).toLocal(),
+                    ),
+                    if (postEditLabel(p) case final String edited) edited,
+                  ].join(' · '),
                 ),
                 reactions(p, p['channelId'] as String),
               ],
@@ -658,8 +684,7 @@ class _PublicChannelsState extends State<PublicChannels> {
                       MaterialLocalizations.of(context).formatMediumDate(
                         DateTime.parse(p['publishedAt'] as String).toLocal(),
                       ),
-                      if ((p['revision'] as int? ?? 1) > 1)
-                        tr('Изменено', 'Edited'),
+                      if (postEditLabel(p) case final String edited) edited,
                     ].join(' · '),
                   ),
                   reactions(p, room!['id'] as String),
