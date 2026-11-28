@@ -73,7 +73,7 @@ public static class Roster
             if((long)(await count.ExecuteScalarAsync())!>=16) throw new ApiError(429,"ROSTER_LEASE_LIMIT");
         await using var cmd=Sql.Cmd(c,"""
             UPDATE key_packages SET roster_group=$1,lease_id=$2,leased_by=$3,lease_expires_at=least(expires_at,now()+interval '5 minutes')
-              WHERE reference=(SELECT reference FROM key_packages WHERE device_id=$4 AND lease_id IS NULL AND expires_at>now()
+              WHERE reference=(SELECT reference FROM key_packages WHERE device_id=$4 AND lease_id IS NULL AND offered_for IS NULL AND expires_at>now()
               ORDER BY expires_at,reference LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING payload
             """,group,id,a.DeviceId,device);
         byte[] package;
@@ -134,6 +134,7 @@ public static class Roster
                 await tx.CommitAsync();return Results.Ok(new{durable=true,seq=t.Seq,digest=t.Digest,alreadySaved=true});
             }
         }
+        await ConversationMessageBlocks.RequireOpen(c,t.Group,ctx.RequestAborted);
         if(epoch!=t.Epoch || last!=t.Seq-1) throw new ApiError(409,"ROSTER_POSITION_CONFLICT");
         if(t.Action=="add")
         {

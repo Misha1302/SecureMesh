@@ -7,11 +7,23 @@ internal sealed class VerificationEmail
 {
     private readonly string sender = "no-reply@securemesh.test";
     private readonly NetworkCredential? credentials;
+    private readonly int mailpitPort;
+    public int MaxAttemptsPerUtcHour { get; }
 
     public VerificationEmail(IConfiguration configuration)
     {
+        MaxAttemptsPerUtcHour = configuration.GetValue("VerificationEmail:MaxAttemptsPerUtcHour", 60);
+        if (MaxAttemptsPerUtcHour < 1)
+            throw new InvalidOperationException("VerificationEmail:MaxAttemptsPerUtcHour must be positive.");
+
         var provider = configuration["VerificationEmail:Provider"];
-        if (provider is null or "Mailpit") return;
+        if (provider is null or "Mailpit")
+        {
+            mailpitPort = configuration.GetValue("VerificationEmail:MailpitPort", 51028);
+            if (mailpitPort is < 1 or > 65535)
+                throw new InvalidOperationException("VerificationEmail:MailpitPort must be a valid port.");
+            return;
+        }
         if (provider != "Resend")
             throw new InvalidOperationException("Unknown verification email provider.");
 
@@ -28,12 +40,26 @@ internal sealed class VerificationEmail
         credentials = new NetworkCredential("resend", key);
     }
 
-    public async Task SendAsync(string recipient, string token, CancellationToken cancellationToken)
+    public async Task SendAsync(string recipient, string token, string purpose, CancellationToken cancellationToken)
     {
+        var subject = purpose switch
+        {
+            "verification" => "SecureMesh verification",
+            "account_recovery" => "SecureMesh account recovery",
+            SecurityEmail.NewDevice => "SecureMesh: подключено устройство",
+            SecurityEmail.RefreshReuse => "SecureMesh: проверьте сеансы",
+            _ => throw new InvalidOperationException("Unknown email purpose."),
+        };
         using var smtp = credentials is null
-            ? new SmtpClient("127.0.0.1", 51028)
+            ? new SmtpClient("127.0.0.1", mailpitPort)
             : new SmtpClient("smtp.resend.com", 587) { EnableSsl = true, Credentials = credentials };
-        using var message = new MailMessage(sender, recipient, "SecureMesh verification", token);
+        var body = purpose switch
+        {
+            SecurityEmail.NewDevice => "Новое устройство завершило подтверждение и стало доверенным. Если вы не подключали устройство, откройте SecureMesh и проверьте список устройств.",
+            SecurityEmail.RefreshReuse => "Повторно использован уже заменённый ключ обновления сеанса. Связанные сеансы отозваны. Откройте SecureMesh и проверьте список устройств. Если действие вам незнакомо, смените пароль.",
+            _ => token
+        };
+        using var message = new MailMessage(sender, recipient, subject, body);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try

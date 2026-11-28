@@ -69,7 +69,7 @@ function context(initial) {
     async derive(origin, principal, password) {
       assert.equal(origin, apiOrigin);
       assert.equal(principal, username);
-      assert.equal(password, passphrase);
+      if (password !== undefined) assert.equal(password, passphrase);
       return derived;
     },
   };
@@ -101,6 +101,9 @@ fake = ({ path, data, authorization }) => {
     case "/v2/auth/register":
       assert.deepEqual(data, { username, email: "marina@example.org", displayName: me.displayName, credential: derived });
       return request(undefined, 202);
+    case "/v2/auth/resend-verification":
+      assert.deepEqual(data, { username, credential: derived });
+      return request(undefined, 202);
     case "/v1/auth/verify-email":
       assert.deepEqual(data, { token: emailCode });
       return request(undefined, 204);
@@ -119,6 +122,8 @@ await ctx.update((state) => { delete state.registrationStage; });
 await assert.rejects(account.login(passphrase), /EMAIL_VERIFICATION_REQUIRED/);
 await account.register(username, " marina@example.org ", passphrase, me.displayName);
 assert.equal(ctx.state().registrationStage, "registered");
+await account.resendVerification(passphrase);
+assert.equal(ctx.state().registrationStage, "registered");
 await account.verify(emailCode);
 assert.equal(ctx.state().registrationStage, "verified");
 assert.deepEqual(await account.login(passphrase), me);
@@ -126,6 +131,50 @@ assert.equal(ctx.state().userId, userId);
 assert.equal(ctx.state().session.deviceId, identity);
 assert.equal(ctx.state().enrollmentVerified, true);
 assert.equal(signs(), 1);
+
+const savedMessenger = { accepted: { prior: { peerKey: publicKey, posted: true } } };
+const recovery = context({messenger: savedMessenger});
+const recoveryAccount = createAccount(recovery.ctx);
+fake = ({ path, data }) => {
+  if (path === "/v1/auth/recovery/request") {
+    assert.deepEqual(data, { email: "marina@example.org" });
+    return request(undefined, 202);
+  }
+  assert.equal(path, "/v2/auth/recovery/complete");
+  assert.deepEqual(data, { token: emailCode, username, credential: derived });
+  return request(undefined, 204);
+};
+await recoveryAccount.requestRecovery(" marina@example.org ");
+await recoveryAccount.completeRecovery(emailCode);
+assert.equal(recovery.ctx.state().registrationStage, "verified");
+assert.equal(calls.at(-1).path, "/v2/auth/recovery/complete");
+await assert.rejects(recoveryAccount.completeRecovery("bad-code"), /INVALID_RECOVERY/);
+
+const rejected = context({registrationStage: "verified", registrationOrigin: "verified-email"});
+fake = () => request({code: "INVALID_RECOVERY"}, 400);
+await assert.rejects(createAccount(rejected.ctx).completeRecovery(emailCode), /INVALID_RECOVERY/);
+assert.equal(rejected.ctx.state().registrationOrigin, "verified-email");
+
+// Server-reported trust cannot attest an independent enrollment after recovery.
+fake = async ({ path }) => {
+  if (path === "/v1/auth/challenge") return request(challenge());
+  if (path === "/v2/auth/login") return request(session());
+  assert.equal(path, "/v1/users/me");
+  return request(me);
+};
+for (const profile of [recovery, context({registrationStage: "verified", messenger: savedMessenger})]) {
+  const reopenedAccount = createAccount(profile.ctx);
+  await reopenedAccount.login(passphrase);
+  assert.equal(profile.ctx.state().enrollmentVerified, false);
+  assert.deepEqual(profile.ctx.state().messenger, savedMessenger);
+  await assert.rejects(reopenedAccount.api("/v1/conversations"), /DEVICE_ENROLLMENT_REQUIRED/);
+}
+const lostReset = context({registrationStage: "verified", registrationOrigin: "verified-email", messenger: savedMessenger});
+fake = () => { throw new TypeError("lost reset response"); };
+await assert.rejects(createAccount(lostReset.ctx).completeRecovery(emailCode), /NETWORK_UNAVAILABLE/);
+assert.equal(lostReset.ctx.state().registrationOrigin, "recovery");
+assert.deepEqual(lostReset.ctx.state().messenger, savedMessenger);
+
 
 await ctx.update((state) => { state.session = null; });
 fake = ({ path, data }) => {
@@ -155,6 +204,30 @@ fake = ({ path }) => {
   return request(me);
 };
 await account.login(passphrase);
+fake = ({ path, authorization }) => {
+  assert.equal(path, `/v1/conversations/${userId}/blobs/${challengeId}`);
+  assert.equal(authorization, `Bearer ${session().accessToken}`);
+  return new Response(Uint8Array.from([1, 2, 3]), { status: 200,
+    headers: { "Content-Type": "application/octet-stream", "Content-Length": "3" } });
+};
+assert.deepEqual([...await account.apiBytes(`/v1/conversations/${userId}/blobs/${challengeId}`, 3)], [1, 2, 3]);
+fake = () => new Response(Uint8Array.from([1, 2, 3, 4]), { status: 200,
+  headers: { "Content-Type": "application/octet-stream" } });
+await assert.rejects(account.apiBytes(`/v1/conversations/${userId}/blobs/${challengeId}`, 3), /ATTACHMENT_SIZE/);
+await assert.rejects(account.apiBytes("/v1/conversations/not-a-uuid/blobs/not-a-uuid", 3), /INVALID_API_PATH/);
+
+const blobRoute = `/v1/conversations/${userId}/blobs/${challengeId}`;
+fake = () => request({code: "BLOB_NOT_FOUND"}, 404);
+await assert.rejects(account.apiBytes(blobRoute, 3), {code: "BLOB_NOT_FOUND", status: 404});
+for (const declared of [false, true]) {
+  let cancelled = false;
+  fake = () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(4097)); },
+    cancel() { cancelled = true; },
+  }), {status: 403, headers: {"Content-Type":"application/json", ...(declared ? {"Content-Length":"4097"} : {})}});
+  await assert.rejects(account.apiBytes(blobRoute, 3), {code:"SERVER_REQUEST_FAILED",status:403});
+  assert(cancelled);
+}
 
 let release;
 let rotationCount = 0;
@@ -221,6 +294,7 @@ await assert.rejects(uncertainAccount.verify(emailCode), /NETWORK_UNAVAILABLE/);
 assert.equal(ambiguous.ctx.state().registrationStage, "verifying");
 await uncertainAccount.login(passphrase);
 assert.equal(ambiguous.ctx.state().registrationStage, "verified");
+assert.equal(ambiguous.ctx.state().enrollmentVerified, false);
 
 const pending = context({ registrationStage: "verified" });
 const pendingAccount = createAccount(pending.ctx);
@@ -232,5 +306,29 @@ fake = async ({ path }) => {
 await pendingAccount.login(passphrase);
 assert.equal(pending.ctx.state().enrollmentVerified, false);
 await assert.rejects(pendingAccount.api("/v1/conversations"), /DEVICE_ENROLLMENT_REQUIRED/);
+
+const deliveryProfile = context({ userId, trustState, enrollmentVerified: true, session: session() });
+const deliveryAccount = createAccount(deliveryProfile.ctx);
+await assert.rejects(deliveryAccount.api("/v1/messages", {}), /DELIVERY_GUARD_REQUIRED/);
+let handoffs = 0;
+let transmissions = 0;
+let conflict = false;
+fake = ({ path }) => {
+  if (path === "/v1/auth/refresh") {
+    conflict = true;
+    return request(session("d", "f"));
+  }
+  if (path === "/v1/users/me") return request(me);
+  assert.equal(path, "/v1/messages");
+  transmissions++;
+  return request({ code: "AUTH_REQUIRED" }, 401);
+};
+await assert.rejects(deliveryAccount.api("/v1/messages", {}, undefined, (send) => {
+  handoffs++;
+  if (conflict) throw Object.assign(new Error("conflict before retry"), { code: "changed-key" });
+  return send();
+}), { code: "changed-key" });
+assert.equal(handoffs, 2);
+assert.equal(transmissions, 1);
 
 console.log("Browser account protocol, origin constraints and session rotation passed");

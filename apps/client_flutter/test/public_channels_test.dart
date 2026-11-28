@@ -7,7 +7,7 @@ void main() {
   testWidgets(
     'Reader discovers, subscribes and reads the separate public feed',
     (tester) async {
-      bool subscribed = false;
+      bool subscribed = false, revoked = false;
       String? search;
       Future<dynamic> api(
         String route, {
@@ -35,7 +35,10 @@ void main() {
           return null;
         }
         if (uri.path.endsWith('/posts') && subscribed) {
+          if (revoked) throw ApiFailure(404, 'CHANNEL_NOT_FOUND');
           return {
+            'pinned': {'seq': 42, 'body': 'Earlier announcement'},
+            'pinRevision': 1,
             'items': [
               {
                 'seq': 1,
@@ -69,9 +72,22 @@ void main() {
       await tester.tap(find.text('Subscribe'));
       await tester.pumpAndSettle();
       expect(find.text('Team update'), findsOneWidget);
+      expect(find.text('Earlier announcement'), findsOneWidget);
+      expect(find.byTooltip('Unpin'), findsNothing);
       await tester.tap(find.text('Unsubscribe'));
       await tester.pumpAndSettle();
       expect(find.text('Team update'), findsNothing);
+      await tester.tap(find.text('Subscribe'));
+      await tester.pumpAndSettle();
+      expect(find.text('Team update'), findsOneWidget);
+      revoked = true;
+      await tester.tap(find.text('Refresh posts'));
+      await tester.pumpAndSettle();
+      expect(find.text('Team update'), findsNothing);
+      expect(
+        find.textContaining('This channel is unavailable'),
+        findsOneWidget,
+      );
     },
   );
 
@@ -80,6 +96,8 @@ void main() {
     (tester) async {
       final ids = <String>[];
       final posts = <Map>[];
+      int pinRevision = 0;
+      Map? pin;
       Future<dynamic> api(
         String route, {
         Map<String, dynamic>? data,
@@ -89,8 +107,21 @@ void main() {
           if (data != null) return {'id': data['id']};
           return {'items': [], 'next': null};
         }
+        if (route.endsWith('/pin')) {
+          expect(method, 'PUT');
+          expect(data!['expectedRevision'], pinRevision++);
+          pin = data['seq'] == null ? null : posts.single;
+          return null;
+        }
         if (route.endsWith('/posts')) {
-          if (data == null) return {'items': posts, 'next': null};
+          if (data == null) {
+            return {
+              'items': posts,
+              'next': null,
+              'pinned': pin,
+              'pinRevision': pinRevision,
+            };
+          }
           ids.add(data['requestId'] as String);
           if (posts.isEmpty) {
             posts.add({
@@ -137,6 +168,17 @@ void main() {
       expect(ids.length, 2);
       expect(ids.first, ids.last);
       expect(find.text('Hello!'), findsOneWidget);
+      await tester.ensureVisible(find.byTooltip('Post actions'));
+      await tester.tap(find.byTooltip('Post actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Pin post'));
+      await tester.pumpAndSettle();
+      expect(find.text('Pinned post'), findsOneWidget);
+      await tester.ensureVisible(find.byTooltip('Unpin'));
+      await tester.tap(find.byTooltip('Unpin'));
+      await tester.pumpAndSettle();
+      expect(pinRevision, 2);
+      expect(find.text('Pinned post'), findsNothing);
     },
   );
 }

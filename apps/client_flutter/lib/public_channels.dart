@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import 'display_name.dart';
+import 'channel_comments.dart';
 import 'local_client.dart';
 import 'transport.dart';
 
@@ -25,14 +26,15 @@ class _PublicChannelsState extends State<PublicChannels> {
       title = TextEditingController(),
       post = TextEditingController(),
       inviteName = TextEditingController();
-  List<Map> rooms = [], posts = [];
-  Map? room;
-  String? directoryCursor, error;
+  List<Map> rooms = [], posts = [], aggregatePosts = [];
+  Map? room, pinnedPost;
+  int? pinRevision;
+  String? directoryCursor, aggregateCursor, error;
   int? feedCursor;
   String activeQuery = '';
   bool restricted = false;
   String? inviteNote;
-  bool mine = false, creating = false, busy = false;
+  bool mine = false, creating = false, busy = false, aggregate = false;
   String? createId, creationKey, postId, postKey;
   String tr(String ru, String en) => widget.russian ? ru : en;
   String get roomPath => '$path/${room!['id']}';
@@ -67,6 +69,10 @@ class _PublicChannelsState extends State<PublicChannels> {
         ApiFailure(status: 429) => tr(
           'Слишком много действий. Повторите позже.',
           'Too many actions. Try again later.',
+        ),
+        ApiFailure(code: 'CHANNEL_PIN_CHANGED') => tr(
+          'Закрепление изменилось. Обновите публикации.',
+          'The pinned post changed. Refresh posts.',
         ),
         ApiFailure(code: 'CHANNEL_POST_CHANGED') => tr(
           'Публикацию уже изменили. Обновите список перед редактированием.',
@@ -118,11 +124,45 @@ class _PublicChannelsState extends State<PublicChannels> {
 
   Future<void> feed({bool more = false}) async {
     final url = more ? '$roomPath/posts?before=$feedCursor' : '$roomPath/posts';
-    final result = await widget.api(url) as Map;
-    if (!mounted) return;
-    final page = (result['items'] as List).cast<Map>();
-    posts = more ? [...posts, ...page] : page;
-    feedCursor = result['next'] as int?;
+    try {
+      final result = await widget.api(url) as Map;
+      if (!mounted) return;
+      final page = (result['items'] as List).cast<Map>();
+      posts = more ? [...posts, ...page] : page;
+      feedCursor = result['next'] as int?;
+      pinnedPost = result['pinned'] as Map?;
+      pinRevision = result['pinRevision'] as int?;
+    } on ApiFailure catch (e) {
+      if (e.status == 401 || e.status == 403 || e.status == 404) {
+        posts = [];
+        feedCursor = null;
+        pinnedPost = null;
+        pinRevision = null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> aggregateFeed({bool more = false}) async {
+    final url = Uri(
+      path: '$path/feed',
+      queryParameters: {
+        if (more && aggregateCursor != null) 'before': aggregateCursor!,
+      },
+    );
+    try {
+      final result = await widget.api(url.toString()) as Map;
+      if (!mounted) return;
+      final page = (result['items'] as List).cast<Map>();
+      aggregatePosts = more ? [...aggregatePosts, ...page] : page;
+      aggregateCursor = result['next'] as String?;
+    } on ApiFailure catch (e) {
+      if (e.status == 401 || e.status == 403) {
+        aggregatePosts = [];
+        aggregateCursor = null;
+      }
+      rethrow;
+    }
   }
 
   Future<void> open(Map target) async {
@@ -131,6 +171,8 @@ class _PublicChannelsState extends State<PublicChannels> {
     inviteNote = null;
     posts = [];
     feedCursor = null;
+    pinnedPost = null;
+    pinRevision = null;
     post.clear();
     postId = null;
     if (room!['owner'] == true || room!['subscribed'] == true) await feed();
@@ -183,6 +225,8 @@ class _PublicChannelsState extends State<PublicChannels> {
     } else {
       posts = [];
       feedCursor = null;
+      pinnedPost = null;
+      pinRevision = null;
       if (room!['inviteOnly'] == true) await closeRoom();
     }
   }
@@ -236,6 +280,15 @@ class _PublicChannelsState extends State<PublicChannels> {
   Future<void> decline() async {
     await widget.api('$roomPath/subscription', method: 'DELETE');
     if (mounted) await closeRoom();
+  }
+
+  Future<void> setPin(int? seq) async {
+    await widget.api(
+      '$roomPath/pin',
+      method: 'PUT',
+      data: {'seq': seq, 'expectedRevision': pinRevision},
+    );
+    if (mounted) await feed();
   }
 
   Future<void> editPost(Map item) async {
@@ -334,11 +387,105 @@ class _PublicChannelsState extends State<PublicChannels> {
     if (mounted) await feed();
   }
 
+  Future<void> react(String channel, int seq, String? kind) async {
+    final summary = await widget.api(
+      '$path/$channel/posts/$seq/reaction',
+      method: kind == null ? 'DELETE' : 'PUT',
+      data: kind == null ? null : {'kind': kind},
+    ) as Map;
+    if (!mounted) return;
+    Map update(Map post) => {...post, 'reactions': summary};
+    if (room?['id'] == channel) {
+      posts = [
+        for (final post in posts) post['seq'] == seq ? update(post) : post,
+      ];
+    }
+    aggregatePosts = [
+      for (final post in aggregatePosts)
+        post['channelId'] == channel && post['seq'] == seq
+            ? update(post)
+            : post,
+    ];
+  }
+
+  String? postEditLabel(Map post) {
+    final value = post['editedAt'];
+    final editedAt = value is String
+        ? DateTime.tryParse(value)?.toLocal()
+        : null;
+    if (editedAt == null) {
+      return (post['revision'] as int? ?? 1) > 1
+          ? tr('Изменено', 'Edited')
+          : null;
+    }
+    final localizations = MaterialLocalizations.of(context);
+    final date = localizations.formatMediumDate(editedAt);
+    final time = localizations.formatTimeOfDay(
+      TimeOfDay.fromDateTime(editedAt),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
+    return tr('Изменено $date, $time', 'Edited $date, $time');
+  }
+
+  Widget comments(Map post, String channel) => TextButton(
+    onPressed: busy
+        ? null
+        : () => showDialog<void>(
+            context: context,
+            builder: (_) => ChannelComments(
+              api: widget.api,
+              russian: widget.russian,
+              path: '$path/$channel/posts/${post['seq']}/comments',
+            ),
+          ),
+    child: Text(tr('Комментарии', 'Comments')),
+  );
+
+  Widget reactions(Map post, String channel) {
+    final summary = post['reactions'];
+    if (summary is! Map) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        for (final (kind, icon, name) in [
+          ('like', Icons.thumb_up_alt_outlined, tr('Нравится', 'Like')),
+          ('heart', Icons.favorite_border, tr('Сердце', 'Heart')),
+          ('smile', Icons.sentiment_satisfied_alt, tr('Улыбка', 'Smile')),
+        ])
+          Tooltip(
+            message: name,
+            child: ChoiceChip(
+              key: ValueKey('reaction-$channel-${post['seq']}-$kind'),
+              avatar: Icon(icon, size: 18),
+              label: Text(
+                '${summary[kind] ?? 0}',
+                semanticsLabel: '$name: ${summary[kind] ?? 0}',
+              ),
+              selected: summary['mine'] == kind,
+              showCheckmark: false,
+              onSelected: busy
+                  ? null
+                  : (select) => run(
+                      () => react(
+                        channel,
+                        post['seq'] as int,
+                        select ? kind : null,
+                      ),
+                    ),
+            ),
+          ),
+      ],
+    );
+  }
+
   Future<void> closeRoom() async {
     room = null;
     post.clear();
     posts = [];
     feedCursor = null;
+    pinnedPost = null;
+    pinRevision = null;
     await catalog();
   }
 
@@ -361,6 +508,8 @@ class _PublicChannelsState extends State<PublicChannels> {
                 : () {
                     if (room != null) {
                       run(closeRoom);
+                    } else if (aggregate) {
+                      setState(() => aggregate = false);
                     } else if (creating) {
                       setState(() => creating = false);
                     } else {
@@ -370,7 +519,10 @@ class _PublicChannelsState extends State<PublicChannels> {
           ),
           Expanded(
             child: Text(
-              room?['title'] as String? ?? tr('Каналы', 'Channels'),
+              room?['title'] as String? ??
+                  (aggregate
+                      ? tr('Лента подписок', 'Subscription feed')
+                      : tr('Каналы', 'Channels')),
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
@@ -416,6 +568,43 @@ class _PublicChannelsState extends State<PublicChannels> {
           title: Text(tr('Только по приглашению', 'Invite only')),
         ),
         action('Создать канал', 'Create channel', create),
+      ] else if (aggregate) ...[
+        Text(
+          tr(
+            'Публикации подписок на публичные каналы.',
+            'Posts from your public channel subscriptions.',
+          ),
+        ),
+        action('Обновить ленту', 'Refresh feed', aggregateFeed),
+        if (!busy && aggregatePosts.isEmpty)
+          Text(tr('Публикаций пока нет.', 'No posts yet.')),
+        for (final p in aggregatePosts)
+          ListTile(
+            title: SelectableText(p['body'] as String),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  [
+                    p['title'],
+                    '@${p['slug']}',
+                    MaterialLocalizations.of(context).formatMediumDate(
+                      DateTime.parse(p['publishedAt'] as String).toLocal(),
+                    ),
+                    if (postEditLabel(p) case final String edited) edited,
+                  ].join(' · '),
+                ),
+                reactions(p, p['channelId'] as String),
+                comments(p, p['channelId'] as String),
+              ],
+            ),
+          ),
+        if (aggregateCursor != null)
+          action(
+            'Более ранние публикации',
+            'Older posts',
+            () => aggregateFeed(more: true),
+          ),
       ] else if (room == null) ...[
         TextField(
           enabled: !busy,
@@ -434,6 +623,15 @@ class _PublicChannelsState extends State<PublicChannels> {
         ),
         Wrap(
           children: [
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () => run(() async {
+                      aggregate = true;
+                      await aggregateFeed();
+                    }),
+              child: Text(tr('Лента подписок', 'Subscription feed')),
+            ),
             TextButton(
               onPressed: busy
                   ? null
@@ -529,30 +727,56 @@ class _PublicChannelsState extends State<PublicChannels> {
           action('Отклонить приглашение', 'Decline invitation', decline),
         if (room!['owner'] == true || room!['subscribed'] == true) ...[
           action('Обновить публикации', 'Refresh posts', feed),
+          if (pinnedPost case final Map pin)
+            ListTile(
+              title: Text(tr('Закреплённая публикация', 'Pinned post')),
+              subtitle: SelectableText(pin['body'] as String),
+              trailing: room!['owner'] == true
+                  ? IconButton(
+                      tooltip: tr('Открепить', 'Unpin'),
+                      icon: const Icon(Icons.push_pin_outlined),
+                      onPressed: busy ? null : () => run(() => setPin(null)),
+                    )
+                  : null,
+            ),
           if (!busy && posts.isEmpty)
             Text(tr('Публикаций пока нет.', 'No posts yet.')),
           for (final p in posts)
             ListTile(
               title: SelectableText(p['body'] as String),
-              subtitle: Text(
-                [
-                  MaterialLocalizations.of(context).formatMediumDate(
-                    DateTime.parse(p['publishedAt'] as String).toLocal(),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    [
+                      MaterialLocalizations.of(context).formatMediumDate(
+                        DateTime.parse(p['publishedAt'] as String).toLocal(),
+                      ),
+                      if (postEditLabel(p) case final String edited) edited,
+                    ].join(' · '),
                   ),
-                  if ((p['revision'] as int? ?? 1) > 1)
-                    tr('Изменено', 'Edited'),
-                ].join(' · '),
+                  reactions(p, room!['id'] as String),
+                  comments(p, room!['id'] as String),
+                ],
               ),
               trailing: room!['owner'] == true
                   ? PopupMenuButton<String>(
                       enabled: !busy,
                       tooltip: tr('Действия с публикацией', 'Post actions'),
                       onSelected: (value) => run(
-                        () => value == 'edit'
-                            ? editPost(p)
-                            : removePost(p['seq'] as int),
+                        () => switch (value) {
+                          'edit' => editPost(p),
+                          'pin' => setPin(p['seq'] as int),
+                          _ => removePost(p['seq'] as int),
+                        },
                       ),
                       itemBuilder: (_) => [
+                        if (pinRevision != null &&
+                            p['seq'] != pinnedPost?['seq'])
+                          PopupMenuItem(
+                            value: 'pin',
+                            child: Text(tr('Закрепить', 'Pin post')),
+                          ),
                         if (p['revision'] is int)
                           PopupMenuItem(
                             value: 'edit',

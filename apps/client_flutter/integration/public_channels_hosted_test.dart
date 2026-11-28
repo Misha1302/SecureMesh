@@ -66,6 +66,33 @@ void main() {
         await settle();
       }
 
+      Finder chip(String reaction) => find.descendant(
+        of: find.byTooltip(reaction),
+        matching: find.byType(ChoiceChip),
+      );
+
+      Future<void> hitReaction(String reaction) async {
+        final target = chip(reaction);
+        await tester.ensureVisible(target);
+        await tester.tap(target);
+        await tester.pump();
+        await settle();
+      }
+
+      Future<void> editVisiblePost(String body) async {
+        await tester.ensureVisible(find.byTooltip('Post actions'));
+        await tester.tap(find.byTooltip('Post actions'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Edit post'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
+        await tester.enterText(find.byType(TextFormField), body);
+        await tester.tap(find.text('Save'));
+        await tester.pump();
+        await settle();
+        await tester.pumpAndSettle();
+      }
+
       final handle = 'ui_${DateTime.now().microsecondsSinceEpoch}';
       await asUser(env['SECUREMESH_CHANNEL_OWNER']!);
       await hit('New channel');
@@ -85,6 +112,11 @@ void main() {
       );
       await hit('Publish');
       expect(find.text('An actual public-channel post.'), findsOneWidget);
+      await tester.ensureVisible(find.byTooltip('Post actions'));
+      await tester.tap(find.byTooltip('Post actions'));
+      await tester.pumpAndSettle();
+      await hit('Pin post');
+      expect(find.text('Pinned post'), findsOneWidget);
       await asUser(env['SECUREMESH_CHANNEL_READER']!);
       await tester.enterText(find.byType(TextField), handle);
       await tester.tap(find.byTooltip('Search'));
@@ -94,9 +126,47 @@ void main() {
       expect(find.text('Publish'), findsNothing);
       expect(find.text('An actual public-channel post.'), findsNothing);
       await hit('Subscribe');
-      expect(find.text('An actual public-channel post.'), findsOneWidget);
+      expect(find.text('Pinned post'), findsOneWidget);
+      expect(find.text('An actual public-channel post.'), findsNWidgets(2));
+      expect(find.byTooltip('Unpin'), findsNothing);
+      await hitReaction('Heart');
+      expect(tester.widget<ChoiceChip>(chip('Heart')).selected, isTrue);
+      expect(
+        (tester.widget<ChoiceChip>(chip('Heart')).label as Text).data,
+        '1',
+      );
+      await asUser(env['SECUREMESH_CHANNEL_OWNER']!);
+      await hit('Bulletin $handle');
+      await tester.ensureVisible(find.byTooltip('Unpin'));
+      await tester.tap(find.byTooltip('Unpin'));
+      await tester.pump();
+      await settle();
+      expect(find.text('Pinned post'), findsNothing);
+      await editVisiblePost('An edited public-channel post.');
+      expect(find.text('An edited public-channel post.'), findsOneWidget);
+      final editedTime = find.textContaining(
+        RegExp(r'Edited .+ \d{1,2}:\d{2}'),
+      );
+      expect(editedTime, findsOneWidget);
+      expect(
+        (tester.widget<ChoiceChip>(chip('Heart')).label as Text).data,
+        '1',
+      );
+      await asUser(env['SECUREMESH_CHANNEL_READER']!);
+      await hit('Subscription feed');
+      expect(find.text('An edited public-channel post.'), findsOneWidget);
+      expect(editedTime, findsOneWidget);
+      expect(tester.widget<ChoiceChip>(chip('Heart')).selected, isTrue);
+      await hitReaction('Smile');
+      expect(tester.widget<ChoiceChip>(chip('Heart')).selected, isFalse);
+      expect(tester.widget<ChoiceChip>(chip('Smile')).selected, isTrue);
+      await hitReaction('Smile');
+      expect(tester.widget<ChoiceChip>(chip('Smile')).selected, isFalse);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      await hit('Bulletin $handle');
       await hit('Unsubscribe');
-      expect(find.text('An actual public-channel post.'), findsNothing);
+      expect(find.text('An edited public-channel post.'), findsNothing);
       final restricted = '${handle}_in';
       final privateTitle = 'Invited $handle';
       await asUser(env['SECUREMESH_CHANNEL_OWNER']!);
@@ -118,20 +188,7 @@ void main() {
         'Draft for the team.',
       );
       await hit('Publish');
-      await tester.ensureVisible(find.byTooltip('Post actions'));
-      await tester.tap(find.byTooltip('Post actions'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Edit post'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 350));
-      await tester.enterText(
-        find.byType(TextFormField),
-        'Corrected for the team.',
-      );
-      await tester.tap(find.text('Save'));
-      await tester.pump();
-      await settle();
-      await tester.pumpAndSettle();
+      await editVisiblePost('Corrected for the team.');
       expect(find.text('Corrected for the team.'), findsOneWidget);
       await asUser(env['SECUREMESH_CHANNEL_READER']!);
       expect(find.text(privateTitle), findsNothing);

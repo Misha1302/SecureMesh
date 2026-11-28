@@ -1,8 +1,10 @@
 import 'chat_folders.dart';
 import 'display_name.dart';
 import 'identity_comparison.dart';
+import 'identity_qr.dart' show scanProfileCode;
 import 'chat_preview.dart';
 import 'contact_profile.dart';
+import 'contact_blocks.dart';
 import 'attachment_transfer.dart';
 import 'conversation_media.dart';
 import 'profile_photo.dart';
@@ -186,6 +188,7 @@ class _AccountHubState extends State<AccountHub> {
     );
   }
 
+  final Set<String> locallyBlockedAvatars = {};
   bool directoryLoaded = false;
   bool working = false, fetching = false, trusted = false;
   bool get blocked => working || fetching;
@@ -315,6 +318,7 @@ class _AccountHubState extends State<AccountHub> {
             welcomes = pending;
             rosterWelcomes = linked;
             chats = existing;
+            locallyBlockedAvatars.clear();
             directoryLoaded = true;
             trusted = true;
             refreshError = null;
@@ -367,6 +371,12 @@ class _AccountHubState extends State<AccountHub> {
               ? tr(
                   'Получатель ещё не опубликовал ключевой пакет. Повторите чуть позже.',
                   'Your contact has not published a fresh key package. Retry shortly.',
+                )
+              : failure is ApiFailure &&
+                    failure.code == 'KEYPACKAGE_LEASE_EXPIRED'
+              ? tr(
+                  'Время подключения истекло. Попросите собеседника отправить новый запрос.',
+                  'The connection window expired. Ask your contact to send a new request.',
                 )
               : failure is ApiFailure && failure.code == 'CONTACT_REQUEST_LIMIT'
               ? tr(
@@ -487,11 +497,36 @@ class _AccountHubState extends State<AccountHub> {
     final peer = request['senderDevice'] as String,
         key = request['senderKey'] as String;
     if (!await compare(peer, key)) return;
-    final package = await widget.crypto('keypackage');
-    await widget.api(
-      '/v1/crypto/keypackages',
-      data: {'payload': package['keypackage']},
+    await recordConsent(
+      request['id'] as String,
+      peer,
+      key,
+      request['username'] as String,
     );
+    final invitation = request['id'] as String;
+    final package = await widget.crypto('directory_consent_package', {
+      'invitation': invitation,
+    });
+    Future<void> publish(Map<String, dynamic> offer) async {
+      await widget.api(
+        '/v1/crypto/keypackages',
+        data: {'payload': offer['keypackage'], 'invitationId': invitation},
+      );
+    }
+
+    try {
+      await publish(package);
+    } on ApiFailure catch (failure) {
+      if (failure.code != 'KEYPACKAGE_UNAVAILABLE' &&
+          failure.code != 'INVALID_KEYPACKAGE') {
+        rethrow;
+      }
+      final replacement = await widget.crypto('directory_consent_package', {
+        'invitation': invitation,
+        'replace': package['keypackage'],
+      });
+      await publish(replacement);
+    }
     await widget.api('/v1/chat-requests/${request['id']}/accept', data: {});
   }
 
@@ -533,44 +568,139 @@ class _AccountHubState extends State<AccountHub> {
     );
   }
 
+  Future<void> recordConsent(
+    String invitation,
+    String peer,
+    String key,
+    String name,
+  ) async {
+    await widget.crypto('directory_consent', {
+      'invitation': invitation,
+      'sender': peer,
+      'senderKey': key,
+      'username': name,
+      'confirmed': true,
+    });
+  }
+
+  void blockWelcome() {
+    if (mounted) {
+      setState(
+        () => actionError = tr(
+          'Чат заблокирован. Не удалось подтвердить запрос на этом устройстве. Попросите собеседника прислать новый запрос.',
+          'Chat blocked. This device could not confirm the invitation. Ask your contact to send a new request.',
+        ),
+      );
+    }
+  }
+
   Future<void> join(Map welcome) async {
     final peer = welcome['sender'] as String,
         key = welcome['senderKey'] as String;
-    final invitation = requests
-        .where((r) => r['id'] == welcome['invitation'])
-        .firstOrNull;
-    if (invitation != null &&
-        (invitation['outgoing'] != false ||
-            invitation['accepted'] != true ||
-            invitation['senderDevice'] != peer ||
-            invitation['senderKey'] != key)) {
-      await showDialog<void>(
+    final id = welcome['invitation'] as String;
+    final row = requests.where((r) => r['id'] == id).firstOrNull;
+    if (row != null &&
+        (row['outgoing'] != false ||
+            row['accepted'] != true ||
+            row['senderDevice'] != peer ||
+            row['senderKey'] != key ||
+            row['recipientDevice'] != welcome['recipient'])) {
+      blockWelcome();
+      return;
+    }
+    final receipt = await widget.crypto('directory_consent_status', {
+      'invitation': id,
+    });
+    if (receipt['accepted'] != true) {
+      // Older profiles lack a local receipt. Resolve this single request even
+      // when the bounded inbox page no longer includes it.
+      final Map details;
+      try {
+        details = await widget.api('/v1/chat-requests/$id') as Map;
+      } catch (_) {
+        blockWelcome();
+        return;
+      }
+      final own = await widget.crypto('identity');
+      if (details['id'] != id ||
+          details['senderDevice'] != peer ||
+          details['senderKey'] != key ||
+          details['recipientDevice'] != own['identity'] ||
+          own['identity'] != welcome['recipient'] ||
+          details['recipientKey'] != own['public_key']) {
+        blockWelcome();
+        return;
+      }
+      if (!mounted) return;
+      final label = row?['username'] as String? ?? peer;
+      final confirmed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text(tr('Чат заблокирован', 'Chat blocked')),
+          title: Text(
+            tr(
+              'Повторно принять приглашение?',
+              'Accept this invitation again?',
+            ),
+          ),
           content: Text(
             tr(
-              'Данные отправителя не совпадают с принятым запросом. Проверьте их с собеседником.',
-              'The sender does not match the accepted invitation. Check the details with your contact.',
+              'На устройстве нет сохранённого согласия. Сверьте код с собеседником перед принятием запроса от $label.',
+              'This device has no saved consent. Verify the device code with your contact before accepting the request from $label.',
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(tr('Закрыть', 'Close')),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('Отмена', 'Cancel')),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('Сверить код', 'Verify code')),
             ),
           ],
         ),
       );
+      if (confirmed != true || !await compare(peer, key, recheck: true)) return;
+      await recordConsent(id, peer, key, row?['username'] as String? ?? '');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              tr(
+                'Приглашение принято. Нажмите на чат, чтобы открыть его.',
+                'Invitation accepted. Tap the conversation to open it.',
+              ),
+            ),
+          ),
+        );
+      }
       return;
     }
-    if (!await compare(peer, key)) return;
-    await widget.crypto('directory_join', Map<String, dynamic>.from(welcome));
+    if (receipt['sender'] != peer ||
+        receipt['senderKey'] != key ||
+        (receipt['group'] != null && receipt['group'] != welcome['group'])) {
+      blockWelcome();
+      return;
+    }
+    await widget.crypto('directory_join', {
+      for (final field in [
+        'sender',
+        'recipient',
+        'invitation',
+        'group',
+        'lease',
+        'reference',
+        'welcome',
+        'signature',
+      ])
+        field: welcome[field],
+    });
     await widget.api('/v1/crypto/welcomes/${welcome['group']}/ack', data: {});
+    final name = receipt['username'] as String;
     await widget.openChat(
       welcome['group'] as String,
       peer,
-      invitation?['username'] as String? ?? tr('Собеседник', 'Contact'),
+      name.isEmpty ? tr('Собеседник', 'Contact') : name,
       key,
     );
   }
@@ -986,6 +1116,50 @@ class _AccountHubState extends State<AccountHub> {
             autocorrect: false,
             decoration: InputDecoration(
               labelText: tr('Имя собеседника', 'Contact username'),
+              suffixIcon: IconButton(
+                tooltip: tr(
+                  'Сканировать QR-код профиля',
+                  'Scan profile QR code',
+                ),
+                icon: const Icon(Icons.qr_code_scanner),
+                onPressed: blocked
+                    ? null
+                    : () async {
+                        final endpoint = account['endpoint'] as String?;
+                        if (endpoint == null) return;
+                        try {
+                          final name = await scanProfileCode(
+                            context,
+                            tr,
+                            endpoint,
+                          );
+                          if (mounted &&
+                              composing &&
+                              account['endpoint'] == endpoint &&
+                              name != null) {
+                            username.text = name;
+                          }
+                        } on FormatException {
+                          if (mounted) {
+                            setState(
+                              () => actionError = tr(
+                                'Нужен QR-код профиля с вашего сервера.',
+                                'Choose a profile QR code from your server.',
+                              ),
+                            );
+                          }
+                        } catch (_) {
+                          if (mounted) {
+                            setState(
+                              () => actionError = tr(
+                                'Не удалось прочитать QR-код.',
+                                'Could not read the QR code.',
+                              ),
+                            );
+                          }
+                        }
+                      },
+              ),
               border: const OutlineInputBorder(),
             ),
           ),
@@ -1133,6 +1307,15 @@ class _AccountHubState extends State<AccountHub> {
                               : () => action(() => create(r as Map)),
                           child: Text(tr('Создать чат', 'Create chat')),
                         )
+                      : r['recipientDevice'] == account['deviceId']
+                      ? TextButton(
+                          onPressed: blocked
+                              ? null
+                              : () => action(() => accept(r as Map)),
+                          child: Text(
+                            tr('Обновить подключение', 'Refresh connection'),
+                          ),
+                        )
                       : null)
                 : Row(
                     mainAxisSize: MainAxisSize.min,
@@ -1145,6 +1328,21 @@ class _AccountHubState extends State<AccountHub> {
                               ? null
                               : () => action(() => accept(r as Map)),
                         ),
+                      if (r['outgoing'] == false && widget.channelApi != null)
+                        IconButton(
+                          tooltip: tr(
+                            'Заблокировать запросы',
+                            'Block invitations',
+                          ),
+                          icon: const Icon(Icons.block),
+                          onPressed: blocked
+                              ? null
+                              : () => action(
+                                  () => manageContactBlocks(
+                                    r['username'] as String,
+                                  ),
+                                ),
+                        ),
                       IconButton(
                         tooltip: r['outgoing'] == true
                             ? tr('Отменить запрос', 'Cancel request')
@@ -1153,6 +1351,12 @@ class _AccountHubState extends State<AccountHub> {
                         onPressed: blocked
                             ? null
                             : () => action(() async {
+                                if (r['outgoing'] == false) {
+                                  await widget.crypto(
+                                    'directory_withdraw_consent',
+                                    {'invitation': r['id']},
+                                  );
+                                }
                                 await widget.api(
                                   '/v1/chat-requests/${r['id']}/dismiss',
                                   data: {},
@@ -1184,6 +1388,12 @@ class _AccountHubState extends State<AccountHub> {
             onTap: () => setState(() => channelsOpen = true),
           ),
 
+        if (widget.channelApi != null)
+          ListTile(
+            leading: const Icon(Icons.block),
+            title: Text(tr('Заблокированные аккаунты', 'Blocked accounts')),
+            onTap: blocked ? null : () => action(manageContactBlocks),
+          ),
         ExpansionTile(
           tilePadding: EdgeInsets.zero,
           leading: const Icon(Icons.devices_outlined),
@@ -1246,8 +1456,24 @@ class _AccountHubState extends State<AccountHub> {
     key: ValueKey(chat['id']),
     username: contactName(chat),
     fetch: widget.api,
-    route: peerPhotoRoute(chat['id'], chat['peerPhotoVersion']),
+    route: locallyBlockedAvatars.contains(chat['peerName'])
+        ? null
+        : peerPhotoRoute(chat['id'], chat['peerPhotoVersion']),
   );
+
+  Future<void> manageContactBlocks([String? username]) async {
+    final api = widget.channelApi;
+    if (api == null) return;
+    await showContactBlocks(
+      context,
+      api: api,
+      tr: tr,
+      username: username,
+      onBlocked: (name) {
+        if (mounted) setState(() => locallyBlockedAvatars.add(name));
+      },
+    );
+  }
 
   Future<void> inspectContact(Map chat) async {
     final group = chat['id'] as String;
@@ -1356,8 +1582,9 @@ class _AccountHubState extends State<AccountHub> {
     }
   }
 
-  bool isMuted(Map chat) => NotificationPreferences.fromProfile(widget.profile)
-      .mutedGroups.contains(chat['id']);
+  bool isMuted(Map chat) =>
+      NotificationPreferences.fromProfile(widget.profile).mutedGroups
+          .contains(chat['id']);
 
   Widget _chatRow(Map c, Set<String> pinned) => ListTile(
     key: ValueKey('chat-${c['id']}'),
@@ -1403,9 +1630,11 @@ class _AccountHubState extends State<AccountHub> {
         if (widget.onMute != null)
           PopupMenuItem(
             value: 'mute',
-            child: Text(isMuted(c)
-                ? tr('Включить уведомления', 'Unmute chat')
-                : tr('Отключить уведомления', 'Mute chat')),
+            child: Text(
+              isMuted(c)
+                  ? tr('Включить уведомления', 'Unmute chat')
+                  : tr('Отключить уведомления', 'Mute chat'),
+            ),
           ),
         PopupMenuItem(
           value: 'folders',
@@ -1442,8 +1671,11 @@ class _AccountHubState extends State<AccountHub> {
     subtitle: Row(
       children: [
         if (widget.onMute != null && isMuted(c)) ...[
-          Icon(Icons.notifications_off_outlined, size: 16,
-              semanticLabel: tr('Уведомления отключены', 'Notifications muted')),
+          Icon(
+            Icons.notifications_off_outlined,
+            size: 16,
+            semanticLabel: tr('Уведомления отключены', 'Notifications muted'),
+          ),
           const SizedBox(width: 4),
         ],
         if (pinned.contains(c['id'])) ...[

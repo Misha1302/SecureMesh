@@ -24,6 +24,13 @@ double percentile(List<double> values, double p) {
   return sorted[max(0, (sorted.length * p).ceil() - 1)];
 }
 
+// Linux /proc/PID/stat fields 14 and 15 aggregate all process threads.
+int processCpuTicks() {
+  final stat = File('/proc/self/stat').readAsStringSync();
+  final fields = stat.substring(stat.lastIndexOf(')') + 2).split(' ');
+  return int.parse(fields[11]) + int.parse(fields[12]);
+}
+
 Future<void> main(List<String> args) async {
   final fixture = jsonDecode(File(args.single).readAsStringSync()) as Map;
   await RustLib.init(
@@ -37,12 +44,31 @@ Future<void> main(List<String> args) async {
   final group = fixture['group'] as String,
       count = fixture['count'] as int,
       seed = fixture['seed'] as int;
+  final outage = fixture['outage'] as Map?;
+  final baseline = outage?['baseline'] as int?;
+  final outageIds = <Set<String>>[{}, {}];
+  double? restoreStarted;
   final sent = <String, Map<String, dynamic>>{}, received = <String, double>{};
+  final expectedTexts = <String, String>{};
   final clock = Stopwatch();
   double now() => clock.elapsedMicroseconds / 1000000;
   var stop = false;
   var retries = 0, httpsRequests = 0;
   final errors = <String>[];
+  List<Map<String, Object>> transportCounters() => [
+    for (final t in transports)
+      {
+        'mode': t.mode,
+        'upgrade_attempts': t.upgradeAttempts,
+        'upgrade_timeouts': t.upgradeTimeouts,
+        'upgrade_io_failures': t.upgradeIoFailures,
+        'hello_timeouts': t.helloTimeouts,
+        'frame_timeouts': t.frameTimeouts,
+        'fallback_attempts': t.fallbackAttempts,
+        'fallback_timeouts': t.fallbackTimeouts,
+        'fallback_io_failures': t.fallbackIoFailures,
+      },
+  ];
   Timer? reporting;
   try {
     for (final device in fixture['devices'] as List) {
@@ -113,6 +139,7 @@ Future<void> main(List<String> args) async {
     stdout.writeln('WARM_READY');
     await stdout.flush();
     await stdin.transform(utf8.decoder).transform(const LineSplitter()).first;
+    final initialCpuTicks = processCpuTicks();
     clock.start();
     reporting = Timer.periodic(const Duration(seconds: 10), (_) {
       File(fixture['progress'] as String).writeAsStringSync(
@@ -123,15 +150,23 @@ Future<void> main(List<String> args) async {
           'received': received.length,
           'elapsed_seconds': now(),
           'retries': retries,
+          'transports': transportCounters(),
         }),
       );
     });
-    final interval = fixture['profile'] == 'gprs' ? 1000 : 1500;
-    Future<void> offer(int index) async {
+    final interval = fixture['profile'] == 'severe' ? 1500 : 1000;
+    Future<void> offer(
+      int index,
+      int from,
+      int until, {
+      bool offline = false,
+    }) async {
       final rng = Random(seed + index),
           alphabet = 'abcПривет🌍'.runes.map(String.fromCharCode).toList();
-      for (var i = 0; i < count; i++) {
-        final remaining = i * interval - clock.elapsedMilliseconds;
+      for (var i = from; i < until; i++) {
+        final remaining = offline
+            ? 0
+            : i * interval - clock.elapsedMilliseconds;
         if (remaining > 0) {
           await Future<void>.delayed(Duration(milliseconds: remaining));
         }
@@ -140,6 +175,8 @@ Future<void> main(List<String> args) async {
           characters,
           (_) => alphabet[rng.nextInt(alphabet.length)],
         ).join();
+        if (offline) outageIds[index].add(id);
+        expectedTexts[id] = text;
         sent[id] = {
           'id': id,
           'sender': (fixture['devices'] as List)[index]['id'],
@@ -176,7 +213,12 @@ Future<void> main(List<String> args) async {
           }
           for (final event in history) {
             final id = event['id'] as String;
-            if (!sent.containsKey(id)) throw StateError('UNEXPECTED_MESSAGE');
+            final expected = sent[id];
+            if (expected == null) throw StateError('UNEXPECTED_MESSAGE');
+            if (expected['sender'] != fixture['devices'][1 - index]['id'] ||
+                event['text'] != expectedTexts[id]) {
+              throw StateError('RECIPIENT_OR_CONTENT_MISMATCH');
+            }
             received.putIfAbsent(id, now);
           }
         } on ApiFailure catch (e) {
@@ -223,18 +265,79 @@ Future<void> main(List<String> args) async {
         }),
       );
     }
-    await Future.wait([offer(0), offer(1)]);
-    while (received.length != count * 2) {
-      if (fatal != null) Error.throwWithStackTrace(fatal!, fatalStack!);
-      if (now() > 1200) throw TimeoutException('Missing durable messages');
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-    for (var i = 0; i < 2; i++) {
-      while ((await command(stores[i], 'outbox'))['messages'].isNotEmpty) {
+    Future<void> waitUntil(
+      FutureOr<bool> Function() ready,
+      String error,
+    ) async {
+      while (!await ready()) {
         if (fatal != null) Error.throwWithStackTrace(fatal!, fatalStack!);
-        if (now() > 1200) throw TimeoutException('Outbox did not drain');
+        if (now() > 1200) throw TimeoutException(error);
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
+    }
+
+    Future<Set<String>> outboxIds(int index) async {
+      final rows = (await command(stores[index], 'outbox'))['messages'] as List;
+      return rows.map((row) => row['id'] as String).toSet();
+    }
+
+    if (outage != null && baseline != null) {
+      File marker(String phase) => File('${outage['control']}/$phase');
+      await Future.wait([offer(0, 0, baseline), offer(1, 0, baseline)]);
+      await waitUntil(
+        () => received.length == baseline * 2,
+        'Baseline messages missing',
+      );
+      for (var i = 0; i < stores.length; i++) {
+        await waitUntil(
+          () async => (await outboxIds(i)).isEmpty,
+          'Baseline outbox not empty',
+        );
+      }
+      marker('baseline-ready').createSync();
+      await waitUntil(
+        () => marker('outage-active').existsSync(),
+        'Blackout was not applied',
+      );
+      await Future.wait([
+        offer(0, baseline, count, offline: true),
+        offer(1, baseline, count, offline: true),
+      ]);
+      Future<void> assertQueuedDuringOutage() async {
+        if (received.length != baseline * 2) {
+          throw StateError('DELIVERED_DURING_OUTAGE');
+        }
+        for (var i = 0; i < stores.length; i++) {
+          final ids = await outboxIds(i);
+          if (ids.length != outageIds[i].length ||
+              !ids.containsAll(outageIds[i])) {
+            throw StateError('OFFLINE_OUTBOX_NOT_DURABLE');
+          }
+        }
+      }
+
+      await assertQueuedDuringOutage();
+      marker('offline-queued').createSync();
+      await waitUntil(
+        () => marker('restore-starting').existsSync(),
+        'Restoration was not signalled',
+      );
+      await assertQueuedDuringOutage();
+      // Start the clock before Linux restores either network path.
+      restoreStarted = now();
+      marker('restore-timer-ready').createSync();
+    } else {
+      await Future.wait([offer(0, 0, count), offer(1, 0, count)]);
+    }
+    await waitUntil(
+      () => received.length == count * 2,
+      'Missing durable messages',
+    );
+    for (var i = 0; i < stores.length; i++) {
+      await waitUntil(
+        () async => (await outboxIds(i)).isEmpty,
+        'Outbox did not drain',
+      );
     }
     stop = true;
     await Future.wait(pumping);
@@ -247,6 +350,9 @@ Future<void> main(List<String> args) async {
           (e) => {
             ...e.value,
             'delivery_seconds': received[e.key]! - (e.value['start'] as double),
+            if (restoreStarted != null &&
+                outageIds.any((ids) => ids.contains(e.key)))
+              'recovery_seconds': received[e.key]! - restoreStarted,
           },
         )
         .toList();
@@ -256,6 +362,10 @@ Future<void> main(List<String> args) async {
           (await command(store, 'history', {'group': group}))['events'] as List;
       if (events.length != count) throw StateError('HISTORY_COUNT_MISMATCH');
     }
+    final recovery = records
+        .map((row) => row['recovery_seconds'])
+        .whereType<double>()
+        .toList();
     final result = {
       'profile': fixture['profile'],
       'seed': seed,
@@ -263,10 +373,28 @@ Future<void> main(List<String> args) async {
       'delivery_p50': percentile(delays, .5),
       'delivery_p95': percentile(delays, .95),
       'delivery_p99': percentile(delays, .99),
+      if (outage != null)
+        'outage': {
+          'requested_blackout_seconds': outage['seconds'],
+          'baseline_confirmed_each_direction': baseline,
+          'offline_queued_each_direction': outageIds
+              .map((ids) => ids.length)
+              .toList(),
+          'offline_delivered_before_restore': 0,
+          'recovery_p50': percentile(recovery, .5),
+          'recovery_p95': percentile(recovery, .95),
+          'recovery_p99': percentile(recovery, .99),
+          'recovery_p95_limit_seconds': outage['p95_limit'],
+        },
       'duplicates': 0,
       'missing_ids': 0,
       'elapsed_seconds': now(),
+      if (fixture['clock_ticks_per_second'] case final int hz)
+        'client_process_cpu_seconds':
+            (processCpuTicks() - initialCpuTicks) / hz,
+      'client_process_peak_rss_bytes': ProcessInfo.maxRss,
       'retries': retries,
+      'transports': transportCounters(),
       'recent_errors': errors,
       'https_requests': httpsRequests,
       'wss_application_bytes_sent': transports
@@ -282,8 +410,14 @@ Future<void> main(List<String> args) async {
       '${const JsonEncoder.withIndent('  ').convert(result)}\n',
     );
     stdout.writeln(jsonEncode({...result}..remove('records')));
-    if (fixture['profile'] == 'gprs' && result['delivery_p95'] as double > 15) {
-      throw StateError('GPRS_P95_EXCEEDED_15_SECONDS');
+    if (outage != null &&
+        percentile(recovery, .95) > (outage['p95_limit'] as int)) {
+      throw StateError('RECOVERY_P95_EXCEEDED');
+    }
+    const limits = {'gprs': 15, '3g': 8, '4g': 5, '5g': 5};
+    final limit = limits[fixture['profile']];
+    if (limit != null && (result['delivery_p95'] as double) > limit) {
+      throw StateError('DELIVERY_P95_EXCEEDED_${limit}_SECONDS');
     }
   } finally {
     reporting?.cancel();

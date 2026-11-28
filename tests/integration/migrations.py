@@ -65,8 +65,36 @@ def main():
                 '202611270016_DeviceClientMetadata',
                 '202611270017_UnicodeDisplayName',
                 '202611270018_SessionInactivity',
+                '202611280101_VerificationEmailQueue',
+                '202611280102_EmailTokenOwner',
+                '202611280103_VerificationEmailBudget',
+                '202611280104_DirectoryPackageOffer',
+                '202611280105_ContactBlocks',
+                '202611280106_AccountRecovery',
+                '202611280107_SecurityEmail',
+                '202611280108_ChannelReactions',
+                '202611280109_ChannelPostEditedAt',
+                '202611280110_ChannelComments',
+                '202611280111_ProfileTextVisibility',
+                '202611280112_ChannelPin',
+                '202611280113_ChannelPinCleanup',
+                '202611280114_ConversationMessageBlocks',
+                '202611280115_ConversationMessageBlockBarrier',
             ]
             assert result.strip().splitlines() == expected
+            # A missing table in this disposable database must produce a bounded diagnostic.
+            command('psql', '-U', 'securemesh', '-d', database, '-v', 'ON_ERROR_STOP=1',
+                    '-c', 'ALTER TABLE contact_blocks RENAME TO fixture_unavailable_blocks')
+            try:
+                error = d.request('/v1/contact-blocks', token=legacy['accessToken'], expected=503)
+                assert error == {'code': 'STORAGE_UNAVAILABLE'}
+            finally:
+                command('psql', '-U', 'securemesh', '-d', database, '-v', 'ON_ERROR_STOP=1',
+                        '-c', 'ALTER TABLE fixture_unavailable_blocks RENAME TO contact_blocks')
+            assert d.request('/v1/contact-blocks', token=legacy['accessToken']) == {'items': []}
+            log = Path(server.log.name).read_text()
+            assert 'Storage operation failed (PostgresException, SQLSTATE 42P01, transient False).' in log
+            assert 'fixture_unavailable_blocks' not in log and legacy['accessToken'] not in log
             print(f'PASS: {len(expected)} EF migrations on a fresh PostgreSQL database; idempotent restart preserves trust and device metadata.')
     finally:
         command('dropdb','-U','securemesh',database)

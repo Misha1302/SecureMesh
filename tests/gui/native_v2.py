@@ -10,8 +10,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
-import urllib.request
 import uuid
 from pathlib import Path
 
@@ -91,10 +89,7 @@ class NativeGui:
         if 'fill' in command:
             field=command['fill']
             if field=='verification':
-                url='http://127.0.0.1:58028/api/v1/search?query='+urllib.parse.quote('to:'+self.values['email'])
-                with urllib.request.urlopen(url) as r:messages=json.load(r)['messages']
-                assert len(messages)==1
-                with urllib.request.urlopen('http://127.0.0.1:58028/api/v1/message/'+messages[0]['ID']) as r:value=json.load(r)['Text'].strip()
+                value=d.verification_token(self.values['email'])
             elif field=='path':value=str(self.account()[0].path)
             else:value=self.values[field]
             self.type(value)
@@ -122,7 +117,8 @@ class NativeGui:
             requests=d.request('/v1/chat-requests',token=self.peer['session']['accessToken'])
             request=next(r for r in requests if r['senderDevice']==self.device.identity)
             self.peer['device'].pin(self.device)
-            kp=self.peer['device'].call('keypackage')['keypackage']
+            self.peer['device'].call('directory_consent',invitation=request['id'],sender=self.device.identity,senderKey=self.device.public,username=request['username'],confirmed=True)
+            kp=self.peer['device'].call('directory_consent_package',invitation=request['id'])['keypackage']
             d.request('/v1/crypto/keypackages',dict(payload=kp),token=self.peer['session']['accessToken'],expected=201)
             d.request(f"/v1/chat-requests/{request['id']}/accept",{},token=self.peer['session']['accessToken'],expected=204)
             print('Peer independently pinned GUI device, published real KeyPackage and accepted request.',flush=True)

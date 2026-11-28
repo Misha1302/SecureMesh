@@ -27,7 +27,7 @@
     <main>
       <header>
         <a href="./index.html">SecureMesh</a
-        ><button id="lock" hidden>Заблокировать</button>
+        ><button id="lock" hidden>Заблокировать профиль</button>
       </header>
       <h1 id="title">Локальный профиль</h1>
       <p id="notice" role="status" aria-live="polite"></p>
@@ -35,18 +35,21 @@
       <form id="entry" hidden>
         <div id="new-fields">
           <label
-            >Имя в профиле<input name="name" dir="auto" autocomplete="nickname"
+            >Как вас видят собеседники<input name="name" dir="auto" autocomplete="nickname"
           /></label>
           <label
-            >Уникальный @username<input
+            >Имя для поиска (@username)<input
               name="username"
               autocapitalize="none"
               spellcheck="false"
+              aria-describedby="username-hint"
+              placeholder="marina_24"
               pattern="[a-z0-9_]{3,32}"
               minlength="3"
               maxlength="32"
               autocomplete="username"
           /></label>
+          <p class="field-hint" id="username-hint">От 3 до 32 символов: строчные латинские буквы, цифры и знак подчёркивания.</p>
         </div>
         <label
           >Пароль<input
@@ -55,33 +58,15 @@
             required
             autocomplete="current-password"
         /></label>
+        <p class="field-hint" id="password-hint">Не менее 16 символов. Можно использовать фразу из нескольких слов.</p>
         <label class="check"
           ><input type="checkbox" id="show-password" />Показать пароль</label
         >
         <label class="check" id="confirm-label"
-          ><input type="checkbox" name="remembered" />Я сохранил пароль. Он
-          понадобится для входа и восстановления архива.</label
+          ><input type="checkbox" name="remembered" />Я сохранил пароль для входа и доступа к переписке на этом устройстве.</label
         >
         <button id="enter">Открыть профиль</button>
       </form>
-      <details id="archives">
-        <summary>Открыть зашифрованную копию переписки</summary>
-        <form id="restore">
-          <label
-            >Файл архива SecureMesh<input
-              type="file"
-              required
-              name="file" /></label
-          ><label
-            >Пароль архива<input
-              type="password"
-              name="secret"
-              required
-              autocomplete="off" /></label
-          ><button>Открыть для чтения</button>
-        </form>
-        <div id="archive-view"></div>
-      </details>
       <section id="account" hidden>
         <h2>Аккаунт</h2>
         <p id="account-name"></p>
@@ -102,46 +87,123 @@
               autocomplete="one-time-code" /></label
           ><button>Подтвердить почту</button>
         </form>
+        <form id="resend-verification" hidden><button>Запросить новый код</button></form>
         <form id="login" hidden><button>Войти на этом устройстве</button></form>
+        <details id="recovery" hidden>
+          <summary>Восстановить вход по почте</summary>
+          <p>Используйте пароль этого локального профиля как новый пароль аккаунта. Сервер получит только выведенный криптографический credential. Восстановление не переносит старые ключи и переписку.</p>
+          <form id="recovery-request">
+            <label>Подтверждённая почта<input type="email" name="email" required autocomplete="email" /></label>
+            <button>Отправить код восстановления</button>
+          </form>
+          <form id="recovery-complete">
+            <label>Код из письма<input name="code" required autocomplete="one-time-code" inputmode="text" /></label>
+            <button>Восстановить аккаунт</button>
+          </form>
+        </details>
       </section>
       <section id="conversations" hidden>
-        <details>
-          <summary>Мой код проверки</summary>
-          <p>Передайте собеседнику по независимому каналу.</p>
-          <code id="my-code" dir="ltr"></code>
-        </details>
-        <form id="invite">
-          <label
-            >Новый диалог<input
-              name="peer"
-              required
-              placeholder="@username"
-              autocapitalize="none"
-              spellcheck="false" /></label
-          ><button>Отправить приглашение</button>
-        </form>
-        <div id="requests"></div>
-        <div class="bar">
-          <h2>Чаты</h2>
-          <button id="refresh">Обновить</button>
-        </div>
-        <div id="chat-list"></div>
-        <section id="thread" hidden>
-          <h2 id="peer"></h2>
-          <button id="earlier" hidden>Показать предыдущие сообщения</button>
-          <ol id="messages"></ol>
-          <form id="compose">
-            <label
-              >Сообщение<textarea
-                name="text"
-                required
-                maxlength="4000"
-                rows="2"
-              ></textarea></label
-            ><button>Отправить</button>
+        <aside id="chat-sidebar" aria-label="Список чатов">
+          <div class="bar"><h2>Чаты</h2><button id="refresh">Обновить</button></div>
+          <div id="chat-list"></div>
+          <details id="chat-notifications">
+            <summary>Уведомления браузера</summary>
+            <p>О новых сообщениях в других чатах, пока профиль разблокирован. Имя собеседника и текст сообщения скрыты.</p>
+            <button type="button" id="chat-notification-permission" hidden>Разрешить уведомления</button>
+            <p id="chat-notification-status" role="status"></p>
+          </details>
+          <form id="invite">
+            <label>Новый диалог<input name="peer" required placeholder="@username"
+                autocapitalize="none" spellcheck="false" /></label>
+            <button>Отправить приглашение</button>
           </form>
+          <button id="use-linked-peer" type="button" hidden></button>
+          <div id="requests"></div>
+          <details>
+            <summary>Мой код проверки</summary>
+            <p>Передайте собеседнику по независимому каналу.</p>
+            <code id="my-code" dir="ltr"></code>
+          </details>
+        </aside>
+        <div id="thread-placeholder">Выберите чат или отправьте приглашение.</div>
+        <section id="thread" aria-labelledby="peer" hidden>
+          <div class="thread-header">
+            <button type="button" id="to-chats">Все чаты</button>
+            <h2 id="peer" tabindex="-1"></h2>
+            <button type="button" id="chat-search-toggle" aria-expanded="false" aria-controls="chat-search">Поиск в чате</button>
+            <section id="chat-search" aria-label="Поиск в чате" hidden>
+              <input id="chat-search-query" type="search" aria-label="Текст для поиска" placeholder="Текст для поиска" maxlength="256" autocomplete="off" spellcheck="false" />
+              <button type="button" id="chat-search-older">Предыдущее</button>
+              <button type="button" id="chat-search-newer">Следующее</button>
+              <p id="chat-search-result" role="status"></p>
+            </section>
+            <button type="button" id="peer-profile-open" aria-expanded="false" aria-controls="peer-profile" hidden>Анкета собеседника</button>
+            <section id="peer-profile" aria-label="Анкета собеседника" hidden>
+              <p id="peer-profile-note" role="status"></p>
+              <p id="peer-profile-status" hidden></p>
+              <p id="peer-profile-bio" hidden></p>
+              <details id="peer-invitations">
+                <summary>Блокировка приглашений</summary>
+                <p id="peer-block-description">Блокировка удаляет входящие приглашения от собеседника и запрещает новые. Вы перестанете видеть анкеты и фото друг друга. Переписка в этом чате продолжится.</p>
+                <button type="button" id="peer-block" aria-describedby="peer-block-description" disabled>Проверить блокировку</button>
+                <p id="peer-block-note" aria-live="polite"></p>
+              </details>
+              <details id="peer-messages">
+                <summary>Блокировка сообщений в этом чате</summary>
+                <p id="dm-block-scope">Новые сообщения в этом чате перестанут доставляться в обе стороны. Сообщения, уже сохранённые сервером, останутся доступны и могут появиться после блокировки. После снятия блокировки сообщения из очереди могут быть доставлены. Настройки приглашений меняются отдельно.</p>
+                <button id="dm-block" type="button" aria-describedby="dm-block-scope" disabled>Проверить состояние</button>
+                <p id="dm-block-note" aria-live="polite"></p>
+              </details>
+            </section>
+          </div>
+          <div id="timeline">
+            <button id="earlier" hidden>Показать предыдущие сообщения</button>
+            <ol id="messages" aria-label="Сообщения"></ol>
+          </div>
+          <form id="reconfirm-chat" hidden>
+            <p>Данные собеседника в каталоге расходились с сохранёнными. Отправка приостановлена. Сверьте прежний код устройства напрямую с собеседником.</p>
+            <label>Прежний код устройства<input name="code" required autocomplete="off" spellcheck="false" /></label>
+            <button>Проверить и возобновить отправку</button>
+          </form>
+          <div class="message-actions">
+            <details id="photo-picker">
+              <summary aria-label="Прикрепить фото">Фото</summary>
+              <form id="send-photo">
+                <label>Выберите фото<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required /></label>
+                <button>Отправить фото</button>
+              </form>
+            </details>
+            <form id="compose">
+              <textarea aria-label="Сообщение" placeholder="Сообщение" name="text" required maxlength="4000" rows="2"></textarea>
+              <button>Отправить</button>
+            </form>
+          </div>
         </section>
       </section>
+      <details id="profile-text" hidden>
+        <summary>Мой профиль</summary>
+        <button id="share-profile-link" type="button">Скопировать ссылку на профиль</button>
+        <input id="own-profile-link" aria-label="Ссылка на профиль" readonly hidden />
+        <p id="share-link-status" aria-live="polite"></p>
+        <form id="profile-text-form">
+          <fieldset disabled>
+            <label>О себе<textarea name="bio" rows="3"></textarea></label>
+            <label>Статус<input name="status" type="text" /></label>
+            <label class="check"><input name="visible" type="checkbox" />Показывать собеседникам</label>
+            <p>Описание и статус хранятся на сервере. Вы можете скрыть оба поля от собеседников.</p>
+            <button>Сохранить</button>
+          </fieldset>
+        </form>
+        <p id="profile-text-status" role="status"></p>
+        <button type="button" id="profile-text-reload" hidden>Загрузить с сервера</button>
+      </details>
+      <details id="security-email" hidden>
+        <summary>Письма о безопасности</summary>
+        <label class="check"><input id="security-email-enabled" type="checkbox" disabled />Получать письма на подтверждённую почту</label>
+        <p>При подключении доверенного устройства или повторном использовании ключа сеанса.</p>
+        <p id="security-email-status" role="status"></p>
+        <button type="button" id="security-email-retry" hidden>Повторить</button>
+      </details>
       <section id="backup" hidden>
         <details>
           <summary>Сохранить копию переписки</summary>
@@ -160,6 +222,24 @@
           </form>
         </details>
       </section>
+      <details id="archives">
+        <summary>Открыть зашифрованную копию переписки</summary>
+        <form id="restore">
+          <label
+            >Файл архива SecureMesh<input
+              type="file"
+              required
+              name="file" /></label
+          ><label
+            >Пароль архива<input
+              type="password"
+              name="secret"
+              required
+              autocomplete="off" /></label
+          ><button>Открыть для чтения</button>
+        </form>
+        <div id="archive-view"></div>
+      </details>
     </main>
   </body>
 </html>

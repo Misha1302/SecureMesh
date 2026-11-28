@@ -4,12 +4,16 @@ import {
   unlockVault,
   closeVault,
   commitVault,
+  persistBindingConflicts,
+  handoffVault,
   readBackup,
   exportBackup,
   maxBackupLength,
 } from "./vault.js";
 import { createAccount, apiOrigin, deviceFingerprint } from "./account.js";
 import { createMessenger } from "./messenger.js";
+import { privatePhotoControl } from "./private-image.js";
+import { findHistory, historyPage, matchesHistory, searchText, timelinePageSize } from "./history-search.js";
 
 const byId = (id) => document.getElementById(id);
 const show = (id, visible) => {
@@ -18,6 +22,7 @@ const show = (id, visible) => {
 const notice = (message) => {
   byId("notice").textContent = message;
 };
+let closingVault = Promise.resolve();
 let opened,
   selected,
   generation = 0,
@@ -29,13 +34,18 @@ const codes = {
   conflict: "Профиль изменился в другой вкладке. Откройте его заново.",
   verification: "Код не совпал. Сверьте отпечаток по независимому каналу.",
   "changed-key": "Ключ собеседника изменился. Отправка остановлена.",
+  CONVERSATION_MESSAGES_BLOCKED: "Доставка сообщений в этом чате приостановлена. Очередь сохранена.",
+  "handoff-unavailable": "Браузер не может защитить отправку между вкладками.",
   NETWORK_UNAVAILABLE:
     "Нет соединения с совместимым сервером. Проверьте сеть и доступность API.",
   INVALID_TOKEN: "Не удалось подтвердить код.",
+  INVALID_RECOVERY: "Код восстановления недействителен, истёк или уже использован.",
+  INVALID_EMAIL: "Укажите адрес почты для восстановления.",
   INVALID_DISPLAY_NAME: "Проверьте имя профиля.",
   INVALID_CREDENTIALS: "Проверьте пароль и подтверждение почты.",
   SESSION_REQUIRED: "Войдите в аккаунт ещё раз.",
   SESSION_EXPIRED: "Срок сессии истёк. Очередь сохранена.",
+  attachment: "Вложение не удалось подготовить или открыть. Проверьте формат, размер файла и очередь отправки.",
   size: "Недостаточно места или превышен лимит файла.",
   DEVICE_ENROLLMENT_REQUIRED:
     "Это устройство ожидает независимого подтверждения.",
@@ -85,26 +95,76 @@ function rpc() {
   };
 }
 function attach(handle, worker) {
-  const instance = { handle, worker };
+  const instance = {
+    handle, worker,
+    received: new Map(Object.values(handle.state.messenger?.chats ?? {}).map(chat => [chat.id, chat.receivedCount ?? 0])),
+    muteWrites: new Set(),
+  };
   opened = instance;
   let tail = Promise.resolve();
+  let timer;
+  const edited = new Map();
+  let pendingConflicts = 0;
+  function applyEdits(profile, snapshot) {
+    for (const [id, edit] of snapshot) {
+      const chat = profile.messenger?.chats[id];
+      if (!chat) continue;
+      if (edit.text) chat.draft = edit;
+      else delete chat.draft;
+    }
+  }
+  instance.getDraft = (id) => edited.get(id) ?? handle.state.messenger?.chats[id]?.draft;
+  instance.edit = (id, text) => {
+    edited.set(id, { text, revision: crypto.randomUUID() });
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (edited.size && opened === instance) {
+        change(() => {}).catch((error) => {
+          if (opened === instance) notice(errorMessage(error));
+        });
+      }
+    }, 350);
+  };
+  instance.close = () => {
+    clearTimeout(timer);
+    if (!edited.size && !pendingConflicts) {
+      closeVault(handle);
+      return;
+    }
+    // Stop the UI and worker immediately. Finish already scheduled conflict and draft writes.
+    closingVault = tail.then(async () => {
+      if (!edited.size) return;
+      const profile = structuredClone(handle.state);
+      applyEdits(profile, edited);
+      await commitVault(handle, profile);
+    }).catch(() => notice("Не удалось сохранить последнее изменение черновика."))
+      .finally(() => { edited.clear(); closeVault(handle); });
+  };
   function state() {
     if (opened !== instance) throw failure("locked");
     return handle.state;
   }
+  function handleConflict(error) {
+    if (error.code === "conflict" && opened === instance) {
+      lock();
+      notice(codes.conflict);
+    }
+    throw error;
+  }
   function change(work) {
     const next = tail.then(async () => {
       const draft = structuredClone(state());
+      const captured = new Map(edited);
+      applyEdits(draft, captured);
       const result = await work(draft);
       state();
       try {
         await commitVault(handle, draft);
-      } catch (error) {
-        if (error.code === "conflict" && opened === instance) {
-          lock();
-          notice(codes.conflict);
+        for (const [id, edit] of captured) {
+          if (edited.get(id) === edit) edited.delete(id);
         }
-        throw error;
+      } catch (error) {
+        handleConflict(error);
       }
       state();
       return result;
@@ -115,6 +175,24 @@ function attach(handle, worker) {
   const ctx = {
     state,
     update: change,
+    persistBindingConflicts(groups) {
+      state();
+      pendingConflicts++;
+      const next = tail.then(() => persistBindingConflicts(handle, groups));
+      tail = next.catch(() => {});
+      return next.catch(handleConflict).finally(() => { pendingConflicts--; });
+    },
+    handoff(check, send) {
+      const inspect = async (op, fields) => {
+        const { result } = await worker.call({
+          snapshot: state().snapshot,
+          request: { ...fields, op },
+        });
+        state();
+        return result;
+      };
+      return handoffVault(handle, () => check(inspect), send).catch(handleConflict);
+    },
     derive: (endpoint, username) =>
       worker.call({ type: "derive", args: [endpoint, username] }),
     run: (op, fields = {}, mutate) =>
@@ -128,17 +206,252 @@ function attach(handle, worker) {
         return result;
       }),
   };
+  instance.markRead = (group, count) => change(draft => {
+    const chat = draft.messenger.chats[group];
+    if (chat) chat.readCount = Math.max(chat.readCount ?? 0, Math.min(count, chat.receivedCount ?? 0));
+  });
+  instance.setMuted = (group, muted) => change(draft => {
+    const chat = draft.messenger?.chats[group];
+    if (chat) chat.notificationsMuted = muted;
+  });
   instance.account = createAccount(ctx);
-  instance.mesh = createMessenger({ ...ctx, api: instance.account.api });
+  instance.mesh = createMessenger({
+    ...ctx, api: instance.account.api, apiBytes: instance.account.apiBytes,
+    onBindingConflict: group => {
+      if (opened === instance && selected === group) {
+        clearPeerProfile();
+        show("peer-profile-open", false);
+      }
+    },
+  });
   return instance;
 }
+function disposePhotoControls(current) {
+  for (const control of current?.photoControls ?? []) control.dispose();
+  current?.photoControls?.clear();
+}
+
+let peerProfileView;
+const peerBlockWrites = new Map();
+
+function clearPeerFields() {
+  byId("peer-profile-note").textContent = "";
+  for (const id of ["peer-profile-status", "peer-profile-bio"]) {
+    byId(id).textContent = "";
+    show(id, false);
+  }
+}
+
+function clearPeerProfile() {
+  peerProfileView = undefined;
+  const button = byId("peer-profile-open");
+  button.textContent = "Анкета собеседника";
+  button.setAttribute("aria-expanded", "false");
+  show("peer-profile", false);
+  clearPeerFields();
+  byId("peer-invitations").open = false;
+  byId("peer-messages").open = false;
+  byId("dm-block").disabled = true;
+  byId("dm-block-note").textContent = "";
+  byId("peer-block").disabled = true;
+  byId("peer-block").textContent = "Проверить блокировку";
+  byId("peer-block-note").textContent = "";
+}
+
+function peerProfileContext() {
+  const state = opened?.handle.state;
+  if (!selected || !state?.session || state.session.refreshPending ||
+      !state.enrollmentVerified || state.trustState !== "DEVICE_TRUSTED" ||
+      !opened.mesh.canViewPeer(selected)) return;
+  const { peerDevice, peerKey, peerName } = state.messenger.chats[selected];
+  return { current: opened, group: selected, peerDevice, peerKey, peerName,
+    blockKey: `${state.userId}:${peerName}` };
+}
+
+function samePeerProfile(view, context) {
+  return view && context && view.current === context.current && view.group === context.group &&
+    view.peerDevice === context.peerDevice && view.peerKey === context.peerKey &&
+    view.peerName === context.peerName;
+}
+
+byId("peer-profile-open").onclick = async () => {
+  if (peerProfileView) {
+    clearPeerProfile();
+    return;
+  }
+  const view = peerProfileContext();
+  if (!view || document.hidden) return;
+  if (chatSearch) {
+    clearChatSearch();
+    renderChats();
+    byId("timeline").scrollTop = byId("timeline").scrollHeight;
+  }
+  peerProfileView = view;
+  const button = byId("peer-profile-open");
+  button.textContent = "Закрыть анкету";
+  button.setAttribute("aria-expanded", "true");
+  show("peer-profile", true);
+  await loadPeerProfile(view);
+};
+
+function activePeerProfile(view) {
+  return peerProfileView === view && !document.hidden && samePeerProfile(view, peerProfileContext());
+}
+
+async function loadPeerProfile(view) {
+  const read = view.read = Symbol();
+  const active = () => activePeerProfile(view) && view.read === read;
+  const button = byId("peer-block");
+  const note = byId("peer-profile-note");
+  const blockNote = byId("peer-block-note");
+  clearPeerFields();
+  blockNote.textContent = "";
+  button.textContent = "Проверка блокировки…";
+  button.disabled = true;
+  view.blocked = undefined;
+  note.textContent = "Загрузка…";
+  try {
+    // Reopening the same contact waits for any explicit preceding mutation.
+    await peerBlockWrites.get(view.blockKey)?.catch(() => {});
+    if (!active()) return;
+    const blocks = await view.current.account.api("/v1/contact-blocks");
+    if (!active()) return;
+    if (!Array.isArray(blocks?.items) || !blocks.items.every(name => typeof name === "string"))
+      throw failure("format");
+    view.blocked = blocks.items.includes(view.peerName);
+    button.textContent = view.blocked ? "Разблокировать" : "Заблокировать приглашения";
+    button.disabled = false;
+    if (view.blocked) {
+      note.textContent = "Нет доступных сведений.";
+      return;
+    }
+    const result = await view.current.account.api(
+      `/v1/conversations/${view.group}/profile-text/${view.peerDevice}`,
+    );
+    if (!active()) return;
+    for (const [field, limit] of [["status", 80], ["bio", 280]]) {
+      const value = result?.[field];
+      if (value !== null && (typeof value !== "string" || [...value].length > limit))
+        throw failure("format");
+    }
+    for (const field of ["status", "bio"]) {
+      const id = `peer-profile-${field}`;
+      byId(id).textContent = result[field] ?? "";
+      show(id, Boolean(result[field]));
+    }
+    note.textContent = result.status || result.bio ? "" : "Нет доступных сведений.";
+  } catch {
+    if (!active()) return;
+    note.textContent = "Анкета недоступна.";
+    if (view.blocked === undefined) button.textContent = "Повторить проверку";
+    button.disabled = false;
+  }
+}
+
+byId("peer-block").onclick = async () => {
+  const view = peerProfileView;
+  if (!view || !activePeerProfile(view)) return;
+  const button = byId("peer-block");
+  if (button.disabled) return;
+  if (view.blocked === undefined) {
+    await loadPeerProfile(view);
+    return;
+  }
+  const method = view.blocked ? "DELETE" : "PUT";
+  view.read = undefined;
+  clearPeerFields();
+  button.disabled = true;
+  byId("peer-block-note").textContent = "Сохранение…";
+  const request = view.current.account.api(`/v1/contact-blocks/${encodeURIComponent(view.peerName)}`, undefined, method);
+  peerBlockWrites.set(view.blockKey, request);
+  let failed = false;
+  try {
+    await request;
+  } catch {
+    failed = true;
+  } finally {
+    if (peerBlockWrites.get(view.blockKey) === request) peerBlockWrites.delete(view.blockKey);
+  }
+  if (!activePeerProfile(view)) return;
+  if (failed) {
+    view.blocked = undefined;
+    button.textContent = "Повторить проверку";
+    button.disabled = false;
+    byId("peer-block-note").textContent = "Не удалось подтвердить изменение. Проверьте состояние перед повтором.";
+    return;
+  }
+  await loadPeerProfile(view);
+};
+
+const messageBlockWrites = new Map();
+
+async function messageBlockControl(view, change = false) {
+  const panel = byId("peer-messages"), button = byId("dm-block"), note = byId("dm-block-note");
+  const active = () => panel.open && activePeerProfile(view) && view.messageBlockRequest === token;
+  const token = view.messageBlockRequest = Symbol();
+  const route = `/v1/conversations/${view.group}/message-block`;
+  const method = change ? (view.messageBlockOwn ? "DELETE" : "PUT") : "GET";
+  const key = `${view.blockKey}:${view.group}`;
+  view.messageBlockOwn = undefined;
+  button.disabled = true;
+  note.textContent = change ? "Сохранение…" : "Проверка…";
+  try {
+    await messageBlockWrites.get(key)?.catch(() => {});
+    if (!active()) return;
+    const request = view.current.account.api(route, undefined, method);
+    if (change) messageBlockWrites.set(key, request);
+    let result;
+    try {
+      result = await request;
+    } finally {
+      if (messageBlockWrites.get(key) === request) messageBlockWrites.delete(key);
+    }
+    if (!active()) return;
+    if (typeof result?.blockedByYou !== "boolean" || typeof result.paused !== "boolean")
+      throw failure("format");
+    view.messageBlockOwn = result.blockedByYou;
+    view.current.pausedConversations ??= new Set();
+    if (result.blockedByYou) view.current.pausedConversations.add(view.group);
+    else view.current.pausedConversations.delete(view.group);
+    button.textContent = result.blockedByYou ? "Снять блокировку сообщений" : "Заблокировать сообщения";
+    note.textContent = result.paused ? "Доставка сообщений в этом чате приостановлена." : "Доставка сообщений разрешена.";
+    renderChats();
+    if (change && !result.paused) view.current.mesh.tick().catch(() => {});
+  } catch {
+    if (!active()) return;
+    button.textContent = "Повторить проверку";
+    note.textContent = "Не удалось подтвердить состояние блокировки.";
+  } finally {
+    if (active()) button.disabled = false;
+  }
+}
+byId("peer-messages").ontoggle = () => {
+  const view = peerProfileView;
+  if (!view) return;
+  if (byId("peer-messages").open) void messageBlockControl(view);
+  else view.messageBlockRequest = undefined;
+};
+byId("dm-block").onclick = () => {
+  const view = peerProfileView;
+  if (view && activePeerProfile(view) && !byId("dm-block").disabled)
+    void messageBlockControl(view, view.messageBlockOwn !== undefined);
+};
+
 function lock() {
   generation++;
+  linkedPeer = undefined;
+  offerLinkedPeer();
+  clearSharedLink();
+  clearChatSearch();
+  clearPeerProfile();
   const current = opened;
   opened = null;
+  clearChatNotifications(current);
+  disposePhotoControls(current);
+  stopWatchingUnread();
   current?.mesh.stop();
   current?.worker.stop();
-  if (current) closeVault(current.handle);
+  current?.close();
   selected = null;
   directory = {};
   for (const form of document.forms) form.reset();
@@ -156,6 +469,174 @@ function lock() {
   notice("");
   layout();
 }
+let linkedPeer;
+const profileName = /^[a-z0-9_]{3,32}$/;
+
+function takeProfileFragment() {
+  const fragment = location.hash;
+  if (!fragment.startsWith("#/@")) return;
+  history.replaceState(history.state, "", location.pathname + location.search);
+  const name = fragment.slice(3);
+  linkedPeer = profileName.test(name) ? name : undefined;
+}
+
+function clearSharedLink() {
+  byId("own-profile-link").value = "";
+  show("own-profile-link", false);
+  byId("share-link-status").textContent = "";
+}
+
+function offerLinkedPeer(replace = false) {
+  const target = byId("use-linked-peer");
+  target.hidden = true;
+  target.textContent = "";
+  if (!linkedPeer || !opened || byId("conversations").hidden) return;
+  const input = byId("invite").elements.peer;
+  if (linkedPeer === opened.handle.state.username) {
+    linkedPeer = undefined;
+    return;
+  }
+  if (selected) byId("to-chats").click();
+  if (input.value && input.value !== linkedPeer && !replace) {
+    target.textContent = "Выбрать @" + linkedPeer + " из ссылки";
+    target.hidden = false;
+    return;
+  }
+  input.value = linkedPeer;
+  linkedPeer = undefined;
+}
+
+byId("use-linked-peer").onclick = () => offerLinkedPeer(true);
+takeProfileFragment();
+window.addEventListener("hashchange", () => {
+  takeProfileFragment();
+  offerLinkedPeer();
+});
+byId("share-profile-link").onclick = async () => {
+  const current = opened;
+  const name = current?.handle.state.username;
+  if (!current || byId("profile-text").hidden || !profileName.test(name ?? "")) return;
+  const link = new URL("./profile.html", location.href);
+  link.hash = "/@" + name;
+  const field = byId("own-profile-link");
+  try {
+    await navigator.clipboard.writeText(link.href);
+    if (opened === current && byId("profile-text").open) byId("share-link-status").textContent = "Ссылка скопирована.";
+  } catch {
+    if (opened !== current || !byId("profile-text").open) return;
+    field.value = link.href;
+    show("own-profile-link", true);
+    field.focus();
+    field.select();
+    byId("share-link-status").textContent = "Скопируйте выделенную ссылку.";
+  }
+};
+
+const profileForm = byId("profile-text-form");
+let profileRevision = null;
+let profileDirty = false;
+let profileRequest;
+
+function clearProfileText() {
+  profileRequest = undefined;
+  profileRevision = null;
+  profileDirty = false;
+  profileForm.reset();
+  profileForm.querySelector("fieldset").disabled = true;
+  byId("profile-text").open = false;
+  byId("profile-text-status").textContent = "";
+  show("profile-text-reload", false);
+}
+
+async function editProfileText(save) {
+  const current = opened;
+  if (!current || byId("profile-text").hidden || profileRequest) return;
+  if (save && profileRevision === null) return;
+  const fields = profileForm.elements;
+  const message = byId("profile-text-status");
+  if (save && ([...fields.bio.value].length > 280 || [...fields.status.value].length > 80)) {
+    message.textContent = "Описание допускает до 280 символов, статус — до 80.";
+    return;
+  }
+  const body = save ? {bio: fields.bio.value || null, status: fields.status.value || null,
+    visibleToPeers: fields.visible.checked, revision: profileRevision} : undefined;
+  const request = {};
+  profileRequest = request;
+  const fieldset = profileForm.querySelector("fieldset");
+  fieldset.disabled = true;
+  message.textContent = save ? "Сохранение…" : "Загрузка…";
+  show("profile-text-reload", false);
+  try {
+    const base = "/v1/users/me/profile-text";
+    const result = await current.account.api(save ? base + "/with-visibility" : base, body, save ? "PUT" : "GET");
+    if (opened !== current || profileRequest !== request) return;
+    if (!Number.isSafeInteger(result?.revision) || result.revision < 0 ||
+        typeof result.visibleToPeers !== "boolean" ||
+        ![result.bio, result.status].every(value => value === null || typeof value === "string"))
+      throw new Error("INVALID_PROFILE");
+    fields.bio.value = result.bio ?? "";
+    fields.status.value = result.status ?? "";
+    fields.visible.checked = result.visibleToPeers;
+    profileRevision = result.revision;
+    profileDirty = false;
+    message.textContent = save ? "Сохранено" : "";
+  } catch (error) {
+    if (opened !== current || profileRequest !== request) return;
+    message.textContent = error.status === 409
+      ? "Профиль изменён на другом устройстве. Загрузка с сервера заменит ваш черновик."
+      : save ? "Не удалось сохранить изменения. Проверьте текст и повторите." : "Не удалось загрузить профиль.";
+    show("profile-text-reload", !save || error.status === 409);
+  } finally {
+    if (profileRequest === request) {
+      profileRequest = undefined;
+      fieldset.disabled = profileRevision === null;
+    }
+  }
+}
+byId("profile-text").ontoggle = () => {
+  if (!byId("profile-text").open) clearSharedLink();
+  else if (!profileDirty) editProfileText(false);
+};
+profileForm.oninput = () => { profileDirty = true; };
+profileForm.onsubmit = event => {
+  event.preventDefault();
+  editProfileText(true);
+};
+byId("profile-text-reload").onclick = () => editProfileText(false);
+
+async function securityEmail(choice) {
+  const current = opened;
+  if (!current || current.securityEmailBusy || !byId("security-email").open) return;
+  current.securityEmailBusy = true;
+  const control = byId("security-email-enabled");
+  control.disabled = true;
+  byId("security-email-status").textContent = choice === undefined ? "Загрузка…" : "Сохранение…";
+  show("security-email-retry", false);
+  try {
+    const result = await current.account.api("/v1/users/me/security-email",
+      choice === undefined ? undefined : {enabled: choice}, choice === undefined ? "GET" : "PUT");
+    if (opened !== current) return;
+    if (typeof result?.enabled !== "boolean" || (choice !== undefined && result.enabled !== choice))
+      throw new Error("INVALID_PREFERENCE");
+    control.checked = result.enabled;
+    control.indeterminate = false;
+    control.disabled = false;
+    byId("security-email-status").textContent = choice === undefined ? "" : "Сохранено";
+  } catch {
+    if (opened !== current) return;
+    control.indeterminate = true;
+    byId("security-email-status").textContent = "Не удалось проверить настройку.";
+    show("security-email-retry", true);
+  } finally {
+    current.securityEmailBusy = false;
+  }
+}
+byId("security-email").ontoggle = () => {
+  if (byId("security-email").open) securityEmail();
+};
+byId("security-email-enabled").onchange = (event) => securityEmail(event.target.checked);
+byId("security-email-retry").onclick = () => securityEmail();
+
 function layout() {
   const state = opened?.handle.state;
   const trusted = Boolean(
@@ -168,6 +649,9 @@ function layout() {
   show("entry", !state);
   show("new-fields", !hasLocal);
   show("confirm-label", !hasLocal);
+  show("password-hint", !hasLocal);
+  if (hasLocal) byId("password").removeAttribute("aria-describedby");
+  else byId("password").setAttribute("aria-describedby", "password-hint");
   const form = byId("entry");
   form.elements.username.disabled = hasLocal;
   form.elements.name.disabled = hasLocal;
@@ -184,30 +668,253 @@ function layout() {
       ? "Аккаунт SecureMesh"
       : hasLocal
         ? "Разблокировка"
-        : "Локальный профиль";
+        : "Создание профиля";
   show("lock", !!state);
   show("account", !!state && !trusted);
   show("backup", !!state);
   show("conversations", trusted);
+  show("profile-text", trusted);
+  if (!trusted) {
+    clearSharedLink();
+    clearProfileText();
+    clearPeerProfile();
+    clearChatSearch();
+    clearChatNotifications(opened);
+  }
+  show("security-email", trusted);
+  if (!trusted) {
+    byId("security-email").open = false;
+    byId("security-email-enabled").checked = false;
+    byId("security-email-enabled").indeterminate = true;
+    byId("security-email-enabled").disabled = true;
+    byId("security-email-status").textContent = "";
+    show("security-email-retry", false);
+  }
   if (!state) return;
   byId("account-name").textContent =
     state.displayName + " · @" + state.username;
   const stage = state.registrationStage;
   show("register", !stage && !state.userId);
   show("verify", !state.userId && ["registered", "verifying"].includes(stage));
+  show("resend-verification", !state.userId && ["registered", "verifying"].includes(stage));
+  show("recovery", !state.userId);
   show(
     "login",
     Boolean(state.userId || ["verifying", "verified"].includes(stage)),
   );
-  if (trusted) renderChats();
+  if (trusted) {
+    offerLinkedPeer();
+    renderChats();
+  }
 }
 function element(tag, text) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
   return node;
 }
+const chatClock = new Intl.DateTimeFormat("ru", {hour: "2-digit", minute: "2-digit"});
+const notificationTag = "securemesh-incoming";
+let notificationTail = Promise.resolve();
+
+function notificationPermission() {
+  if (typeof globalThis.Notification?.requestPermission === "function" && navigator.serviceWorker) {
+    return Notification.permission;
+  }
+}
+
+function renderNotificationPermission() {
+  const permission = notificationPermission();
+  show("chat-notification-permission", permission === "default");
+  byId("chat-notification-status").textContent = {
+    granted: "Уведомления разрешены.",
+    denied: "Уведомления заблокированы в настройках браузера.",
+    default: "",
+  }[permission] ?? "Этот браузер не поддерживает уведомления приложения.";
+}
+
+byId("chat-notifications").ontoggle = () => {
+  if (opened && byId("chat-notifications").open) renderNotificationPermission();
+};
+byId("chat-notification-permission").onclick = async () => {
+  const current = opened;
+  if (!current || notificationPermission() !== "default") return;
+  const button = byId("chat-notification-permission");
+  button.disabled = true;
+  try {
+    await Notification.requestPermission();
+  } catch {
+    // Permission prompts may be unavailable in the browser's current window.
+  } finally {
+    button.disabled = false;
+  }
+  if (opened === current && !byId("conversations").hidden) {
+    renderNotificationPermission();
+    if (button.hidden) byId("chat-notifications").querySelector("summary").focus();
+  }
+};
+
+function clearChatNotifications(current) {
+  byId("chat-notifications").open = false;
+  show("chat-notification-permission", false);
+  byId("chat-notification-status").textContent = "";
+  if (!current?.hasBrowserNotice) return;
+  current.hasBrowserNotice = false;
+  notificationTail = notificationTail.then(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    for (const notice of await registration?.getNotifications({ tag: notificationTag }) ?? []) notice.close();
+  }).catch(() => {});
+}
+
+function notifyNewMessages(current, chats) {
+  const arrivals = [];
+  for (const { id, receivedCount = 0, readCount = 0, notificationsMuted } of Object.values(chats)) {
+    const previous = current.received.get(id) ?? 0;
+    current.received.set(id, receivedCount);
+    if (receivedCount > Math.max(previous, readCount) && id !== selected && notificationsMuted !== true) arrivals.push(id);
+  }
+  if (!arrivals.length || document.hidden || notificationPermission() !== "granted") return;
+  current.hasBrowserNotice = true;
+  notificationTail = notificationTail.then(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (opened !== current || document.hidden || byId("conversations").hidden || !registration?.active) return;
+    const chats = current.handle.state.messenger?.chats;
+    if (!arrivals.some(id => {
+      const chat = chats?.[id];
+      return id !== selected && chat && chat.notificationsMuted !== true && (chat.receivedCount ?? 0) > (chat.readCount ?? 0);
+    })) return;
+    await registration.showNotification("SecureMesh", { body: "Новое сообщение", tag: notificationTag, renotify: true });
+  }).catch(() => {});
+}
+
+let unreadWatch;
+function stopWatchingUnread() {
+  unreadWatch?.observer.disconnect();
+  unreadWatch = undefined;
+}
+function watchUnread(chat, target) {
+  const current = opened, group = selected, total = chat?.receivedCount ?? 0;
+  if (!current || !chat || !target || document.visibilityState !== "visible" || total <= (chat.readCount ?? 0)) {
+    stopWatchingUnread();
+    return;
+  }
+  if (unreadWatch?.target === target && unreadWatch.total === total) return;
+  stopWatchingUnread();
+  const observer = new IntersectionObserver(entries => {
+    if (unreadWatch?.observer !== observer || opened !== current || selected !== group ||
+        document.visibilityState !== "visible" || !entries.at(-1)?.isIntersecting) return;
+    observer.disconnect();
+    current.markRead(group, total).then(() => {
+      if (opened === current) renderChats();
+    }).catch(error => {
+      if (unreadWatch?.observer === observer) stopWatchingUnread();
+      if (opened === current) notice(errorMessage(error));
+    });
+  });
+  unreadWatch = {observer, target, total};
+  observer.observe(target);
+}
+document.addEventListener("visibilitychange", () => {
+  stopWatchingUnread();
+  if (document.hidden) clearPeerProfile();
+  if (opened && !byId("conversations").hidden) renderChats();
+});
+
+let chatSearch;
+
+function clearChatSearch() {
+  clearTimeout(chatSearch?.timer);
+  chatSearch = undefined;
+  const toggle = byId("chat-search-toggle");
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.textContent = "Поиск в чате";
+  show("chat-search", false);
+  byId("chat-search-query").value = "";
+  byId("chat-search-result").textContent = "";
+}
+
+function selectHistoryMatch(state, messages, index) {
+  state.index = index;
+  state.id = messages[index]?.id;
+  state.direction = messages[index]?.direction;
+  state.length = undefined;
+  state.center = index >= 0;
+}
+
+function updateChatSearch(messages) {
+  const state = chatSearch;
+  if (!state || !state.query) return;
+  // Message identifiers are unique per sender in this two-device conversation.
+  const sameMatch = message => message?.id === state.id && message.direction === state.direction &&
+    matchesHistory(message, state.query);
+  if (state.id && !sameMatch(messages[state.index])) {
+    const index = messages.findIndex(sameMatch);
+    selectHistoryMatch(state, messages, index >= 0 ? index : findHistory(messages, state.query, messages.length - 1, -1));
+  } else if (!state.id && state.length !== messages.length) {
+    selectHistoryMatch(state, messages, findHistory(messages, state.query, messages.length - 1, -1));
+  }
+  if (state.length === messages.length) return;
+  state.length = messages.length;
+  state.older = state.id ? findHistory(messages, state.query, state.index - 1, -1) : -1;
+  state.newer = state.id ? findHistory(messages, state.query, state.index + 1, 1) : -1;
+  byId("chat-search-older").disabled = state.older < 0;
+  byId("chat-search-newer").disabled = state.newer < 0;
+  byId("chat-search-result").textContent = state.id ? "Совпадение найдено." : "Совпадений нет.";
+}
+
+byId("chat-search-toggle").onclick = () => {
+  if (!opened || !selected) return;
+  if (chatSearch) {
+    clearChatSearch();
+    renderChats();
+    byId("timeline").scrollTop = byId("timeline").scrollHeight;
+    return;
+  }
+  if (peerProfileView) clearPeerProfile();
+  chatSearch = { current: opened, group: selected };
+  const toggle = byId("chat-search-toggle");
+  toggle.setAttribute("aria-expanded", "true");
+  toggle.textContent = "Закрыть поиск";
+  byId("chat-search-older").disabled = true;
+  byId("chat-search-newer").disabled = true;
+  show("chat-search", true);
+  byId("chat-search-query").focus();
+};
+byId("chat-search-query").oninput = event => {
+  const state = chatSearch;
+  if (!state) return;
+  clearTimeout(state.timer);
+  state.query = "";
+  state.id = undefined;
+  state.length = undefined;
+  byId("chat-search-older").disabled = true;
+  byId("chat-search-newer").disabled = true;
+  byId("chat-search-result").textContent = "";
+  state.timer = setTimeout(() => {
+    if (chatSearch !== state) return;
+    state.query = searchText(event.target.value.trim());
+    renderChats();
+  }, 100);
+};
+for (const direction of ["older", "newer"]) {
+  byId(`chat-search-${direction}`).onclick = () => {
+    const state = chatSearch;
+    if (!state || state[direction] < 0) return;
+    const messages = opened.handle.state.messenger.chats[selected].messages;
+    selectHistoryMatch(state, messages, state[direction]);
+    renderChats();
+  };
+}
+
+function centerSearchMatch(timeline, row) {
+  const bounds = row.getBoundingClientRect();
+  timeline.scrollTop += bounds.top - timeline.getBoundingClientRect().top -
+    (timeline.clientHeight - bounds.height) / 2;
+  chatSearch.center = false;
+}
+
 function renderChats() {
   const chats = opened?.handle.state.messenger?.chats ?? {};
+  notifyNewMessages(opened, chats);
   const list = byId("chat-list");
   const identities = Object.values(chats).map(({ id, peerName }) => [
     id,
@@ -218,51 +925,203 @@ function renderChats() {
     opened.listSignature = signature;
     list.replaceChildren();
     for (const [id, peerName] of identities) {
-      const btn = element("button", "@" + peerName);
+      const row = element("div");
+      row.className = "chat-list-row";
+      const btn = element("button");
+      const avatar = element("span", peerName.slice(0, 1).toUpperCase());
+      avatar.className = "chat-avatar";
+      avatar.setAttribute("aria-hidden", "true");
+      const body = element("span");
+      body.className = "chat-row-text";
+      const preview = element("span");
+      preview.className = "chat-preview";
+      const label = element("strong", "@" + peerName);
+      label.id = `chat-label-${id}`;
+      body.append(label, preview);
+      const unread = element("span");
+      unread.className = "chat-unread";
+      unread.hidden = true;
+      btn.append(avatar, body, unread);
+      btn.dataset.chat = id;
       btn.onclick = () => {
         if (selected !== id) {
-          opened.visibleMessages = 100;
-          byId("compose").reset();
+          opened.visibleMessages = timelinePageSize;
+          byId("compose").elements.text.value = opened.getDraft(id)?.text ?? "";
+          composeRevision++;
         }
         selected = id;
         opened.mesh.select(id);
         renderChats();
+        if (window.matchMedia("(max-width: 44rem)").matches) byId("peer").focus();
       };
-      list.append(btn);
+      const mute = element("button", "Без звука");
+      mute.type = "button";
+      mute.className = "chat-mute";
+      mute.setAttribute("aria-describedby", label.id);
+      mute.onclick = async () => {
+        const current = opened;
+        const chat = current?.handle.state.messenger?.chats[id];
+        if (!chat || current.muteWrites.has(id)) return;
+        current.muteWrites.add(id);
+        mute.setAttribute("aria-disabled", "true");
+        try {
+          await current.setMuted(id, chat.notificationsMuted !== true);
+        } catch (error) {
+          if (opened === current) notice(errorMessage(error));
+        } finally {
+          current.muteWrites.delete(id);
+          if (opened === current) renderChats();
+        }
+      };
+      row.append(btn, mute);
+      list.append(row);
     }
     if (!identities.length)
       list.textContent = "Здесь появятся проверенные диалоги.";
   }
-  const chat = chats[selected];
-  show("thread", Boolean(chat));
-  if (!chat) return;
-  byId("peer").textContent = "@" + chat.peerName;
-  const messages = byId("messages");
-  const count = opened.visibleMessages ?? 100;
-  show("earlier", chat.messages.length > count);
-  const rows = chat.messages.slice(-count);
-  const version = JSON.stringify([
-    selected,
-    rows.map(({ id, status }) => [id, status]),
-  ]);
-  if (opened.timelineSignature === version) return;
-  opened.timelineSignature = version;
-  messages.replaceChildren();
-  for (const message of rows) {
-    const row = element("li", message.text);
-    row.dir = "auto";
-    if (message.direction === "outgoing") {
-      row.className = "out";
-      row.append(
-        element(
-          "small",
-          message.status === "saved" ? "Принято сервером" : "В очереди",
-        ),
-      );
+  for (const button of list.querySelectorAll("button[data-chat]")) {
+    const id = button.dataset.chat;
+    const mute = button.nextElementSibling;
+    mute.setAttribute("aria-pressed", String(chats[id].notificationsMuted === true));
+    mute.setAttribute("aria-disabled", String(opened.muteWrites.has(id)));
+    const unread = button.querySelector(".chat-unread");
+    const count = (chats[id].receivedCount ?? 0) - (chats[id].readCount ?? 0);
+    unread.hidden = count <= 0;
+    if (count > 0) {
+      unread.textContent = String(count);
+      unread.setAttribute("aria-label", "Непрочитанных сообщений: " + count);
     }
+    const last = chats[id].messages.at(-1);
+    const preview = opened.getDraft(id)?.text;
+    const summary = preview ? "Черновик: " + preview : last?.text || "Пока нет сообщений";
+    const field = button.querySelector(".chat-preview");
+    if (field.textContent !== summary) field.textContent = summary;
+    if (id === selected) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
+  }
+  const chat = chats[selected];
+  if (chatSearch && (!chat || chatSearch.current !== opened || chatSearch.group !== selected)) clearChatSearch();
+  const peerContext = peerProfileContext();
+  if (peerProfileView && !samePeerProfile(peerProfileView, peerContext)) clearPeerProfile();
+  show("peer-profile-open", Boolean(peerContext));
+  byId("conversations").classList.toggle("thread-open", Boolean(chat));
+  show("thread-placeholder", !chat);
+  show("thread", Boolean(chat));
+  if (!chat) {
+    stopWatchingUnread();
+    disposePhotoControls(opened);
+    opened.mesh.select(null);
+    opened.timelineSignature = null;
+    opened.renderedGroup = null;
+    byId("messages").replaceChildren();
+    return;
+  }
+  byId("peer").textContent = "@" + chat.peerName;
+  show("reconfirm-chat", Boolean(chat.bindingConflict));
+  const paused = opened.pausedConversations?.has(selected);
+  show("compose", !chat.bindingConflict && !paused);
+  show("photo-picker", !chat.bindingConflict && !paused && chat.active !== false);
+  if (opened.renderedGroup !== selected || chat.bindingConflict) {
+    byId("send-photo").reset();
+    byId("photo-picker").open = false;
+  }
+  if (opened.renderedGroup !== selected) byId("reconfirm-chat").reset();
+  const messages = byId("messages");
+  const count = opened.visibleMessages ?? timelinePageSize;
+  updateChatSearch(chat.messages);
+  const match = chatSearch?.id;
+  show("earlier", !match && chat.messages.length > count);
+  const [start, end] = match ? historyPage(chat.messages.length, chatSearch.index) :
+    [Math.max(0, chat.messages.length - count), chat.messages.length];
+  const rows = chat.messages.slice(start, end);
+  const version = JSON.stringify([
+    selected, match, chatSearch?.direction,
+    rows.map(({ id, status, direction }) => [id, status, direction]),
+  ]);
+  const timeline = byId("timeline");
+  if (opened.timelineSignature === version) {
+    if (match) {
+      if (chatSearch.center) centerSearchMatch(timeline, messages.querySelector(".search-match"));
+      return;
+    }
+    watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
+    return;
+  }
+  let matchingRow;
+  const previousHeight = timeline.scrollHeight;
+  const previousTop = timeline.scrollTop;
+  const wasAtEnd = previousHeight - previousTop - timeline.clientHeight < 48;
+  const newChat = opened.renderedGroup !== selected;
+  const previousFirst = messages.firstElementChild?.dataset.message;
+  const prepended = !newChat && previousFirst && rows[0]?.id !== previousFirst &&
+    rows.some((message) => message.id === previousFirst);
+  opened.renderedGroup = selected;
+  opened.timelineSignature = version;
+  disposePhotoControls(opened);
+  opened.photoControls ??= new Set();
+  messages.replaceChildren();
+  for (const [offset, message] of rows.entries()) {
+    const row = element("li");
+    row.append(element("span", message.text));
+    if (message.attachment?.media === "photo" && message.status !== "queued") {
+      const name = typeof message.attachment.name === "string" ? message.attachment.name : "Фото";
+      const current = opened;
+      const group = selected;
+      const control = privatePhotoControl({
+        name,
+        open: () => current.mesh.openPhoto(group, message),
+        release: (url) => current.mesh.releasePhoto(url),
+        onError: (error) => {
+          if (opened === current) notice(errorMessage(error));
+        },
+      });
+      opened.photoControls.add(control);
+      row.append(control.element);
+    }
+    const footer = element("small");
+    if (Number.isFinite(message.recordedAt)) {
+      const when = new Date(message.recordedAt);
+      if (!Number.isNaN(when.getTime())) {
+        const time = element("time", chatClock.format(when));
+        time.dateTime = when.toISOString();
+        time.title = "Время на этом устройстве";
+        footer.append(time);
+      }
+    }
+    row.dir = "auto";
+    row.dataset.message = message.id;
+    if (match && start + offset === chatSearch.index) {
+      row.classList.add("search-match");
+      row.setAttribute("aria-current", "true");
+      matchingRow = row;
+    }
+    if (message.direction === "outgoing") {
+      row.classList.add("out");
+      footer.append(element("span", message.status === "saved" ? "Принято сервером" : "В очереди"));
+    }
+    if (footer.childNodes.length) row.append(footer);
     messages.append(row);
   }
+  if (prepended) timeline.scrollTop = previousTop + timeline.scrollHeight - previousHeight;
+  else if (newChat || wasAtEnd) timeline.scrollTop = timeline.scrollHeight;
+  if (matchingRow) {
+    stopWatchingUnread();
+    if (chatSearch.center) centerSearchMatch(timeline, matchingRow);
+  } else {
+    watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
+  }
 }
+byId("to-chats").onclick = () => {
+  const old = selected;
+  selected = null;
+  composeRevision++;
+  byId("compose").reset();
+  byId("send-photo").reset();
+  renderChats();
+  for (const button of byId("chat-list").querySelectorAll("button[data-chat]")) {
+    if (button.dataset.chat === old) button.focus();
+  }
+};
 function renderRequests(current, value) {
   const root = byId("requests");
   const rows = [];
@@ -272,14 +1131,28 @@ function renderRequests(current, value) {
     if (!row.established && row.outgoing && row.accepted)
       rows.push(["establish", row, "Открыть чат с @" + row.username]);
   }
-  for (const row of value?.welcomes ?? [])
-    rows.push(["join", row, "Открыть проверенное приглашение"]);
+  for (const row of value?.welcomes ?? []) {
+    const receipt = current.handle.state.messenger?.accepted?.[row.invitation];
+    if (!receipt?.posted || receipt.reference !== row.reference ||
+        row.recipient !== current.handle.state.identity.identity ||
+        receipt.peerDevice !== row.sender || receipt.peerKey !== row.senderKey) {
+      rows.push(["blocked", row, "Приглашение не совпадает с сохранённым согласием. Попросите собеседника отправить новое."]);
+    } else if (!receipt.coreConsent && !receipt.joined) {
+      rows.push(["reconfirm", row, "Сверить код и повторно принять приглашение"]);
+    } else {
+      rows.push(["join", row, "Проверить приглашение и открыть чат"]);
+    }
+  }
   // Keep the fingerprint field and its focus during background refreshes.
   const key = JSON.stringify(rows);
   if (current.requestKey === key) return;
   current.requestKey = key;
   root.replaceChildren();
   for (const [act, row, label] of rows) {
+    if (act === "blocked") {
+      root.append(element("p", label));
+      continue;
+    }
     const form = element("form"),
       button = element("button", label);
     button.dataset.action = act;
@@ -298,7 +1171,7 @@ function renderRequests(current, value) {
     }
     form.append(button);
     bind(form, async () => {
-      await current.mesh[act](row, form.elements.fingerprint?.value);
+      await current.mesh[act === "reconfirm" ? "join" : act](row, form.elements.fingerprint?.value);
       await refresh(current);
     });
     root.append(form);
@@ -363,6 +1236,8 @@ bind(byId("entry"), async () => {
   const worker = rpc();
   let handle;
   try {
+    await closingVault;
+    if (before !== generation) throw failure("locked");
     if (hasLocal) handle = await unlockVault(password);
     else {
       const username = form.elements.username.value.trim();
@@ -418,7 +1293,7 @@ bind(byId("entry"), async () => {
     throw err;
   }
 });
-for (const id of ["register", "verify", "login"]) {
+for (const id of ["register", "verify", "resend-verification", "recovery-request", "recovery-complete", "login"]) {
   const form = byId(id);
   bind(form, async () => {
     const current = opened,
@@ -439,6 +1314,16 @@ for (const id of ["register", "verify", "login"]) {
       }
       notice("Почта подтверждена. Можно войти.");
       form.reset();
+    } else if (id === "resend-verification") {
+      await current.account.resendVerification();
+      notice("Проверьте почту. Новый код можно запрашивать раз в пять минут, до пяти раз в сутки.");
+    } else if (id === "recovery-request") {
+      await current.account.requestRecovery(form.elements.email.value);
+      notice("Если адрес подтверждён, письмо с кодом восстановления отправлено.");
+    } else if (id === "recovery-complete") {
+      await current.account.completeRecovery(form.elements.code.value);
+      form.reset();
+      notice("Пароль аккаунта восстановлен. Теперь войдите на этом устройстве.");
     } else {
       await current.account.login();
       notice(
@@ -453,6 +1338,14 @@ for (const id of ["register", "verify", "login"]) {
     }
   });
 }
+bind(byId("reconfirm-chat"), async () => {
+  const current = opened, group = selected, form = byId("reconfirm-chat");
+  await current.mesh.reconfirmChat(group, form.elements.code.value);
+  if (opened === current && selected === group) {
+    form.reset();
+    renderChats();
+  }
+});
 bind(byId("invite"), async () => {
   const f = byId("invite"),
     current = opened;
@@ -461,14 +1354,33 @@ bind(byId("invite"), async () => {
   notice("Приглашение отправлено.");
   await refresh(current);
 });
+let composeRevision = 0;
+byId("compose").elements.text.addEventListener("input", (event) => {
+  composeRevision++;
+  if (opened && selected) opened.edit(selected, event.target.value);
+});
 bind(byId("compose"), async () => {
   const current = opened,
     form = byId("compose"),
+    group = selected,
+    revision = composeRevision,
     text = form.elements.text.value;
   if (!text.trim()) return;
-  await current.mesh.send(selected, text);
+  await current.mesh.send(group, text, current.getDraft(group)?.revision);
   if (opened !== current) return;
-  form.reset();
+  if (selected === group && composeRevision === revision) form.reset();
+  renderChats();
+});
+bind(byId("send-photo"), async () => {
+  const current = opened, group = selected, form = byId("send-photo");
+  const file = form.elements.photo.files[0];
+  if (!current || !group || !file) return;
+  await current.mesh.sendPhoto(group, file);
+  if (opened !== current || selected !== group) return;
+  if (form.elements.photo.files[0] === file) {
+    form.reset();
+    byId("photo-picker").open = false;
+  }
   renderChats();
 });
 function archiveValid(value) {
@@ -551,7 +1463,7 @@ byId("show-password").onchange = (e) => {
 };
 byId("earlier").onclick = () => {
   if (!opened) return;
-  opened.visibleMessages = (opened.visibleMessages ?? 100) + 100;
+  opened.visibleMessages = (opened.visibleMessages ?? timelinePageSize) + timelinePageSize;
   renderChats();
 };
 byId("lock").onclick = lock;

@@ -14,11 +14,15 @@ cargo +1.100.0 build --locked --manifest-path src/crypto_core/Cargo.toml
 node src/browser_crypto/tests/interop.mjs
 ```
 
-The interoperability test loads the generated WebAssembly module, creates a disposable SQLCipher native profile, checks the v2 credential vector, verifies key packages with the native validator, exchanges signed MLS invitations and text in both directions, and applies a native rekey. It also checks pin replacement rejection, invitation tampering, envelope bindings, and replay rejection. A Node pass covers wasm and native wire interoperability. Verify Safari, IndexedDB and iPhone home-screen behavior on their respective runners.
+The interoperability test loads the generated WebAssembly module, creates a disposable SQLCipher native profile, checks the v2 credential vector, verifies key packages with the native validator, exchanges signed MLS invitations and text in both directions, and applies a native rekey. It also checks pin replacement rejection, invitation tampering, MLS Welcome recipient references, envelope bindings, and replay rejection. A new PWA invitation publishes a dedicated KeyPackage. Joining compares the signed reference against the reference saved with local consent and the actual recipient entry inside the MLS Welcome. Existing PWA conversations retain their previous state. A Node pass covers wasm and native wire interoperability. Verify Safari, IndexedDB and iPhone home-screen behavior on their respective runners.
 
 ## Caller contract
 
 After initialization, pass the prior decrypted profile snapshot and a serialized request to `execute`. The result contains a replacement snapshot and the operation result. Initialization takes an absent snapshot and a canonical nonzero device UUID. An error leaves the input snapshot authoritative.
+
+The `directory_consent` operation requires an explicit local confirmation, an independently pinned sender key and the invitation UUID. The application is responsible for presenting that confirmation to the user. The core retains the exact local KeyPackage and its reference for retries and binds each consent to a single joined group. The application persists the returned snapshot and invitation receipt together before publishing the package.
+
+Loading a version 1 snapshot upgrades it to version 2 on the next successful operation. Existing groups retain their state and can replay their exact signed Welcome. For a pending legacy invitation the user must reconfirm the independent fingerprint. The core can adopt the saved package only when its reference matches and the corresponding private package is available locally. A missing package or mismatched Welcome requires a fresh invitation. Older runtimes cannot read the upgraded snapshot.
 
 Keep the snapshot in the browser vault. Persist the replacement snapshot atomically with the matching outbox entry, inbound event and cursor, or other transport state before acting on the result. Keep the decrypted snapshot and all secret key fields out of logs, network requests, and caches. The OpenMLS memory adapter exists only within the transaction. Durable profile semantics come from the vault and are subject to browser storage and runtime security.
 

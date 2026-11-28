@@ -16,6 +16,8 @@ check() {
 check bundle python3 tools/verify_bundle.py
 check build dotnet build src/SecureMesh.Api --no-restore
 check crypto-build cargo build --locked --manifest-path src/crypto_core/Cargo.toml
+check directory-bootstrap cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test directory_bootstrap
+check key-directory-proofs cargo test --locked --manifest-path src/key_directory/Cargo.toml
 check profile-schema cargo test --locked --manifest-path src/crypto_core/Cargo.toml --lib profile_schema
 check encrypted-drafts cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test conversation_drafts
 check encrypted-replies cargo test --locked --manifest-path src/crypto_core/Cargo.toml --test message_replies
@@ -36,14 +38,23 @@ check enrollment-quota .local/venv/bin/python tests/integration/enrollment_quota
 check migrations .local/venv/bin/python tests/integration/migrations.py
 check account-removal .local/venv/bin/python tests/integration/account_removal.py
 check private-blobs .local/venv/bin/python tests/integration/private_blobs.py
+check verification-email-queue .local/venv/bin/python tests/integration/verification_email_queue.py
+check account-recovery .local/venv/bin/python tests/integration/account_recovery.py
+check session-delivery-order .local/venv/bin/python tests/integration/delivery_recovery_serialization.py
+check security-email .local/venv/bin/python tests/integration/security_email.py
+check profile-text .local/venv/bin/python tests/integration/profile_text.py
+check contact-blocks .local/venv/bin/python tests/integration/contact_blocks.py
 check mls-directory .local/venv/bin/python tests/integration/directory.py
 check public-channels .local/venv/bin/python tests/integration/public_channels.py
+check channel-comments .local/venv/bin/python tests/integration/channel_comments.py
 check restore-v2 .local/venv/bin/python tests/integration/restore_v2.py
 check secrets python3 scripts/scan_secrets.py
 check pub-osv python3 tools/audit_pub_osv.py
 check rust-format cargo fmt --manifest-path src/crypto_core/Cargo.toml -- --check
 if [[ -x .local/security/bin/cargo-audit ]]; then
   check rustsec-current .local/security/bin/cargo-audit audit --file src/crypto_core/Cargo.lock --db .local/advisory-db --json
+  check rustsec-browser .local/security/bin/cargo-audit audit --file src/browser_crypto/Cargo.lock --db .local/advisory-db --no-fetch --json
+  check rustsec-directory .local/security/bin/cargo-audit audit --file src/key_directory/Cargo.lock --db .local/advisory-db --no-fetch --json
 else
   check rustsec-tool test -x .local/security/bin/cargo-audit
 fi

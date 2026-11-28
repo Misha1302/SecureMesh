@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
 import 'voice_wave.dart';
+import 'voice_transcription.dart';
 
 typedef VoiceLabel = String Function(String, String);
 
@@ -60,18 +61,24 @@ class VoicePlayer extends StatefulWidget {
     this.resumeAt = Duration.zero,
     this.onPosition,
     this.makePlayer = AudioPlayer.new,
+    this.transcription,
+    this.transcribeOnOpen = false,
   });
   final Uint8List bytes;
   final VoiceLabel tr;
   final Duration resumeAt;
   final ValueChanged<Duration>? onPosition;
   final AudioPlayer Function() makePlayer;
+  final LocalVoiceTranscription? transcription;
+  final bool transcribeOnOpen;
   @override
   State<VoicePlayer> createState() => _VoicePlayerState();
 }
 
 class _VoicePlayerState extends State<VoicePlayer> {
   AudioPlayer? player;
+  late final LocalVoiceTranscription transcription =
+      widget.transcription ?? LocalVoiceTranscription();
   late final Duration duration;
   late final List<double> peaks;
   double rate = 1;
@@ -82,6 +89,9 @@ class _VoicePlayerState extends State<VoicePlayer> {
   Directory? scratch;
   RandomAccessFile? lease;
   Future<void>? action;
+  bool transcriptionAvailable = false, transcribing = false;
+  String? transcript;
+  bool showTranscript = false, transcriptionFailed = false;
 
   @override
   void initState() {
@@ -89,6 +99,34 @@ class _VoicePlayerState extends State<VoicePlayer> {
     duration = voiceDuration(widget.bytes);
     peaks = voicePeaks(widget.bytes);
     position = clamp(widget.resumeAt);
+    unawaited(
+      transcription.available.then((value) {
+        if (!mounted) return;
+        setState(() => transcriptionAvailable = value);
+        if (value && widget.transcribeOnOpen) unawaited(recognize());
+      }),
+    );
+  }
+
+  Future<void> recognize() async {
+    if (transcribing || !transcriptionAvailable) return;
+    setState(() {
+      transcribing = true;
+      transcriptionFailed = false;
+    });
+    try {
+      final text = await transcription.transcribe(widget.bytes);
+      if (mounted) {
+        setState(() {
+          transcript = text;
+          showTranscript = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => transcriptionFailed = true);
+    } finally {
+      if (mounted) setState(() => transcribing = false);
+    }
   }
 
   Duration clamp(Duration value) =>
@@ -173,6 +211,7 @@ class _VoicePlayerState extends State<VoicePlayer> {
 
   @override
   void dispose() {
+    transcription.cancel();
     unawaited(release().catchError((_) {}));
     super.dispose();
   }
@@ -206,7 +245,16 @@ class _VoicePlayerState extends State<VoicePlayer> {
                   : widget.tr('Воспроизвести', 'Play'),
               onPressed: busy || failed
                   ? null
-                  : () => run((p) => playing ? p.pause() : p.resume()),
+                  : () => run((p) async {
+                      if (playing) {
+                        await p.pause();
+                      } else {
+                        if (position == Duration.zero) {
+                          await p.seek(Duration.zero);
+                        }
+                        await p.resume();
+                      }
+                    }),
               icon: Icon(playing ? Icons.pause : Icons.play_arrow),
             ),
             Expanded(
@@ -236,6 +284,44 @@ class _VoicePlayerState extends State<VoicePlayer> {
             ),
           ],
         ),
+        if (transcriptionAvailable) ...[
+          if (transcript != null && showTranscript) SelectableText(transcript!),
+          if (transcriptionFailed)
+            Text(
+              widget.tr(
+                'Не удалось распознать локально.',
+                'Local transcription failed.',
+              ),
+            ),
+          TextButton.icon(
+            onPressed: transcribing
+                ? null
+                : transcript == null
+                ? recognize
+                : () => setState(() => showTranscript = !showTranscript),
+            icon: transcribing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.transcribe),
+            label: Text(
+              transcribing
+                  ? widget.tr(
+                      'Распознавание на устройстве…',
+                      'Transcribing on device…',
+                    )
+                  : transcript != null
+                  ? (showTranscript
+                        ? widget.tr('Скрыть текст', 'Hide transcript')
+                        : widget.tr('Показать текст', 'Show transcript'))
+                  : transcriptionFailed
+                  ? widget.tr('Повторить распознавание', 'Retry transcription')
+                  : widget.tr('Распознать локально', 'Transcribe locally'),
+            ),
+          ),
+        ],
         PopupMenuButton<double>(
           tooltip: widget.tr('Скорость воспроизведения', 'Playback speed'),
           enabled: !busy && !failed && !rateUnavailable,

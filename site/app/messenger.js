@@ -1,7 +1,10 @@
+import { normalizeSelectedPhoto, outgoingPhotoLimit, photoHeader } from "./private-image.js";
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const usernamePattern = /^[a-z0-9_]{3,32}$/;
 const empty = Object.freeze({});
 const pageSize = 6;
+const privateAttachmentLimit = 4 * 1024 * 1024;
 const backgroundPullInterval = 9_000;
 const activePollInterval = 2_500;
 
@@ -30,6 +33,14 @@ function base64(value, min, max = min) {
   requireValue(binary.length >= min && binary.length <= max && btoa(binary) === value,
     "format", "Invalid encoded message data");
   return Uint8Array.from(binary, (byte) => byte.charCodeAt(0));
+}
+
+function encodeBase64(bytes) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
 }
 
 async function sha256(bytes) {
@@ -86,7 +97,86 @@ export function createMessenger(ctx) {
   let backgroundDue = 0;
   let rateLimitedUntil = 0;
   let rateLimitFailure;
-  const remoteBlocked = new Set();
+  const remoteBlocked = new Map();
+  const reconfirming = new Set();
+  const privateImageUrls = new Set();
+  let privateImageGeneration = 0;
+
+  function releasePhoto(url) {
+    if (privateImageUrls.delete(url)) URL.revokeObjectURL(url);
+  }
+  function clearPhotos() {
+    privateImageGeneration++;
+    for (const url of privateImageUrls) URL.revokeObjectURL(url);
+    privateImageUrls.clear();
+  }
+
+  async function openPhoto(group, message) {
+    const chat = readChat(group);
+    ensureUsable(chat);
+    const id = uuid(message?.id);
+    const info = message?.attachment;
+    requireValue(info?.media === "photo" && Number.isSafeInteger(info.size) &&
+      info.size > 0 && info.size <= privateAttachmentLimit &&
+      typeof info.name === "string" && info.name.length <= 255,
+      "attachment", "This encrypted attachment is not a supported image");
+    const generationAtStart = privateImageGeneration;
+    const active = () => requireValue(generationAtStart === privateImageGeneration,
+      "locked", "The private image view was closed");
+    const sealed = await ctx.apiBytes(
+      `/v1/conversations/${uuid(group)}/blobs/${uuid(info.blobId)}`, info.size + 16,
+    );
+    let opened;
+    try {
+      active();
+      requireValue(sealed.length === info.size + 16, "attachment", "The encrypted image size does not match its message");
+      opened = await ctx.run("attachment_open", {
+        group, id, attachment: info, ciphertext: encodeBase64(sealed),
+      });
+      active();
+    } finally {
+      sealed.fill(0);
+    }
+    requireValue(opened?.media === "photo" && opened.size === info.size,
+      "attachment", "The encrypted image did not authenticate");
+    let plain = base64(opened.data, info.size, info.size);
+    delete opened.data;
+    let source;
+    try {
+      const { mime } = photoHeader(plain);
+      source = new Blob([plain], { type: mime });
+    } finally {
+      plain.fill(0);
+      plain = null;
+    }
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(source);
+      active();
+      requireValue(bitmap.width > 0 && bitmap.height > 0 && bitmap.width <= 8192 &&
+        bitmap.height <= 8192 && bitmap.width * bitmap.height <= 16_000_000,
+        "attachment", "The image dimensions exceed the safe preview limit");
+      const scale = Math.min(1, 960 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext("2d", { alpha: false });
+      requireValue(context, "attachment", "Image preview is unavailable");
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const safeBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.86));
+      canvas.width = 0;
+      canvas.height = 0;
+      requireValue(safeBlob && safeBlob.size > 0 && safeBlob.size <= privateAttachmentLimit,
+        "attachment", "The image preview could not be encoded safely");
+      active();
+      const url = URL.createObjectURL(safeBlob);
+      privateImageUrls.add(url);
+      return url;
+    } finally {
+      bitmap?.close();
+    }
+  }
+
 
   const state = () => ctx.state()?.messenger ?? empty;
   const readChat = (id) => {
@@ -95,9 +185,31 @@ export function createMessenger(ctx) {
     return chat;
   };
 
+  function observeConflict(id) {
+    remoteBlocked.set(id, Symbol());
+    ctx.onBindingConflict?.(id);
+  }
+
+  async function persistConflicts(ids) {
+    if (!ids.length) return;
+    if (ctx.persistBindingConflicts) await ctx.persistBindingConflicts(ids);
+    else await ctx.update((draft) => {
+      for (const id of ids) {
+        const chat = transport(draft).chats[id];
+        if (chat) chat.bindingConflict = true;
+      }
+    });
+  }
+
+  function bindingBlocked(chat) {
+    return chat.bindingConflict || remoteBlocked.has(chat.id) || reconfirming.has(chat.id);
+  }
+
   function ensureUsable(chat) {
+    requireValue(chat, "unknown-chat", "This conversation has not been verified");
     requireValue(chat.active !== false, "inactive-chat", "This conversation is inactive");
-    requireValue(!remoteBlocked.has(chat.id), "changed-key", "The conversation contact changed");
+    requireValue(!bindingBlocked(chat),
+      "changed-key", "The conversation contact changed");
   }
 
   async function identity() {
@@ -109,9 +221,9 @@ export function createMessenger(ctx) {
     const fields = { identity: peer.peerDevice, public_key: peer.peerKey };
     const { status } = await ctx.run("peer_key_status", fields);
     requireValue(status === "unknown" || status === "matches", "changed-key", "The contact device key changed");
-    if (alreadyBound && !entered) {
-      requireValue(status === "matches", "verification", "The contact device key must be verified");
-      return;
+    if (alreadyBound) {
+      requireValue(status === "matches", "verification", "The saved contact device key is unavailable");
+      if (!entered) return;
     }
     const enteredCode = typeof entered === "string" && entered.length <= 256
       ? entered.replace(/\s+/gu, "").toUpperCase() : "";
@@ -129,11 +241,19 @@ export function createMessenger(ctx) {
     requireValue(Array.isArray(requests) && requests.length <= 100 &&
       Array.isArray(welcomes) && welcomes.length <= 20 && Array.isArray(chats) && chats.length <= 100,
       "format", "Invalid conversation directory");
-    for (const row of chats) {
-      const chat = state().chats?.[uuid(row.id)];
-      if (chat && !samePeer(chat, row)) remoteBlocked.add(row.id);
+    const changed = new Set();
+    try {
+      for (const row of chats) {
+        const chat = state().chats?.[uuid(row.id)];
+        if (chat && !samePeer(chat, row)) {
+          observeConflict(row.id);
+          if (!chat.bindingConflict || reconfirming.has(row.id)) changed.add(row.id);
+        }
+      }
+      directory = { requests, welcomes, chats };
+    } finally {
+      await persistConflicts([...changed]);
     }
-    directory = { requests, welcomes, chats };
     const pending = welcomes.length || requests.some((row) => !row.established);
     const populated = Object.keys(state().chats ?? {}).length > 0;
     directoryDue = performance.now() + jitter(pending || !populated ? 12_500 : 30_000);
@@ -147,6 +267,37 @@ export function createMessenger(ctx) {
       throw error;
     }).finally(() => { directoryRequest = undefined; });
     return directoryRequest;
+  }
+
+  async function reconfirmChat(group, code) {
+    const chat = readChat(group);
+    requireValue(chat.bindingConflict && !reconfirming.has(group), "verification", "No conflict to resolve");
+    requireValue(typeof code === "string" && code.length > 0, "verification", "Enter the original device code");
+    reconfirming.add(group);
+    try {
+      await refresh();
+      const observed = remoteBlocked.get(group);
+      const matchesOriginal = () => {
+        const matches = directory?.chats.filter((row) => row.id === group);
+        return matches?.length === 1 && samePeer(chat, matches[0]) && remoteBlocked.get(group) === observed;
+      };
+      requireValue(matchesOriginal(), "changed-key", "The saved contact binding has not returned");
+      await pin(chat, code, true);
+      await ctx.update((draft) => {
+        const saved = transport(draft).chats[group];
+        requireValue(saved?.bindingConflict && samePeer(saved, chat) && matchesOriginal(),
+          "changed-key", "The contact binding changed");
+        delete saved.bindingConflict;
+      });
+      if (!matchesOriginal()) {
+        observeConflict(group);
+        await persistConflicts([group]);
+        requireValue(false, "changed-key", "The contact binding changed");
+      }
+      remoteBlocked.delete(group);
+    } finally {
+      reconfirming.delete(group);
+    }
   }
 
   function rememberRateLimit(error) {
@@ -176,27 +327,46 @@ export function createMessenger(ctx) {
   }
 
   async function postAccept(id, accepted) {
-    const result = await ctx.api("/v1/crypto/keypackages", { payload: accepted.keypackage });
+    const result = await ctx.api("/v1/crypto/keypackages", {
+      payload: accepted.keypackage, invitationId: accepted.offeredFor,
+    });
     requireValue(result?.reference === accepted.reference, "format", "Invalid key package publication response");
     await ctx.api(`/v1/chat-requests/${id}/accept`, {});
     await ctx.update((draft) => { transport(draft).accepted[id].posted = true; });
+  }
+
+  async function confirmInvitation(id, peer, code) {
+    const existing = state().accepted?.[id];
+    requireValue(!existing || samePeer(existing, peer), "changed-key", "The invitation sender changed");
+    if (existing?.coreConsent) {
+      await pin(peer, code, true);
+      return;
+    }
+    // Upgrading a pending pre-v2 receipt requires a fresh independent code.
+    await pin(peer, code);
+    await ctx.run("directory_consent", {
+      invitation: id, sender: peer.peerDevice, senderKey: peer.peerKey, confirmed: true,
+      ...(existing ? { keypackage: existing.keypackage, reference: existing.reference } : {}),
+    }, (draft, result) => {
+      const accepted = transport(draft).accepted;
+      if (existing) {
+        const saved = accepted[id];
+        requireValue(saved && samePeer(saved, peer) && saved.reference === result.reference &&
+          saved.keypackage === result.keypackage, "invitation", "The saved invitation changed");
+        saved.coreConsent = true;
+      } else {
+        requireValue(!accepted[id], "invitation", "The invitation changed");
+        accepted[id] = { ...peer, coreConsent: true, offeredFor: id, keypackage: result.keypackage,
+          reference: result.reference, posted: false };
+      }
+    });
   }
 
   async function accept(request, code) {
     const id = uuid(request.id);
     requireValue(request.outgoing === false, "invitation", "This is not an incoming invitation");
     const peer = peerInfo(request.senderDevice, request.senderKey, request.username);
-    const existing = state().accepted?.[id];
-    requireValue(!existing || samePeer(existing, peer), "changed-key", "The invitation sender changed");
-    await pin(peer, code, Boolean(existing));
-    if (!existing) {
-      await ctx.run("keypackage", {}, (draft, result) => {
-        const accepted = transport(draft).accepted;
-        requireValue(!accepted[id] || samePeer(accepted[id], peer),
-          "changed-key", "The invitation sender changed");
-        accepted[id] ??= { ...peer, keypackage: result.keypackage, reference: result.reference, posted: false };
-      });
-    }
+    await confirmInvitation(id, peer, code);
     const pending = state().accepted[id];
     if (!pending.posted) await postAccept(id, pending);
     return id;
@@ -258,20 +428,24 @@ export function createMessenger(ctx) {
     await ctx.update((draft) => { transport(draft).chats[group].welcomePending = false; });
   }
 
-  async function join(welcome) {
+  async function join(welcome, code) {
     const group = uuid(welcome.group);
     const invitation = uuid(welcome.invitation);
     const accepted = state().accepted?.[invitation];
-    requireValue(accepted?.posted && accepted.peerDevice === welcome.sender && accepted.peerKey === welcome.senderKey &&
+    requireValue(accepted?.posted && accepted.reference === welcome.reference && accepted.peerDevice === welcome.sender && accepted.peerKey === welcome.senderKey &&
       welcome.recipient === await identity(), "invitation", "Welcome does not match the verified invitation");
-    await pin(accepted, undefined, true);
+    if (!accepted.coreConsent && !accepted.joined) {
+      await confirmInvitation(invitation, accepted, code);
+    } else {
+      await pin(accepted, undefined, true);
+    }
     const { lease, sender, recipient, reference, signature } = welcome;
     requireValue(!accepted.joined || accepted.joined === group, "invitation", "This invitation already has a conversation");
     await ctx.run("directory_join", {
       group, invitation, lease, sender, recipient, reference, signature, welcome: welcome.welcome,
     }, (draft) => {
       const binding = transport(draft).accepted[invitation];
-      requireValue(!binding.joined || binding.joined === group,
+      requireValue(binding.reference === reference && (!binding.joined || binding.joined === group),
         "invitation", "This invitation already has a conversation");
       saveChat(draft, group, accepted, true);
       binding.joined = group;
@@ -280,42 +454,129 @@ export function createMessenger(ctx) {
     return group;
   }
 
-  async function send(group, text) {
+  async function send(group, text, draftRevision) {
     ensureUsable(readChat(group));
     requireValue(typeof text === "string" && text.trim() && [...text].length <= 4000,
       "text", "Enter a message of 1–4000 characters");
     const id = crypto.randomUUID();
     await ctx.run("queue", { group, id, text }, (draft, envelope) => {
       const data = transport(draft);
+      ensureUsable(data.chats[group]);
       data.outbox[id] = envelope;
-      data.chats[group].messages.push({ id, text, direction: "outgoing", status: "queued" });
+      if (draftRevision && data.chats[group].draft?.revision === draftRevision) {
+        delete data.chats[group].draft;
+      }
+      data.chats[group].messages.push({ id, text, direction: "outgoing", status: "queued", recordedAt: Date.now() });
     });
     preferredSend = group;
     if (running) schedule(0);
     return id;
   }
 
+  let preparingPhoto = false;
+  async function sendPhoto(group, file) {
+    const chat = readChat(group);
+    const generationAtStart = privateImageGeneration;
+    const active = () => {
+      requireValue(generationAtStart === privateImageGeneration && selected === group &&
+        samePeer(chat, readChat(group)), "locked", "The conversation changed");
+      ensureUsable(readChat(group));
+    };
+    active();
+    requireValue(!preparingPhoto, "attachment", "Another photo is being prepared");
+    preparingPhoto = true;
+    let bytes;
+    try {
+      bytes = await normalizeSelectedPhoto(file, active);
+      active();
+      const id = crypto.randomUUID();
+      const text = "Фото";
+      await ctx.run("queue", { group, id, text, blobId: crypto.randomUUID(), photo: encodeBase64(bytes) },
+        (draft, envelope) => {
+          active();
+          const data = transport(draft);
+          ensureUsable(data.chats[group]);
+          requireValue(Object.values(data.outbox).filter((entry) => entry.photo).length < 4,
+            "attachment", "Too many photos are waiting to send");
+          data.outbox[id] = envelope;
+          data.chats[group].messages.push({ id, text, attachment: envelope.photo.descriptor,
+            direction: "outgoing", status: "queued", recordedAt: Date.now() });
+        });
+      preferredSend = group;
+      if (running) schedule(0);
+      return id;
+    } finally {
+      bytes?.fill(0);
+      preparingPhoto = false;
+    }
+  }
+
   async function flushOne(entry) {
     const chat = readChat(entry.group);
-    ensureUsable(chat);
+    const assertQueued = () => {
+      const current = readChat(entry.group);
+      ensureUsable(current);
+      const saved = state().outbox?.[entry.id];
+      requireValue(samePeer(chat, current) && saved?.group === entry.group &&
+        saved.epoch === entry.epoch && saved.kind === entry.kind && saved.ciphertext === entry.ciphertext &&
+        saved.photo?.sealed === entry.photo?.sealed &&
+        saved.photo?.descriptor?.blobId === entry.photo?.descriptor?.blobId,
+      "conflict", "The queued message or its contact changed");
+      return current;
+    };
+    async function checkPin(inspect) {
+      const current = assertQueued();
+      const { status } = await inspect("peer_key_status", {
+        identity: current.peerDevice, public_key: current.peerKey,
+      });
+      if (status !== "matches") observeConflict(entry.group);
+      requireValue(status === "matches", "changed-key", "The saved contact device key is unavailable");
+    }
+    const handoff = async (request) => {
+      const send = () => {
+        assertQueued();
+        return request();
+      };
+      requireValue(ctx.handoff, "handoff-unavailable", "A profile lock is required to send");
+      return ctx.handoff(checkPin, send);
+    };
+    assertQueued();
     const digest = await ciphertextDigest(entry.ciphertext);
     let ack;
     try {
+      if (entry.photo) {
+        const { descriptor, sealed } = entry.photo;
+        requireValue(Number.isSafeInteger(descriptor.size) && descriptor.size > 0 &&
+          descriptor.size <= outgoingPhotoLimit, "attachment", "Invalid queued photo size");
+        const ciphertext = base64(sealed, descriptor.size + 16);
+        try {
+          await ctx.api(`/v1/conversations/${uuid(entry.group)}/blobs/${uuid(descriptor.blobId)}`,
+            ciphertext, "PUT", handoff);
+        } finally {
+          ciphertext.fill(0);
+        }
+      }
       ack = await ctx.api("/v1/messages", {
         conversationId: entry.group, clientMessageId: entry.id, mlsEpoch: entry.epoch,
         envelopeKind: entry.kind, ciphertext: entry.ciphertext,
-      });
+      }, undefined, handoff);
     } catch (error) {
-      const text = chat.messages.find((message) => message.direction === "outgoing" && message.id === entry.id)?.text;
-      if (error.code !== "MLS_EPOCH_CONFLICT" || !(chat.epoch > entry.epoch) || !text ||
-          Object.values(chat.envelopes).some((old) => old.id === entry.id)) throw error;
-      // The server checks deduplication before epochs. A definite epoch rejection,
-      // plus a verified newer MLS commit, allows this unsaved ID to be re-encrypted.
-      await ctx.run("queue", { group: entry.group, id: entry.id, text }, (draft, replacement) => {
-        const outbox = transport(draft).outbox;
-        requireValue(outbox[entry.id]?.ciphertext === entry.ciphertext && replacement.epoch > entry.epoch,
+      if (error.code === "changed-key" && remoteBlocked.has(entry.group) && !readChat(entry.group).bindingConflict) {
+        await persistConflicts([entry.group]);
+      }
+      if (error.code !== "MLS_EPOCH_CONFLICT") throw error;
+      const latest = assertQueued();
+      const text = latest.messages.find((message) => message.direction === "outgoing" && message.id === entry.id)?.text;
+      if (!(latest.epoch > entry.epoch) || !text ||
+          Object.values(latest.envelopes).some((old) => old.id === entry.id)) throw error;
+      // A definite epoch rejection allows this unsaved ID to be re-encrypted.
+      await ctx.run("queue", { group: entry.group, id: entry.id, text,
+        ...(entry.photo && { attachment: entry.photo.descriptor }) }, (draft, replacement) => {
+        const data = transport(draft);
+        ensureUsable(data.chats[entry.group]);
+        requireValue(data.outbox[entry.id]?.ciphertext === entry.ciphertext && replacement.epoch > entry.epoch,
           "conflict", "The queued message changed");
-        outbox[entry.id] = replacement;
+        data.outbox[entry.id] = entry.photo ? { ...replacement, photo: entry.photo } : replacement;
       });
       return flushOne(state().outbox[entry.id]);
     }
@@ -355,16 +616,21 @@ export function createMessenger(ctx) {
     function finish(draft, processed) {
       const data = transport(draft);
       const saved = data.chats[group];
+      const previousLength = saved.messages.length;
       if (processed?.text !== undefined) {
-        saved.messages.push({ id: envelope.id, text: processed.text, direction: "incoming", status: "received" });
+        saved.messages.push({ id: envelope.id, text: processed.text, direction: "incoming", status: "received", recordedAt: Date.now() });
+      } else if (processed?.attachment?.media === "photo") {
+        saved.messages.push({ id: envelope.id, text: processed.attachment.caption ?? "Фото",
+          attachment: processed.attachment, direction: "incoming", status: "received", recordedAt: Date.now() });
       } else if (processed?.unsupported === true) {
         saved.messages.push({
           id: envelope.id,
           text: "Зашифрованное вложение или событие. Этот клиент его не отображает.",
           direction: "incoming",
-          status: "unsupported",
+          status: "unsupported", recordedAt: Date.now(),
         });
       }
+      if (saved.messages.length > previousLength) saved.receivedCount = (saved.receivedCount ?? 0) + 1;
       if (processed?.active === false) saved.active = false;
       if (processed?.epoch !== undefined) saved.epoch = processed.epoch;
       saved.envelopes[envelope.seq] = envelope;
@@ -460,7 +726,7 @@ export function createMessenger(ctx) {
     if (forceDirectory || performance.now() >= directoryDue) await attempt(refresh);
 
     const usable = Object.values(state().chats ?? {}).filter((chat) => (
-      chat.active !== false && !chat.welcomePending && !remoteBlocked.has(chat.id)
+      chat.active !== false && !chat.welcomePending && !chat.bindingConflict && !remoteBlocked.has(chat.id)
     )).map((chat) => chat.id);
     const pending = Object.values(state().outbox ?? {}).filter((entry) => usable.includes(entry.group));
     const dispatchGroups = [...new Set(pending.map((entry) => entry.group))];
@@ -510,6 +776,7 @@ export function createMessenger(ctx) {
   function select(id) {
     const next = id ? uuid(id) : undefined;
     if (selected === next) return;
+    clearPhotos();
     selected = next;
     if (running) schedule(0);
   }
@@ -567,8 +834,15 @@ export function createMessenger(ctx) {
     running = false;
     generation++;
     clearTimeout(timer);
+    clearPhotos();
     globalThis.removeEventListener?.("online", wake);
   }
 
-  return { refresh, invite, accept, establish, join, send, tick, select, start, stop };
+  function canViewPeer(id) {
+    const chat = state().chats?.[id];
+    return Boolean(chat && chat.active !== false && !bindingBlocked(chat));
+  }
+
+  return { canViewPeer, refresh, invite, accept, establish, join, reconfirmChat, send, sendPhoto, tick, select, start, stop,
+    openPhoto, releasePhoto };
 }

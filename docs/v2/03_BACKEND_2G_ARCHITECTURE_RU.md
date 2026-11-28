@@ -29,3 +29,18 @@ Linux running alpha, Android true native bridge/emulator/physical test, Windows 
 
 ## Known starting blockers
 See `STATUS.md` and `docs/SECURITY_LIMITATIONS.md`: RustSec advisories (crypto-bigint, libcrux-kem, libsqlite3-sys) and unmaintained proc-macro-error2; unresolved authenticated KeyPackage leasing/Welcome/real enrollment; incomplete WSS-first Flutter; mixed-fault 2G suite; browser private E2EE disabled; no release authorization. Do not suppress scanner or replace audited crypto primitives.
+
+
+## Критерии испытаний нативной переписки
+
+Два отдельных локальных профиля отправляют по 200 сообщений через TLS и два контейнера Linux netem. Измерение начинается перед записью в очередь и заканчивается при чтении расшифрованного сообщения из истории получателя. Для зачёта требуются правильный адресат и текст для каждого ID, отсутствие пропусков и дубликатов, опустевшие очереди. Время относится к уже установленному диалогу. Профили ниже моделируют выбранные сетевые условия. Проверка сетей реальных операторов проводится отдельно.
+
+| Профиль | кбит/с в направлении | RTT, мс | Потеря на участке | Джиттер на участке, мс | Порог p95, с |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GPRS | 20 | 1500 | 3% | 0 | 15 |
+| Severe | 10 | 3000 | 10% | 0 | доставка до watchdog 1200 с |
+| 3G | 384 | 250 | 1% | 30 | 8 |
+| 4G | 8000 | 80 | 0,2% | 10 | 5 |
+| 5G | 50000 | 30 | 0,1% | 3 | 5 |
+
+Команда для одного прогона — `python tests/chaos-2g/native_run.py --profile 3g --seeds 7 --count 200`. Итоговый JSON содержит p50/p95/p99, объёмы прикладных кадров, пиковый RSS общего процесса двух тестовых клиентов и статистику очередей ядра. Новые прогоны также измеряют процессорное время общего процесса клиентов по Linux /proc и изменение счётчиков байтов RX/TX каждого прокси на eth0 от начала нагрузки до выхода процесса. Прокси пересылает трафик между клиентом и сервером, поэтому сложение RX и TX обеих сторон завышает расход одного клиента. Для сравнения сохраняйте SHA исходников, хеши бинарных файлов, число сообщений и seed.

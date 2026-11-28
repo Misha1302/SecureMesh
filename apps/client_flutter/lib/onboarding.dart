@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 
 import 'account_setup.dart';
+import 'account_recovery.dart';
 import 'account_credentials.dart';
 import 'display_name.dart';
 
@@ -159,6 +160,80 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
     }
   }
 
+  bool resendRequested = false;
+
+  Future<void> resendVerification() async {
+    if (busy || step != 1) return;
+    setState(() {
+      busy = true;
+      error = null;
+      resendRequested = false;
+    });
+    try {
+      final base = httpsServerOrigin(endpoint.text);
+      if (base == null) throw ApiFailure(400, 'TLS_REQUIRED');
+      http ??= nativeHttpClient();
+      await meshHttp(
+        http!,
+        base,
+        '/v2/auth/resend-verification',
+        data: {
+          'username': username.text.trim(),
+          ...await accountCredentialFields(
+            version: 2,
+            endpoint: base,
+            username: username.text.trim(),
+            password: password.text,
+          ),
+        },
+      );
+      if (mounted) setState(() => resendRequested = true);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          error = (
+            ru: 'Не удалось запросить письмо. Проверьте соединение и повторите.',
+            en: 'Could not request a new email. Check the connection and try again.',
+          );
+        });
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> openAccountRecovery() async {
+    final base = httpsServerOrigin(endpoint.text);
+    if (base == null) {
+      setState(() {
+        editingServer = true;
+        error = (
+          ru: 'Укажите HTTPS-адрес сервера аккаунта.',
+          en: 'Enter your account’s HTTPS server address.',
+        );
+      });
+      return;
+    }
+    http ??= nativeHttpClient();
+    final name = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => AccountRecoveryPage(
+          endpoint: base,
+          request: bindLoginRequest(http!, base),
+          russian: ru,
+          initialUsername: username.text,
+        ),
+      ),
+    );
+    if (!mounted || name == null) return;
+    setState(() {
+      username.text = name;
+      password.clear();
+      revealed.clear();
+      error = null;
+    });
+  }
+
   Future<void> submit() async {
     if (busy || !form.currentState!.validate()) return;
     setState(() {
@@ -193,6 +268,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         if (mounted) {
           setState(() {
             step = 1;
+            resendRequested = false;
             editingServer = false;
           });
         }
@@ -690,6 +766,35 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           ),
                         ),
                       ),
+                      if (step == 2 &&
+                          !legacy &&
+                          !resuming &&
+                          !profileComplete &&
+                          !verifiedRegistrationHere &&
+                          draft == null)
+                        TextButton(
+                          onPressed: busy ? null : openAccountRecovery,
+                          child: Text(
+                            tr('Забыли пароль?', 'Forgot account password?'),
+                          ),
+                        ),
+                      if (step == 1)
+                        TextButton(
+                          onPressed: busy ? null : resendVerification,
+                          child: Text(
+                            tr('Запросить новый код', 'Request a new code'),
+                          ),
+                        ),
+                      if (step == 1 && resendRequested)
+                        Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            tr(
+                              'Проверьте почту. Новый код можно запрашивать раз в пять минут, до пяти раз в сутки.',
+                              'Check your email. You can request a new code once every five minutes, up to five times a day.',
+                            ),
+                          ),
+                        ),
                       if (step != 1 &&
                           draft == null &&
                           !resuming &&

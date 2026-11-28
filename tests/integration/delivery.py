@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Live HTTPS/WSS API + PostgreSQL + separate SQLCipher/OpenMLS client processes."""
+import asyncio
 import base64
 import fcntl
 import concurrent.futures
@@ -12,11 +13,13 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from contextlib import suppress
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -26,12 +29,12 @@ from process_spike import Device
 import wire_pb2 as wire
 from google.protobuf.internal.encoder import _VarintBytes
 from google.protobuf.internal.decoder import _DecodeVarint
-from websockets.sync.client import connect
+from websockets.asyncio.client import connect
 
 TLS=ssl.create_default_context(cafile=str(ROOT/'.local/tls.pem'))
 BASE='https://127.0.0.1:5090'
 
-def request(path,data=None,token=None,method=None,expected=200):
+def request(path,data=None,token=None,method=None,expected=200,max_bytes=None):
     body=None if data is None else json.dumps(data).encode()
     headers={'Content-Type':'application/json'}
     if token: headers['Authorization']='Bearer '+token
@@ -41,6 +44,8 @@ def request(path,data=None,token=None,method=None,expected=200):
             status=r.status; raw=r.read()
     except urllib.error.HTTPError as e: status=e.code; raw=e.read()
     assert status==expected, f'{path}: expected {expected}, got {status}: {raw[:300]!r}'
+    if max_bytes is not None:
+        assert len(raw) <= max_bytes, f"{path}: {len(raw)} bytes exceeds {max_bytes}"
     return json.loads(raw) if raw else None
 
 def login(username,password,device,expected=200,client_os=None):
@@ -48,15 +53,26 @@ def login(username,password,device,expected=200,client_os=None):
     proof=device.call('sign',payload=challenge['payload'])['signature']
     return request('/v1/auth/login',dict(username=username,password=password,deviceId=device.identity,publicKey=device.public,challengeId=challenge['challengeId'],signature=proof,**({'clientOs':client_os} if client_os is not None else {})),expected=expected)
 
+def verification_token(email):
+    mail = 'http://127.0.0.1:58028/api/v1'
+    query = urllib.parse.urlencode({'query': 'to:' + email})
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with urllib.request.urlopen(f'{mail}/search?{query}', timeout=3) as response:
+            messages = json.load(response)['messages']
+        if messages:
+            message, = messages
+            with urllib.request.urlopen(f"{mail}/message/{message['ID']}", timeout=3) as response:
+                return json.load(response)['Text'].strip()
+        time.sleep(.1)
+    raise AssertionError('Verification email did not arrive')
+
+
 def account(root, domain="securemesh.test"):
     username='u_'+uuid.uuid4().hex[:20]; email=username+'@'+domain; password=secrets.token_urlsafe(24)
     device=Device(root)
     request('/v1/auth/register',dict(username=username,email=email,password=password),expected=202)
-    search='http://127.0.0.1:58028/api/v1/search?query='+urllib.parse.quote('to:'+email)
-    with urllib.request.urlopen(search) as r: messages=json.load(r)['messages']
-    assert len(messages)==1
-    with urllib.request.urlopen('http://127.0.0.1:58028/api/v1/message/'+messages[0]['ID']) as r: email_body=json.load(r)
-    verification=email_body['Text'].strip()
+    verification=verification_token(email)
     login(username,password,device,expected=401)
     request('/v1/auth/verify-email',dict(token=verification),expected=204)
     request('/v1/auth/verify-email',dict(token=verification),expected=400)
@@ -67,24 +83,73 @@ def envelope(message,group):
     return dict(conversationId=group,clientMessageId=message['id'],mlsEpoch=message['epoch'],envelopeKind=message['kind'],ciphertext=message['ciphertext'])
 
 class Stream:
-    def __init__(self,token,device):
-        self.ws=connect(BASE.replace('https:','wss:')+'/v1/stream',ssl=TLS,additional_headers={'Authorization':'Bearer '+token},open_timeout=10,max_size=131077)
-        f=wire.Frame(protocol_version=1,kind=wire.HELLO)
-        f.hello.supported_versions.append(1); f.hello.client_device_id=uuid.UUID(device.identity).bytes
-        assert self.exchange(f).kind==wire.HELLO
-    def exchange(self,f):
-        f.request_id=uuid.uuid4().bytes
-        raw=f.SerializeToString(); self.ws.send(_VarintBytes(len(raw))+raw)
-        raw=self.ws.recv(timeout=10); length,offset=_DecodeVarint(raw,0)
-        assert len(raw)-offset==length
-        result=wire.Frame.FromString(raw[offset:]); assert result.request_id==f.request_id
+    def __init__(self, token, device):
+        # Keep all TLS I/O on one loop while synchronous callers use Playwright or subprocesses.
+        self._loop = asyncio.new_event_loop()
+        self._done = asyncio.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._ws = None
+        self._thread.start()
+        try:
+            self._call(self._connect(BASE.replace('https:', 'wss:') + '/v1/stream', TLS, token))
+            hello = wire.Frame(protocol_version=1, kind=wire.HELLO)
+            hello.hello.supported_versions.append(1)
+            hello.hello.client_device_id = uuid.UUID(device.identity).bytes
+            assert self.exchange(hello).kind == wire.HELLO
+        except BaseException:
+            with suppress(Exception):
+                self.close()
+            raise
+
+    def _run(self):
+        with asyncio.Runner(loop_factory=lambda: self._loop) as runner:
+            runner.run(self._done.wait())
+
+    def _call(self, operation):
+        future = asyncio.run_coroutine_threadsafe(operation, self._loop)
+        try:
+            return future.result(timeout=12)
+        except TimeoutError:
+            future.cancel()
+            raise
+
+    async def _connect(self, url, tls, token):
+        self._ws = await connect(url, ssl=tls, proxy=None, additional_headers={'Authorization': 'Bearer ' + token},
+                                 open_timeout=10, close_timeout=3, max_size=131077)
+
+    async def _exchange(self, raw):
+        async with asyncio.timeout(10):
+            await self._ws.send(raw)
+            return await self._ws.recv()
+
+    def exchange(self, frame):
+        frame.request_id = uuid.uuid4().bytes
+        raw = frame.SerializeToString()
+        raw = self._call(self._exchange(_VarintBytes(len(raw)) + raw))
+        length, offset = _DecodeVarint(raw, 0)
+        assert len(raw) - offset == length
+        result = wire.Frame.FromString(raw[offset:])
+        assert result.request_id == frame.request_id
         return result
     def send(self,message,group):
         f=wire.Frame(protocol_version=1,kind=wire.SEND_ENCRYPTED)
         e=f.encrypted; e.conversation_id=uuid.UUID(group).bytes; e.client_message_id=uuid.UUID(message['id']).bytes
         e.mls_epoch=message['epoch']; e.envelope_kind=message['kind']; e.opaque_ciphertext=base64.b64decode(message['ciphertext'])
         return self.exchange(f)
-    def close(self): self.ws.close()
+    async def _close(self):
+        if self._ws is not None:
+            await self._ws.close()
+
+    def close(self):
+        if not self._thread.is_alive():
+            return
+        try:
+            self._call(self._close())
+        finally:
+            self._loop.call_soon_threadsafe(self._done.set)
+            self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                raise TimeoutError('WSS fixture event loop did not stop')
 
 def sync(device,token,group,limit=100):
     cursor=device.call('cursor',group=group)['cursor']
@@ -99,10 +164,11 @@ def sync(device,token,group,limit=100):
     request('/v1/acks',dict(conversationId=group,sequence=sequence),token=token,expected=204)
 
 class Server:
-    def __init__(self,database='securemesh',legacy_bootstrap=True):
+    def __init__(self,database='securemesh',legacy_bootstrap=True,api_dll=None):
         assert database.replace('_','').isalnum()
         self.database=database
         self.legacy_bootstrap=legacy_bootstrap
+        self.api_dll=Path(api_dll).resolve(strict=True) if api_dll is not None else ROOT/'src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll'
     def __enter__(self):
         port=urllib.parse.urlparse(BASE).port
         self.port_lock=(ROOT/'.local'/f'test-api-{port}.lock').open('w')
@@ -126,13 +192,20 @@ class Server:
             probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
             try:probe.bind((endpoint.hostname,endpoint.port))
             except OSError:raise RuntimeError(f'TEST_API_PORT_IN_USE_{endpoint.port}') from None
-        self.p=subprocess.Popen(['dotnet','src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll','--urls',os.environ.get('SECUREMESH_TEST_URLS',BASE)],cwd=ROOT,env=self.env,stdout=self.log,stderr=self.log)
+        self.p=subprocess.Popen(['dotnet',str(self.api_dll),'--urls',os.environ.get('SECUREMESH_TEST_URLS',BASE)],cwd=ROOT,env=self.env,stdout=self.log,stderr=self.log)
         for _ in range(150):
             if self.p.poll() is not None: raise RuntimeError('API died; inspect .local/api-delivery.log')
             try: request('/health/ready'); break
             except OSError: time.sleep(.1)
         else: raise RuntimeError('API readiness timeout')
-    def stop(self): self.p.terminate(); self.p.wait(timeout=10)
+    def stop(self):
+        self.p.terminate()
+        try:
+            self.p.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            # Only the disposable API subprocess created by this fixture.
+            self.p.kill()
+            self.p.wait(timeout=10)
     def restart(self): self.stop(); self.start()
     def __exit__(self,*_):
         self.stop(); self.log.close();self.port_lock.close()

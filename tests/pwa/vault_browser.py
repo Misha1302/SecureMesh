@@ -1,5 +1,6 @@
 """Exercise real WebCrypto and IndexedDB with python tests/pwa/vault_browser.py."""
 
+import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,9 +25,9 @@ class QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
-def run(origin):
+def run(origin, engine):
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = playwright[engine].launch()
         context = browser.new_context()
         page = context.new_page()
         other = context.new_page()
@@ -122,6 +123,90 @@ def run(origin):
             }"""
         )
         assert persisted == expected
+        # Same-origin tabs use the production IndexedDB and Web Locks handoff.
+        page.evaluate(
+            """async () => {
+              window.vault = await import("/app/vault.js");
+              window.password = "👨‍👩‍👧‍👦".repeat(16);
+              window.profile = await vault.unlockVault(password);
+              await vault.commitVault(profile, {
+                ...profile.state,
+                messenger: { chats: { group: { id: "group" } }, outbox: { queued: "ciphertext" } },
+              });
+            }"""
+        )
+        other.evaluate("""async () => {
+          window.password = "👨‍👩‍👧‍👦".repeat(16);
+          window.profile = await vault.unlockVault(password);
+        }""")
+        page.evaluate("""async () => {
+          await vault.commitVault(profile, { ...profile.state, unrelatedDraft: "new local edit" });
+        }""")
+        other.evaluate(
+            """async () => {
+              try { await vault.persistBindingConflicts(profile, ["group"]); }
+              catch (error) { if (error.code === "conflict") return; throw error; }
+              throw new Error("stale tab remained eligible to send");
+            }"""
+        )
+        page.evaluate(
+            """async () => {
+              window.profile = await vault.unlockVault(password);
+              const chat = profile.state.messenger.chats.group;
+              if (!chat.bindingConflict || profile.state.unrelatedDraft !== "new local edit")
+                throw new Error("conflict save overwrote newer profile data or was lost");
+              const clean = structuredClone(profile.state);
+              delete clean.messenger.chats.group.bindingConflict;
+              await vault.commitVault(profile, clean);
+              window.actualHandoffs = 0;
+              window.pending = vault.handoffVault(profile, () => new Promise((resolve) => {
+                window.releaseCheck = resolve;
+              }), () => {
+                actualHandoffs++;
+                return new Promise((resolve) => { window.finishRequest = resolve; });
+              });
+            }"""
+        )
+        page.wait_for_function("typeof window.releaseCheck === 'function'")
+        other.evaluate(
+            """async () => {
+              window.profile = await vault.unlockVault(password);
+              window.conflictWrite = vault.persistBindingConflicts(profile, ["group"]);
+            }"""
+        )
+        page.wait_for_function(
+            "async () => (await navigator.locks.query()).pending.some((lock) => lock.name === 'securemesh-profile-vault')"
+        )
+        page.evaluate("window.releaseCheck()")
+        other.evaluate("async () => await window.conflictWrite")
+        page.evaluate(
+            """async () => {
+              if (actualHandoffs !== 1) throw new Error("handoff did not precede conflict save");
+              window.finishRequest();
+              await pending;
+              const send = () => { actualHandoffs++; };
+              const reject = async (action, code) => {
+                try { await action(); } catch (error) {
+                  if (error.code === code) return;
+                  throw error;
+                }
+                throw new Error("Expected " + code);
+              };
+              await reject(() => vault.handoffVault(profile, () => {}, send), "conflict");
+              window.profile = await vault.unlockVault(password);
+              await reject(() => vault.handoffVault(profile, () => {
+                if (profile.state.messenger.chats.group.bindingConflict)
+                  throw Object.assign(new Error("blocked saved contact"), { code: "changed-key" });
+              }, send), "changed-key");
+              if (actualHandoffs !== 1 || profile.state.messenger.outbox.queued !== "ciphertext")
+                throw new Error("a blocked queued entry was sent or removed");
+              Object.defineProperty(navigator, "locks", { value: undefined, configurable: true });
+              try {
+                await reject(() => vault.handoffVault(profile, () => {}, send), "handoff-unavailable");
+                if (actualHandoffs !== 1) throw new Error("sent without a shared origin lock");
+              } finally { delete navigator.locks; }
+            }"""
+        )
         backup = page.evaluate(
             """async () => {
               const vault = await import("/app/vault.js");
@@ -162,13 +247,16 @@ def run(origin):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
+    args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     with ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=root / "site")) as server:
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            run(f"http://127.0.0.1:{server.server_port}")
+            run(f"http://127.0.0.1:{server.server_port}", args.browser)
         finally:
             server.shutdown()
             thread.join()
-    print("Browser vault tests passed")
+    print(f"{args.browser}: browser vault tests passed")

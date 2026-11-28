@@ -1,0 +1,321 @@
+{
+  "profile": "edge-outage",
+  "seed": 19,
+  "messages_each_direction": 10,
+  "delivery_p50": 66.740019,
+  "delivery_p95": 70.43661399999999,
+  "delivery_p99": 70.44107899999999,
+  "outage": {
+    "requested_blackout_seconds": 60,
+    "baseline_confirmed_each_direction": 3,
+    "offline_queued_each_direction": [
+      7,
+      7
+    ],
+    "offline_delivered_before_restore": 0,
+    "recovery_p50": 6.632272999999998,
+    "recovery_p95": 10.112888999999996,
+    "recovery_p99": 10.112888999999996,
+    "recovery_p95_limit_seconds": 45
+  },
+  "duplicates": 0,
+  "missing_ids": 0,
+  "elapsed_seconds": 74.845323,
+  "client_process_cpu_seconds": 2.48,
+  "client_process_peak_rss_bytes": 328314880,
+  "retries": 6,
+  "transports": [
+    {
+      "mode": "https",
+      "upgrade_attempts": 2,
+      "upgrade_timeouts": 0,
+      "upgrade_io_failures": 0,
+      "hello_timeouts": 0,
+      "frame_timeouts": 1,
+      "fallback_attempts": 15,
+      "fallback_timeouts": 0,
+      "fallback_io_failures": 3
+    },
+    {
+      "mode": "https",
+      "upgrade_attempts": 2,
+      "upgrade_timeouts": 0,
+      "upgrade_io_failures": 0,
+      "hello_timeouts": 0,
+      "frame_timeouts": 1,
+      "fallback_attempts": 15,
+      "fallback_timeouts": 0,
+      "fallback_io_failures": 3
+    }
+  ],
+  "recent_errors": [
+    "NETWORK",
+    "NETWORK",
+    "NETWORK",
+    "NETWORK",
+    "NETWORK",
+    "NETWORK"
+  ],
+  "https_requests": 30,
+  "wss_application_bytes_sent": [
+    4557,
+    5553
+  ],
+  "wss_application_bytes_received": [
+    4424,
+    3926
+  ],
+  "records": [
+    {
+      "id": "58e046bf-4607-4eb9-a3b4-b7d7fa8c8421",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 0,
+      "start": 0.008267,
+      "characters": 37,
+      "utf8_bytes": 72,
+      "delivery_seconds": 1.343234
+    },
+    {
+      "id": "7b748413-afaa-48e5-aa84-701b27055ca9",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 0,
+      "start": 0.008912,
+      "characters": 268,
+      "utf8_bytes": 501,
+      "delivery_seconds": 1.408641
+    },
+    {
+      "id": "8973ab09-4ddb-47a5-a78b-bf5d4cb37d9c",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 1,
+      "start": 1.001863,
+      "characters": 259,
+      "utf8_bytes": 483,
+      "delivery_seconds": 1.158602
+    },
+    {
+      "id": "ce498e7b-4de0-4e80-b55f-90c86004ea7c",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 1,
+      "start": 1.002263,
+      "characters": 130,
+      "utf8_bytes": 242,
+      "delivery_seconds": 1.10965
+    },
+    {
+      "id": "ea8eafe2-063a-44c7-b659-20072f24ad7d",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 2,
+      "start": 2.00184,
+      "characters": 22,
+      "utf8_bytes": 47,
+      "delivery_seconds": 1.2559010000000002
+    },
+    {
+      "id": "36971c9a-493c-4c83-b166-42412a89341a",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 2,
+      "start": 2.002257,
+      "characters": 118,
+      "utf8_bytes": 219,
+      "delivery_seconds": 1.3252259999999998
+    },
+    {
+      "id": "2d2131b7-f6c8-4b98-a67c-1bea07798921",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 3,
+      "start": 3.727201,
+      "characters": 37,
+      "utf8_bytes": 72,
+      "delivery_seconds": 66.750499,
+      "recovery_seconds": 6.399107999999998
+    },
+    {
+      "id": "ad571896-cd26-41cd-b52b-bd69a149450a",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 3,
+      "start": 3.727609,
+      "characters": 268,
+      "utf8_bytes": 501,
+      "delivery_seconds": 66.983251,
+      "recovery_seconds": 6.632267999999996
+    },
+    {
+      "id": "c3f8e5da-e5df-4584-a25a-4aa7408fb492",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 4,
+      "start": 3.737684,
+      "characters": 130,
+      "utf8_bytes": 242,
+      "delivery_seconds": 66.740019,
+      "recovery_seconds": 6.399111000000005
+    },
+    {
+      "id": "277c74d1-1cb6-4d74-84a1-831898085fbd",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 4,
+      "start": 3.7381,
+      "characters": 259,
+      "utf8_bytes": 483,
+      "delivery_seconds": 66.972765,
+      "recovery_seconds": 6.632272999999998
+    },
+    {
+      "id": "647653a6-1615-4479-9e30-ed2cdf71003f",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 5,
+      "start": 3.741217,
+      "characters": 22,
+      "utf8_bytes": 47,
+      "delivery_seconds": 63.488077999999994,
+      "recovery_seconds": 3.150702999999993
+    },
+    {
+      "id": "968cad58-3fa2-47c8-80f8-dd003b56eb71",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 5,
+      "start": 3.742167,
+      "characters": 118,
+      "utf8_bytes": 219,
+      "delivery_seconds": 63.539171,
+      "recovery_seconds": 3.2027460000000048
+    },
+    {
+      "id": "24c46227-d1ce-428f-aa85-e44138894a2c",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 6,
+      "start": 3.745908,
+      "characters": 278,
+      "utf8_bytes": 549,
+      "delivery_seconds": 66.964958,
+      "recovery_seconds": 6.632273999999995
+    },
+    {
+      "id": "10f379d9-729f-4639-aa2c-77f368350d9d",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 6,
+      "start": 3.74644,
+      "characters": 2,
+      "utf8_bytes": 4,
+      "delivery_seconds": 66.731264,
+      "recovery_seconds": 6.399112000000002
+    },
+    {
+      "id": "76ddfc8b-1444-4963-820f-c6ee5bde6d86",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 7,
+      "start": 3.750071,
+      "characters": 104,
+      "utf8_bytes": 196,
+      "delivery_seconds": 70.217303,
+      "recovery_seconds": 9.888782000000006
+    },
+    {
+      "id": "26b7c793-3392-4288-9391-894b17de6c9d",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 7,
+      "start": 3.750397,
+      "characters": 20,
+      "utf8_bytes": 39,
+      "delivery_seconds": 70.44107899999999,
+      "recovery_seconds": 10.112883999999994
+    },
+    {
+      "id": "c9a493e0-7d05-4640-8468-059670418924",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 8,
+      "start": 3.754109,
+      "characters": 304,
+      "utf8_bytes": 583,
+      "delivery_seconds": 70.213269,
+      "recovery_seconds": 9.888785999999996
+    },
+    {
+      "id": "ad5648dd-4a2a-477b-aa4b-b6f839a459bd",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 8,
+      "start": 3.754866,
+      "characters": 59,
+      "utf8_bytes": 114,
+      "delivery_seconds": 70.43661399999999,
+      "recovery_seconds": 10.112887999999998
+    },
+    {
+      "id": "05267ceb-30ea-434d-a708-5fcff62971f9",
+      "sender": "04858cc9-3b9c-4475-ac4b-2cc860e14cdd",
+      "ordinal": 9,
+      "start": 3.757516,
+      "characters": 35,
+      "utf8_bytes": 66,
+      "delivery_seconds": 70.209862,
+      "recovery_seconds": 9.888785999999996
+    },
+    {
+      "id": "3a8dae6b-bdd8-4eb2-82a6-19bc525210eb",
+      "sender": "2ec69fc8-77c1-43a9-b339-1d389f6ad60c",
+      "ordinal": 9,
+      "start": 3.75915,
+      "characters": 398,
+      "utf8_bytes": 761,
+      "delivery_seconds": 70.43233099999999,
+      "recovery_seconds": 10.112888999999996
+    }
+  ],
+  "platform": "Linux native Dart; production NativeDelivery/MeshTransport/FRB/OpenMLS/SQLCipher",
+  "child_exit_code": 0,
+  "timed_out": false,
+  "rate_kbps_each_direction": 100,
+  "rtt_ms": 600,
+  "packet_loss_percent": 1,
+  "jitter_ms_each_direction": 0,
+  "setup": {
+    "netem-a": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 300ms loss 1% seed 19\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 300ms loss 1% seed 1019\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+    "netem-b": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 300ms loss 1% seed 119\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 300ms loss 1% seed 1119\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n"
+  },
+  "source_head_at_start": "4b2a73d89ba3f853a95e046ef8d59e9b41e1219a",
+  "binary_sha256": {
+    "src/crypto_core/target/debug/libsecuremesh_crypto.so": "9017da7df3623834bfeb3d877af96e0558719c4bdf93103202e517e3d8bfe86d",
+    "src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll": "86bd21cf672dd65714f9fc5d5deafb88d7e5499861aaf89a4d6581dfb76238a5"
+  },
+  "source_sha256": {
+    "apps/client_flutter/lib/delivery_client.dart": "8886ca7d18a5f4c422b2ca7ec25af874da39b74adf5974f0b5a4e3657fe7e398",
+    "apps/client_flutter/lib/transport.dart": "b225af6493ef2c23ca9306db83dd48b9df79454b3820a919aeb91565d1968c75",
+    "apps/client_flutter/lib/session.dart": "3aef2bff30b671e8e71a94ba3c3f53e08b819bd5d1691868623713116c55371b",
+    "apps/client_flutter/lib/tls_client.dart": "678f43ef8280fe9a7a5d9cefb6f8f2dcf9116c6e1a6ebe2625132ae196f89e76",
+    "apps/client_flutter/tool/network_trial.dart": "0d74eb3438cd3005c0ce80bf9f0577f4ce5416c25dab9bae20b28ae9cd102434"
+  },
+  "outage_network": {
+    "blocked_qdiscs": {
+      "netem-a": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 loss 100% seed 19\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 loss 100% seed 1019\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+      "netem-b": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 loss 100% seed 119\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 loss 100% seed 1119\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n"
+    },
+    "blocked_qdisc_stats_before_restore": {
+      "netem-a": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 56, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 loss 100% seed 19\n Sent 0 bytes 0 pkt (dropped 14, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 loss 100% seed 1019\n Sent 0 bytes 0 pkt (dropped 42, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+      "netem-b": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 57, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 loss 100% seed 119\n Sent 0 bytes 0 pkt (dropped 13, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 loss 100% seed 1119\n Sent 0 bytes 0 pkt (dropped 44, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n"
+    },
+    "restored_qdiscs": {
+      "netem-a": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 300ms loss 1% seed 19\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 300ms loss 1% seed 1019\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+      "netem-b": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 300ms loss 1% seed 119\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 300ms loss 1% seed 1119\n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n"
+    },
+    "server_rows_before_restore": 6,
+    "minimum_blackout_seconds": 60.40694096600055,
+    "reconfiguration_seconds": 0.21691145100339781,
+    "server_rows_after_restore": 20,
+    "server_missing_ids": 0,
+    "server_unexpected_ids": 0,
+    "server_duplicates": 0
+  },
+  "outage_coordination_error": null,
+  "proxy_eth0_bytes": {
+    "netem-a": {
+      "rx": 55335,
+      "tx": 49402
+    },
+    "netem-b": {
+      "rx": 65458,
+      "tx": 49339
+    }
+  },
+  "netem-a_tc_stats": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 38602 bytes 95 pkt (dropped 0, overlimits 17 requeues 0) \n backlog 66b 1p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 300ms loss 1% seed 19\n Sent 15668 bytes 49 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 66b 1p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 300ms loss 1% seed 1019\n Sent 22934 bytes 46 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n",
+  "netem-b_tc_stats": "qdisc htb 1: root refcnt 21 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 1000\n Sent 38735 bytes 97 pkt (dropped 0, overlimits 21 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 10: parent 1:10 limit 1000 delay 300ms loss 1% seed 119\n Sent 17416 bytes 53 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc netem 20: parent 1:20 limit 1000 delay 300ms loss 1% seed 1119\n Sent 21319 bytes 44 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n"
+}

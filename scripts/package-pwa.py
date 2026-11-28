@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -34,6 +35,8 @@ ASSETS = (
     "profile.css",
     "profile.html",
     "profile.js",
+    "private-image.js",
+    "history-search.js",
     "sw.js",
     "vault.js",
 )
@@ -84,7 +87,20 @@ def verify_browser_crypto(files: dict[str, bytes], staging: Path) -> None:
         print(f"Verified browser crypto rebuild: {name}")
 
 
-def package(destination: Path) -> None:
+DEFAULT_API = "https://securemesh.90-156-230-119.sslip.io"
+
+
+def configure_api_origin(files: dict[str, bytes], origin: str) -> None:
+    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    if len(origin) > 261 or not re.fullmatch(rf"https://(?:{label}\.)+[a-z]{{2,63}}", origin):
+        raise ValueError("Expected a lowercase HTTPS DNS origin on the default port")
+    for name, count in (("account.js", 1), ("index.html", 2)):
+        if files[name].count(DEFAULT_API.encode()) != count:
+            raise ValueError(f"Unexpected API origin references in {name}")
+        files[name] = files[name].replace(DEFAULT_API.encode(), origin.encode())
+
+
+def package(destination: Path, api_origin: str = DEFAULT_API) -> None:
     if destination.exists() or destination.is_symlink():
         raise ValueError(f"Output already exists: {destination}")
 
@@ -105,6 +121,7 @@ def package(destination: Path) -> None:
             raise ValueError(f"Expected a regular PWA asset: {name}")
         files[name] = path.read_bytes()
 
+    configure_api_origin(files, api_origin)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
         temporary_path = Path(temporary)
@@ -123,9 +140,10 @@ def package(destination: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="new output directory for app/ and SHA256SUMS")
+    parser.add_argument("--api-origin", default=DEFAULT_API, help="fixed HTTPS API origin for this release")
     args = parser.parse_args()
     try:
-        package(args.output)
+        package(args.output, args.api_origin)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"{error}\n")
 

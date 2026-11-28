@@ -32,13 +32,19 @@ void main() {
                   builder: (_) => ProfileTextEditor(
                     russian: false,
                     api: (route, {data, method}) async {
-                      expect(route, '/v1/users/me/profile-text');
+                      expect(
+                        route,
+                        data?.containsKey('visibleToPeers') == true
+                            ? '/v1/users/me/profile-text/with-visibility'
+                            : '/v1/users/me/profile-text',
+                      );
                       if (data == null) {
                         read++;
                         return {
                           'bio': read == 1 ? '旧' : '新',
                           'status': null,
                           'revision': read,
+                          if (read == 1) 'visibleToPeers': true,
                         };
                       }
                       saved.add(data);
@@ -61,9 +67,16 @@ void main() {
         find.widgetWithText(TextField, 'Bio'),
         '  Зоя 👩‍🔬  ',
       );
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
-      expect(saved.first, {'bio': 'Зоя 👩‍🔬', 'status': null, 'revision': 1});
+      expect(saved.first, {
+        'bio': 'Зоя 👩‍🔬',
+        'status': null,
+        'revision': 1,
+        'visibleToPeers': false,
+      });
       expect(find.text('  Зоя 👩‍🔬  '), findsOneWidget);
       expect(
         tester
@@ -84,6 +97,42 @@ void main() {
       expect(find.text('Bio and status'), findsNothing);
     },
   );
+  testWidgets('a legacy writer cannot receive the hidden draft', (
+    tester,
+  ) async {
+    final writes = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProfileTextEditor(
+            russian: false,
+            api: (route, {data, method}) async {
+              if (data == null)
+                return {
+                  'bio': null,
+                  'status': null,
+                  'revision': 0,
+                  'visibleToPeers': true,
+                };
+              writes.add(route);
+              throw ApiFailure(404);
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Bio'),
+      'Private draft',
+    );
+    await tester.tap(find.byType(SwitchListTile));
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(writes, ['/v1/users/me/profile-text/with-visibility']);
+    expect(find.text('Private draft'), findsOneWidget);
+    expect(find.textContaining('Your changes were not saved.'), findsOneWidget);
+  });
   testWidgets('peer bio stays plain text and an unsafe status is omitted', (
     tester,
   ) async {

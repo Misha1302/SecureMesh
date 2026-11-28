@@ -41,7 +41,7 @@ dt{font-weight:650}dd{color:#374c46}a{color:#105c50;text-underline-offset:.2em}a
 		header Content-Type application/json
 		respond `{"service":"SecureMesh","environment":"demo","productionApproved":false}`
 	}
-	@api path /v1/* /v2/auth/register /v2/auth/login /v2/auth/reauthenticate /health/live /health/ready
+	@api path /v1/* /v2/auth/register /v2/auth/resend-verification /v2/auth/recovery/complete /v2/auth/login /v2/auth/reauthenticate /health/live /health/ready
 	handle @api {
 		reverse_proxy https://127.0.0.1:5088 {
 			header_up Host localhost

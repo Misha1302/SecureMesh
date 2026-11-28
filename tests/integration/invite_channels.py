@@ -24,7 +24,12 @@ def verify(request, owner, reader, outsider, pending, username):
     request(root,token=outsider,method='DELETE',expected=404)
     pub=request(root+'/posts',{'requestId':str(uuid.uuid4()),'body':'Original'},token=owner,expected=201)
     seq=pub['seq']
+    pin={'expectedRevision':0,'seq':seq}
+    request(root+'/pin',pin,token=owner,method='PUT',expected=204)
+    request(root+'/pin',pin,token=outsider,method='PUT',expected=404)
     editpath=root+'/posts/'+str(seq)
+    reaction=editpath+'/reaction'
+    request(reaction,{'kind':'heart'},token=outsider,method='PUT',expected=404)
     def invite(who,token=owner,expected=204):
         return request(root+'/invitations',{'username':who},token=token,expected=expected)
     invite(username+'!',expected=400)
@@ -34,6 +39,7 @@ def verify(request, owner, reader, outsider, pending, username):
     invite(username.upper())
     assert request(listing,token=reader)['items'][0]['invited'] is True
     request(root+'/posts',token=reader,expected=403)
+    request(reaction,{'kind':'heart'},token=reader,method='PUT',expected=403)
     invite(username,token=reader,expected=403)
     request(root+'/subscription',token=pending,method='PUT',expected=403)
     request(root+'/subscription',token=reader,method='DELETE',expected=204)
@@ -41,24 +47,31 @@ def verify(request, owner, reader, outsider, pending, username):
     invite(username)
     request(root+'/subscription',token=reader,method='PUT',expected=204)
     assert request(listing,token=reader)['items'][0]['subscribed']
+    assert all(p['channelId'] != spec['id'] for p in request(path+'/feed',token=reader)['items'])
     before=request(root+'/posts',token=reader)['items'][0]
+    assert request(root+'/posts',token=reader)['pinned']=={'seq':seq,'body':'Original'}
     assert before['revision']==1 and before['body']=='Original'
     edit={'expectedRevision':1,'body':'Corrected'}
     request(editpath,edit,token=reader,method='PUT',expected=403)
     request(editpath,edit,token=outsider,method='PUT',expected=404)
     request(editpath,edit,token=pending,method='PUT',expected=403)
-    assert request(editpath,edit,token=owner,method='PUT')['revision']==2
-    assert request(editpath,edit,token=owner,method='PUT')['revision']==2
+    saved=request(editpath,edit,token=owner,method='PUT')
+    assert saved['revision']==2 and saved['editedAt']
+    assert request(editpath,edit,token=owner,method='PUT')==saved
     request(editpath,{'expectedRevision':1,'body':'Lost write'},token=owner,method='PUT',expected=409)
     after=request(root+'/posts',token=reader)['items'][0]
-    assert after=={**before,'body':'Corrected','revision':2}
+    assert after=={**before,'body':'Corrected','revision':2,'editedAt':saved['editedAt']}
     request(root+'/subscription',token=reader,method='DELETE',expected=204)
     request(root+'/posts',token=reader,expected=404)
     request(root+'/subscription',token=reader,method='PUT',expected=404)
     invite(username)
     request(root+'/subscription',token=reader,method='PUT',expected=204)
     request(root+'/revoke-access',{'username':username},token=reader,expected=403)
+    assert request(reaction,{'kind':'heart'},token=reader,method='PUT')['heart']==1
     request(root+'/revoke-access',{'username':username},token=owner,expected=204)
+    request(reaction,method='DELETE',token=reader,expected=404)
+    request(reaction,{'kind':'smile'},token=reader,method='PUT',expected=404)
+    assert request(root+'/posts',token=owner)['items'][0]['reactions']['heart']==0
     request(root+'/posts',token=reader,expected=404)
     assert request(listing,token=reader)['items']==[]
     request(root,token=owner,method='DELETE',expected=204)

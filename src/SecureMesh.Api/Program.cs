@@ -20,6 +20,8 @@ builder.Services.AddSingleton(NpgsqlDataSource.Create(connection));
 var stateDirectory=builder.Configuration["StateDirectory"] ?? Path.Combine(Directory.GetCurrentDirectory(),".local");
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(stateDirectory,"cursor-keys")));
 builder.Services.AddSingleton(new VerificationEmail(builder.Configuration));
+builder.Services.AddSingleton<VerificationEmailQueue>();
+builder.Services.AddHostedService(services => services.GetRequiredService<VerificationEmailQueue>());
 builder.Services.AddSingleton<Delivery>();
 builder.Services.AddSingleton<PublicKeyPackageValidator>();
 builder.Services.AddRateLimiter(o =>
@@ -35,9 +37,15 @@ if (browserOrigin is not null)
         origin.Scheme != Uri.UriSchemeHttps || origin.HostNameType == UriHostNameType.Unknown ||
         origin.UserInfo.Length != 0 || browserOrigin != origin.GetLeftPart(UriPartial.Authority))
         throw new InvalidOperationException("BrowserClientOrigin must be one exact HTTPS origin.");
-    builder.Services.AddCors(options => options.AddPolicy("BrowserClient", policy => policy
-        .WithOrigins(browserOrigin).WithMethods("GET", "POST", "PUT")
-        .WithHeaders("Content-Type", "Authorization")));
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("BrowserClient", policy => policy
+            .WithOrigins(browserOrigin).WithMethods("GET", "POST", "PUT")
+            .WithHeaders("Content-Type", "Authorization"));
+        options.AddPolicy("BrowserContactUnblock", policy => policy
+            .WithOrigins(browserOrigin).WithMethods("DELETE")
+            .WithHeaders("Authorization"));
+    });
 }
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
@@ -50,8 +58,14 @@ app.Use(async(ctx,next)=>
     catch(ApiError e) {ctx.Response.StatusCode=e.Status; await ctx.Response.WriteAsJsonAsync(new {code=e.Code});}
     catch(Exception e) when(e is FormatException or ArgumentException or BadHttpRequestException)
     {ctx.Response.StatusCode=400; await ctx.Response.WriteAsJsonAsync(new {code="INVALID_REQUEST"});}
-    catch(NpgsqlException)
-    {ctx.Response.StatusCode=503; await ctx.Response.WriteAsJsonAsync(new {code="STORAGE_UNAVAILABLE"});}
+    catch (NpgsqlException error)
+    {
+        // Database exception messages can contain SQL, identifiers or request values.
+        app.Logger.LogWarning("Storage operation failed ({Type}, SQLSTATE {State}, transient {Transient}).",
+            error.GetType().Name, error.SqlState ?? "unavailable", error.IsTransient);
+        ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        await ctx.Response.WriteAsJsonAsync(new {code = "STORAGE_UNAVAILABLE"});
+    }
 });
 if (browserOrigin is not null) app.UseCors("BrowserClient");
 app.UseRateLimiter();
@@ -60,9 +74,11 @@ app.MapSessionInactivity();
 app.MapAccountRemoval();
 app.MapProfilePhotos();
 app.MapProfileText();
+app.MapConversationMessageBlocks();
 app.MapPublicChannels();
 app.MapPrivateBlobs();
 app.MapDeviceTrust();
+app.MapSecurityEmail();
 app.MapRoster();
 app.MapMlsDirectory();
 Delivery.MapDelivery(app);

@@ -33,6 +33,7 @@ class ProfileTextEditor extends StatefulWidget {
 class _ProfileTextEditorState extends State<ProfileTextEditor> {
   final bio = TextEditingController(), status = TextEditingController();
   int? revision;
+  bool? visibleToPeers;
   bool busy = true, conflict = false;
   String? error;
   String tr(String ru, String en) => widget.russian ? ru : en;
@@ -62,6 +63,11 @@ class _ProfileTextEditorState extends State<ProfileTextEditor> {
       if (version is! int || version < 0) throw const FormatException();
       bio.text = safeProfileText(result['bio'], 280, multiline: true) ?? '';
       status.text = safeProfileText(result['status'], 80) ?? '';
+      final visibility = result['visibleToPeers'];
+      if (visibility != null && visibility is! bool) {
+        throw const FormatException();
+      }
+      visibleToPeers = visibility as bool?;
       revision = version;
       conflict = false;
     } catch (_) {
@@ -91,21 +97,37 @@ class _ProfileTextEditorState extends State<ProfileTextEditor> {
       error = null;
     });
     try {
-      await widget.api(
-        '/v1/users/me/profile-text',
+      final response = await widget.api(
+        visibleToPeers == null
+            ? '/v1/users/me/profile-text'
+            : '/v1/users/me/profile-text/with-visibility',
         method: 'PUT',
         data: {
           'bio': about.isEmpty ? null : about,
           'status': note.isEmpty ? null : note,
           'revision': revision,
+          if (visibleToPeers != null) 'visibleToPeers': visibleToPeers,
         },
       );
+      if (visibleToPeers != null &&
+          (response is! Map || response['visibleToPeers'] != visibleToPeers)) {
+        throw const FormatException();
+      }
       if (mounted) Navigator.pop(context);
     } catch (failure) {
       if (!mounted) return;
       setState(() {
         conflict = failure is ApiFailure && failure.code == 'PROFILE_CHANGED';
         busy = false;
+        if (visibleToPeers != null &&
+            failure is ApiFailure &&
+            failure.status == 404) {
+          error = tr(
+            'Сервер не поддерживает сохранение видимости. Изменения не сохранены.',
+            'This server does not support saving visibility. Your changes were not saved.',
+          );
+          return;
+        }
         error = conflict
             ? tr(
                 'Профиль изменён на другом устройстве. Загрузите текущую версию перед редактированием.',
@@ -144,11 +166,33 @@ class _ProfileTextEditorState extends State<ProfileTextEditor> {
                 labelText: tr('Текст статуса', 'Status message'),
               ),
             ),
-            Text(
-              tr(
-                'Эти поля видны серверу и участникам ваших подтверждённых личных чатов. Оставьте поле пустым, чтобы скрыть его.',
-                'Your server and the people in your established private chats can see these fields. Leave a field empty to hide it.',
+            if (visibleToPeers != null)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  tr('Показывать собеседникам', 'Show to chat partners'),
+                ),
+                subtitle: Text(
+                  tr(
+                    'О себе и текст статуса в личных чатах.',
+                    'Bio and status in private conversations.',
+                  ),
+                ),
+                value: visibleToPeers!,
+                onChanged: busy || conflict
+                    ? null
+                    : (value) => setState(() => visibleToPeers = value),
               ),
+            Text(
+              visibleToPeers != null
+                  ? tr(
+                      'Эти сведения хранятся на сервере. Уже просмотренный текст может остаться у собеседника.',
+                      'These fields are stored on the server. Someone who has viewed them may have kept a copy.',
+                    )
+                  : tr(
+                      'Эти поля видны серверу и участникам ваших подтверждённых личных чатов. Оставьте поле пустым, чтобы скрыть его.',
+                      'Your server and the people in your established private chats can see these fields. Leave a field empty to hide it.',
+                    ),
             ),
           ],
           if (error != null) Semantics(liveRegion: true, child: Text(error!)),

@@ -53,10 +53,16 @@ void main() {
       await delivery.tick('first', listedGroups: ['first', 'second']);
       await Future<void>.delayed(Duration.zero);
     }
-    await delivery.tick('selected');
+    final duringConversation = await delivery.tick('selected');
+    expect(duringConversation.delay, const Duration(milliseconds: 250));
     expect(relay.pulled, ['first', 'second', 'first', 'selected']);
     expect(relay.sent, ['m']);
     expect(outbox, isEmpty);
+    for (var i = 0; i < 8; i++) {
+      await delivery.tick('selected');
+    }
+    final idle = await delivery.tick('selected');
+    expect(idle.delay, const Duration(seconds: 3));
     delivery.close();
   });
 }

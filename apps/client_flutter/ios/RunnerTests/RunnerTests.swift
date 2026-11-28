@@ -1,10 +1,31 @@
 import Flutter
 import Foundation
 import LocalAuthentication
+import UIKit
 import XCTest
 @testable import Runner
 
 final class RunnerTests: XCTestCase {
+  @MainActor func testBackgroundSnapshotHidesPrivateViewAndRestoresIt() throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let delegate = SceneDelegate()
+    let window = UIWindow(windowScene: scene)
+    delegate.window = window
+    let content = UIView(frame: window.bounds)
+    window.addSubview(content)
+    let center = NotificationCenter.default
+    center.post(name: UIScene.willDeactivateNotification, object: scene)
+    let cover = try XCTUnwrap(window.subviews.last)
+    XCTAssertFalse(cover === content)
+    XCTAssertTrue(cover.isOpaque)
+    XCTAssertEqual(cover.frame, window.bounds)
+    center.post(name: UIScene.didEnterBackgroundNotification, object: scene)
+    XCTAssertTrue(window.subviews.last === cover)
+    center.post(name: UIScene.didActivateNotification, object: scene)
+    XCTAssertTrue(window.subviews.last === content)
+    XCTAssertNil(cover.superview)
+  }
+
   func testPrivatePathAndIndependentEnvelopes() throws {
     let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

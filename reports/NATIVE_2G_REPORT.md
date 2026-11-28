@@ -4,14 +4,18 @@ The executable Dart driver uses the same NativeDelivery, MeshTransport, AccountS
 
 Each trial offers 200 Unicode messages in each direction (400 distinct IDs), one per second/device for GPRS and every 1.5 seconds/device for severe. Time starts before local encryption/outbox COMMIT and ends after recipient decryption/inbox COMMIT. TLS/WSS sessions are warmed before impairments. Owned disposable netem containers apply 20 kbit/s per direction / RTT 1.5s / 3% loss for GPRS and 10 kbit/s / RTT 3s / 10% loss for severe. No host network interface is changed. Raw records, counters, exact source/binary hashes and source HEAD at each launch are retained. Builds/GUI tests may run concurrently; this is shared development hardware.
 
+## Baseline measurements
+
+The following table refers to the retained 4b003dd runtime used before the November 28 delivery changes. Each link opens the evidence as recorded in the base branch. The current integration measurements and per-trial revisions are in [the product handoff](PRODUCT_HANDOFF_RU.md).
+
 | Profile | Seed | Result | p50 seconds | p95 seconds | p99 seconds | Raw evidence |
 |---|---:|---|---:|---:|---:|---|
-| gprs | 7 | PASS | 3.000 | 4.672 | 5.475 | [native-netem-gprs-7-200.json](evidence/native-netem-gprs-7-200.json) |
-| gprs | 19 | PASS | 3.047 | 4.928 | 5.831 | [native-netem-gprs-19-200.json](evidence/native-netem-gprs-19-200.json) |
-| gprs | 41 | PASS | 2.990 | 4.742 | 5.998 | [native-netem-gprs-41-200.json](evidence/native-netem-gprs-41-200.json) |
-| severe | 7 | PASS | 15.375 | 42.772 | 44.931 | [native-netem-severe-7-200.json](evidence/native-netem-severe-7-200.json) |
-| severe | 19 | PASS | 23.634 | 56.869 | 79.053 | [native-netem-severe-19-200.json](evidence/native-netem-severe-19-200.json) |
-| severe | 41 | PASS | 32.741 | 66.886 | 69.057 | [native-netem-severe-41-200.json](evidence/native-netem-severe-41-200.json) |
+| gprs | 7 | PASS | 3.000 | 4.672 | 5.475 | [native-netem-gprs-7-200.json](https://github.com/Misha1302/SecureMesh/blob/00084b8/reports/evidence/native-netem-gprs-7-200.json) |
+| gprs | 19 | PASS | 3.047 | 4.928 | 5.831 | [native-netem-gprs-19-200.json](https://github.com/Misha1302/SecureMesh/blob/00084b8/reports/evidence/native-netem-gprs-19-200.json) |
+| gprs | 41 | PASS | 2.990 | 4.742 | 5.998 | [native-netem-gprs-41-200.json](https://github.com/Misha1302/SecureMesh/blob/00084b8/reports/evidence/native-netem-gprs-41-200.json) |
+| severe | 7 | PASS | 15.375 | 42.772 | 44.931 | [native-netem-severe-7-200.json](https://github.com/Misha1302/SecureMesh/blob/00084b8/reports/evidence/native-netem-severe-7-200.json) |
+| severe | 19 | PASS | 23.634 | 56.869 | 79.053 | [native-netem-severe-19-200.json](https://github.com/Misha1302/SecureMesh/blob/00084b8/reports/evidence/native-netem-severe-19-200.json) |
+| severe | 41 | PASS | 32.741 | 66.886 | 69.057 | [native-netem-severe-41-200.json](https://github.com/Misha1302/SecureMesh/blob/00084b8/reports/evidence/native-netem-severe-41-200.json) |
 
 GPRS gate remains p95 <=15 seconds in every full trial. Severe requires eventual delivery, with a bounded 1200-second harness watchdog and no claimed latency SLA. The raw failure from the first native seed 19 (p95 18.559 seconds) is preserved in v2-native-gprs-initial-fail.txt and native-netem-gprs-initial-19-200.json. No impairment, count or threshold was reduced. The fix removes batch-wide ACK/sync waiting: bounded writes refill independently from sync, immutable ciphertext remains in SQLCipher until durable ACK, and MLS control commits remain serial barriers.
 

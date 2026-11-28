@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mock } from "node:test";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { once } from "node:events";
 import { createMessenger, fingerprint } from "../../site/app/messenger.js";
 import init, { execute } from "../../site/app/crypto/securemesh_browser_crypto.js";
 
@@ -15,6 +18,8 @@ const clients = new Map();
 let loseAck = false;
 let wrongSender = false;
 let replaceKey = false;
+let omitChats = false;
+let malformedTail = false;
 let sendCalls = [];
 const digest = (ciphertext) => createHash("sha256").update(Buffer.from(ciphertext, "base64")).digest("base64");
 
@@ -49,6 +54,7 @@ function client(username) {
       // The real database stores the validated reference. The fixture receives
       // the WASM result separately below and checks the published package bytes.
       const published = packages.get(device);
+      assert.equal(invitations.get(data.invitationId)?.recipient, username);
       assert.equal(data.payload, published.keypackage);
       return { reference: published.reference };
     }
@@ -80,13 +86,16 @@ function client(username) {
       return null;
     }
     if (path === "/v1/conversations") {
-      return [...groups].filter(([, group]) => group.members.includes(username))
+      if (omitChats) return [];
+      const result = [...groups].filter(([, group]) => group.members.includes(username))
         .map(([id, group]) => {
           const peerName = group.members.find((name) => name !== username);
           const peer = clients.get(peerName).own;
           return { id, peerName, peerDevice: peer.identity,
             peerKey: replaceKey ? initialized.result.public_key : peer.public_key };
         });
+      if (malformedTail) result.push({ id: "malformed" });
+      return result;
     }
     if (path === "/v1/messages") {
       sendCalls.push(structuredClone(data));
@@ -122,8 +131,15 @@ function client(username) {
   }
 
   const ctx = {
-    api,
+    api(path, data, _method, handoff) {
+      return handoff ? handoff(() => api(path, data)) : api(path, data);
+    },
     state: () => stored,
+    async handoff(check, send) {
+      await check((op, fields) =>
+        JSON.parse(execute(stored.snapshot, JSON.stringify({ ...fields, op }))).result);
+      return send();
+    },
     async update(mutate) {
       const draft = structuredClone(stored);
       mutate(draft);
@@ -131,7 +147,7 @@ function client(username) {
     },
     async run(op, fields, mutate) {
       const result = JSON.parse(execute(stored.snapshot, JSON.stringify({ ...fields, op })));
-      if (op === "keypackage") packages.set(device, result.result);
+      if (op === "directory_consent" || op === "keypackage") packages.set(device, result.result);
       if (op === "process" && fields.id === failProcess) throw new Error("simulated vault write failure");
       if (op === "process" && fields.id === unsupportedProcess) {
         // Exercise the WASM caller's authenticated unsupported-event result shape.
@@ -165,6 +181,7 @@ const accepted = (await a.refresh()).requests[0];
 const group = await a.establish(accepted, await fingerprint(bob.own.public_key));
 const welcome = (await b.refresh()).welcomes[0];
 await assert.rejects(b.join({ ...welcome, senderKey: bob.own.public_key }), { code: "invitation" });
+await assert.rejects(b.join({ ...welcome, reference: alice.own.public_key }), { code: "invitation" });
 assert.equal(await b.join(welcome), group);
 
 const first = await a.send(group, "first queue entry 🔐");
@@ -179,6 +196,7 @@ await reopened.tick();
 assert.deepEqual(sendCalls[0], sendCalls[1]);
 assert.equal(alice.ctx.state().messenger.outbox[first], undefined);
 assert.equal(alice.ctx.state().messenger.chats[group].messages[0].status, "saved");
+assert.equal(alice.ctx.state().messenger.chats[group].receivedCount ?? 0, 0);
 assert(!Buffer.from(sendCalls[0].ciphertext, "base64").includes("first queue entry"));
 
 wrongSender = true;
@@ -187,12 +205,26 @@ assert.equal(bob.ctx.state().messenger.chats[group].cursor, "");
 assert.deepEqual(bob.ctx.state().messenger.chats[group].messages, []);
 wrongSender = false;
 const second = await a.send(group, "second queue entry");
+const blockedRetry = structuredClone(alice.ctx.state().messenger.outbox[second]);
+const apiBeforeBlock = alice.ctx.api;
+alice.ctx.api = (path, ...args) => {
+  if (path === "/v1/messages")
+    throw Object.assign(new Error("delivery paused"), { code: "CONVERSATION_MESSAGES_BLOCKED", status: 409 });
+  return apiBeforeBlock(path, ...args);
+};
+await assert.rejects(reopened.tick(), { code: "CONVERSATION_MESSAGES_BLOCKED" });
+assert.deepEqual(alice.ctx.state().messenger.outbox[second], blockedRetry);
+assert.equal(alice.ctx.state().messenger.chats[group].messages.at(-1).status, "queued");
+alice.ctx.api = apiBeforeBlock;
 await reopened.tick();
+assert.equal(sendCalls.at(-1).ciphertext, blockedRetry.ciphertext);
+assert.equal(sendCalls.at(-1).clientMessageId, second);
 bob.failOn(second);
 await assert.rejects(b.tick(), /vault write failure/);
 assert.equal(bob.ctx.state().messenger.chats[group].cursor, "");
 assert.deepEqual(bob.ctx.state().messenger.chats[group].messages.map((message) => message.text),
   ["first queue entry 🔐"]);
+assert.equal(bob.ctx.state().messenger.chats[group].receivedCount, 1);
 bob.failOn(undefined);
 await b.tick();
 assert.equal(bob.ctx.state().messenger.chats[group].cursor, "2");
@@ -208,15 +240,153 @@ bob.unsupportedOn(unsupported);
 await reopened.tick();
 await b.tick();
 const placeholder = bob.ctx.state().messenger.chats[group].messages.at(-1);
+assert.equal(bob.ctx.state().messenger.chats[group].receivedCount, 3);
+assert.equal(alice.ctx.state().messenger.chats[group].receivedCount, 1);
 assert.equal(placeholder.id, unsupported);
 assert.equal(placeholder.status, "unsupported");
 assert(placeholder.text.includes("Зашифрованное"));
 assert(!placeholder.text.includes("fixture plaintext"));
 
+const queuedBeforeChange = await reopened.send(group, "durable pre-conflict draft");
+const attemptsBeforeChange = sendCalls.length;
+assert(reopened.canViewPeer(group));
+let profileCleared = false;
+alice.ctx.onBindingConflict = id => {
+  assert.equal(id, group);
+  assert.equal(reopened.canViewPeer(group), false);
+  assert(!alice.ctx.state().messenger.chats[group].bindingConflict);
+  profileCleared = true;
+};
 replaceKey = true;
 await reopened.refresh();
+delete alice.ctx.onBindingConflict;
+assert(profileCleared);
+assert.equal(reopened.canViewPeer(group), false);
 await assert.rejects(reopened.send(group, "blocked"), { code: "changed-key" });
 assert.equal(alice.ctx.state().messenger.chats[group].peerKey, bob.own.public_key);
+
+const afterConflict = createMessenger(alice.ctx);
+omitChats = true;
+await afterConflict.tick();
+assert.equal(sendCalls.length, attemptsBeforeChange);
+assert(alice.ctx.state().messenger.outbox[queuedBeforeChange]);
+const originalCode = await fingerprint(bob.own.public_key);
+await assert.rejects(afterConflict.reconfirmChat(group, originalCode), {code: "changed-key"});
+omitChats = false;
+await assert.rejects(afterConflict.reconfirmChat(group, originalCode), {code: "changed-key"});
+replaceKey = false;
+await afterConflict.refresh();
+await assert.rejects(afterConflict.send(group, "still blocked"), {code: "changed-key"});
+await assert.rejects(afterConflict.reconfirmChat(group, "bad"), {code: "verification"});
+await afterConflict.reconfirmChat(group, originalCode);
+await afterConflict.tick();
+assert(!alice.ctx.state().messenger.outbox[queuedBeforeChange]);
+assert.equal(alice.ctx.state().messenger.chats[group].peerKey, bob.own.public_key);
+
+// The account layer can suspend actual network handoff after the outbox was selected.
+const delayed = await afterConflict.send(group, "queued before the actual HTTP handoff");
+const beforeDelay = sendCalls.length;
+const realApi = alice.ctx.api;
+let unblock, seen;
+const waitForSend = new Promise((resolve) => { seen = resolve; });
+const allowSend = new Promise((resolve) => { unblock = resolve; });
+alice.ctx.api = async (...args) => {
+  if (args[0] === "/v1/messages") {
+    seen();
+    await allowSend;
+  }
+  return realApi.apply(alice.ctx, args);
+};
+const withDelay = createMessenger(alice.ctx);
+const draining = withDelay.tick();
+await waitForSend;
+replaceKey = true;
+await withDelay.refresh();
+unblock();
+await assert.rejects(draining, { code: "changed-key" });
+assert.equal(sendCalls.length, beforeDelay);
+assert(alice.ctx.state().messenger.outbox[delayed]);
+alice.ctx.api = realApi;
+
+// A newer conflicting observation cannot be erased by a suspended reconfirmation.
+replaceKey = false;
+let verified, finish;
+const checkingPin = new Promise((resolve) => { verified = resolve; });
+const finishPin = new Promise((resolve) => { finish = resolve; });
+const realRun = alice.ctx.run;
+alice.ctx.run = async (...args) => {
+  if (args[0] === "peer_key_status") {
+    verified();
+    await finishPin;
+  }
+  return realRun.apply(alice.ctx, args);
+};
+const verifying = createMessenger(alice.ctx);
+const clearing = verifying.reconfirmChat(group, originalCode);
+await checkingPin;
+replaceKey = true;
+await verifying.refresh();
+finish();
+await assert.rejects(clearing, { code: "changed-key" });
+assert(alice.ctx.state().messenger.chats[group].bindingConflict);
+alice.ctx.run = realRun;
+replaceKey = false;
+const restored = createMessenger(alice.ctx);
+await restored.reconfirmChat(group, originalCode);
+
+// A malformed later directory row must not discard an already observed conflict.
+replaceKey = true;
+malformedTail = true;
+await assert.rejects(restored.refresh(), { code: "format" });
+assert(alice.ctx.state().messenger.chats[group].bindingConflict);
+assert.equal(sendCalls.length, beforeDelay);
+replaceKey = false;
+malformedTail = false;
+await restored.reconfirmChat(group, originalCode);
+
+// A pin conflict observed during a sealed upload must still stop the MLS
+// descriptor before it can leave the browser. Retry retains the exact bytes.
+const photoId = randomUUID(), blobId = randomUUID();
+await alice.ctx.run("queue", {group, id: photoId, blobId, text: "Фото", photo: "AA=="}, (draft, entry) => {
+  draft.messenger.outbox[photoId] = entry;
+  draft.messenger.chats[group].messages.push({id: photoId, direction: "outgoing", text: "Фото"});
+});
+const queuedPhoto = structuredClone(alice.ctx.state().messenger.outbox[photoId]);
+const blobPath = `/v1/conversations/${group}/blobs/${blobId}`;
+let uploaded = 0;
+alice.ctx.api = (path, data, method, guard) => {
+  if (path !== blobPath) return realApi(path, data, method, guard);
+  assert.equal(method, "PUT");
+  assert.equal(Buffer.from(data).toString("base64"), queuedPhoto.photo.sealed);
+  return guard(async () => {
+    uploaded++;
+    omitChats = false;
+    replaceKey = true;
+    await restored.refresh();
+  });
+};
+await assert.rejects(restored.tick(), {code: "changed-key"});
+assert.equal(uploaded, 1);
+assert.equal(sendCalls.length, beforeDelay + 1); // Earlier text drained before the photo.
+assert.deepEqual(alice.ctx.state().messenger.outbox[photoId], queuedPhoto);
+await restored.tick();
+assert.equal(uploaded, 1);
+replaceKey = false;
+await restored.reconfirmChat(group, originalCode);
+alice.ctx.api = realApi;
+
+// Even a queued, valid ciphertext cannot leave a restored snapshot missing its original pin.
+await alice.ctx.update((draft) => {
+  const saved = JSON.parse(draft.snapshot);
+  const profile = saved.profile ?? saved;
+  assert(profile.pins[bob.own.identity]);
+  delete profile.pins[bob.own.identity];
+  draft.snapshot = JSON.stringify(saved);
+});
+await assert.rejects(restored.tick(), { code: "changed-key" });
+assert(alice.ctx.state().messenger.chats[group].bindingConflict);
+assert(alice.ctx.state().messenger.outbox[photoId]);
+assert.equal(sendCalls.length, beforeDelay + 1);
 
 // Keep the background directory cadence independent of the active thread and
 // prove that every idle group eventually gets a turn in the bounded sync slot.
@@ -270,4 +440,122 @@ paths = [];
 await assert.rejects(idle.tick({ forceDirectory: false }), { status: 429 });
 assert.deepEqual(paths, []);
 mock.restoreAll();
+
+// A real native SQLCipher/OpenMLS client creates the Welcome, sealed photo,
+// and MLS application event. The browser WASM joins and opens that payload.
+const nativeRecipient = client("native_recipient");
+const nativeProcess = spawn("python3", [new URL("./native_photo_fixture.py", import.meta.url).pathname], {
+  stdio: ["pipe", "pipe", "pipe"],
+});
+const nativeLines = createInterface({ input: nativeProcess.stdout });
+let nativeStderr = "";
+nativeProcess.stderr.setEncoding("utf8").on("data", (chunk) => { nativeStderr += chunk; });
+const nextNativeLine = () => new Promise((resolve, reject) => {
+  nativeLines.once("line", resolve);
+  nativeProcess.once("error", reject);
+  nativeProcess.once("exit", (code) => {
+    if (code !== 0) reject(new Error(`Native attachment fixture exited ${code}: ${nativeStderr}`));
+  });
+});
+const nativeStart = JSON.parse(await nextNativeLine());
+await nativeRecipient.ctx.run("pin", {
+  identity: nativeStart.sender, public_key: nativeStart.senderKey, confirmed: true,
+});
+const nativeConsent = await nativeRecipient.ctx.run("directory_consent", {
+  invitation: nativeStart.invitation, sender: nativeStart.sender,
+  senderKey: nativeStart.senderKey, confirmed: true,
+});
+nativeProcess.stdin.write(JSON.stringify({
+  recipient: nativeRecipient.own.identity,
+  recipientKey: nativeRecipient.own.public_key,
+  keypackage: nativeConsent.keypackage,
+  reference: nativeConsent.reference,
+}) + "\n");
+const nativePhoto = JSON.parse(await nextNativeLine());
+nativeProcess.stdin.end();
+if (nativeProcess.exitCode === null) await once(nativeProcess, "exit");
+assert.equal(nativeProcess.exitCode, 0);
+const { bootstrap, group: nativeGroup, id: nativeMessageId, envelope: nativeEnvelope,
+  sealed: nativeSealed, plain: nativePlain } = nativePhoto;
+assert.equal(bootstrap.binding.sender, nativeStart.sender);
+assert.equal(bootstrap.binding.reference, nativeConsent.reference);
+const nativeJoined = JSON.parse(execute(nativeRecipient.ctx.state().snapshot, JSON.stringify({
+  op: "directory_join", group: nativeGroup, invitation: nativeStart.invitation,
+  lease: nativeStart.lease, sender: nativeStart.sender,
+  recipient: nativeRecipient.own.identity, reference: nativeConsent.reference,
+  welcome: bootstrap.welcome, signature: bootstrap.signature,
+})));
+await nativeRecipient.ctx.update((draft) => { draft.snapshot = nativeJoined.snapshot; });
+const nativeMessage = await nativeRecipient.ctx.run("process", {
+  group: nativeGroup, id: nativeMessageId, sender: nativeStart.sender,
+  kind: nativeEnvelope.kind, epoch: nativeEnvelope.epoch,
+  ciphertext: nativeEnvelope.ciphertext,
+});
+assert.equal(nativeMessage.attachment.media, "photo");
+assert.equal(nativeMessage.attachment.name, "native-photo.png");
+assert.equal(nativeMessage.attachment.caption, "Native to browser");
+const openedNativePhoto = await nativeRecipient.ctx.run("attachment_open", {
+  group: nativeGroup, id: nativeMessageId, attachment: nativeMessage.attachment,
+  ciphertext: nativeSealed,
+});
+assert.equal(openedNativePhoto.data, nativePlain);
+const corruptNative = Buffer.from(nativeSealed, "base64");
+corruptNative[corruptNative.length - 1] ^= 1;
+await assert.rejects(nativeRecipient.ctx.run("attachment_open", {
+  group: nativeGroup, id: nativeMessageId, attachment: nativeMessage.attachment,
+  ciphertext: corruptNative.toString("base64"),
+}));
+await assert.rejects(nativeRecipient.ctx.run("attachment_open", {
+  group: nativeGroup, id: randomUUID(), attachment: nativeMessage.attachment,
+  ciphertext: nativeSealed,
+}));
+await assert.rejects(nativeRecipient.ctx.run("attachment_open", {
+  group: nativeGroup, id: nativeMessageId,
+  attachment: { ...nativeMessage.attachment, media: "file" }, ciphertext: nativeSealed,
+}));
+// Prior releases kept the consent only in the outer encrypted vault and
+// published into the recipient's unscoped package pool.
+for (const pooledMismatch of [false, true]) {
+  const label = pooledMismatch ? "mismatch" : "matched";
+  const senderName = "sender_" + label, recipientName = "legacy_" + label;
+  const sender = client(senderName), recipient = client(recipientName);
+  const send = createMessenger(sender.ctx), receive = createMessenger(recipient.ctx);
+  const invitation = await send.invite(recipientName);
+  const code = await fingerprint(sender.own.public_key);
+  await recipient.ctx.run("pin", { ...sender.own, confirmed: true });
+  const pkg = await recipient.ctx.run("keypackage", {});
+  await recipient.ctx.update((draft) => {
+    draft.messenger = { chats: {}, invites: {}, proposals: {}, outbox: {}, accepted: {
+      [invitation]: { peerDevice: sender.own.identity, peerKey: sender.own.public_key,
+        peerName: senderName, ...pkg, posted: true },
+    }};
+    const legacy = JSON.parse(draft.snapshot);
+    legacy.version = 1;
+    delete legacy.consents;
+    draft.snapshot = JSON.stringify(legacy);
+  });
+  await recipient.ctx.api(`/v1/chat-requests/${invitation}/accept`, {});
+  if (pooledMismatch) await recipient.ctx.run("keypackage", {});
+  const [row] = (await send.refresh()).requests;
+  const group = await send.establish(row, await fingerprint(recipient.own.public_key));
+  const [welcome] = (await receive.refresh()).welcomes;
+  if (pooledMismatch) {
+    await assert.rejects(receive.join(welcome, code), { code: "invitation" });
+    assert.equal(recipient.ctx.state().messenger.chats[group], undefined);
+    assert(groups.get(group).pending);
+  } else {
+    await assert.rejects(receive.join(welcome), { code: "verification" });
+    await assert.rejects(receive.join(welcome, "wrong"), { code: "verification" });
+    assert.equal(await receive.join(welcome, code), group);
+    await recipient.ctx.update((draft) => {
+      // A previously joined v1 group can replay the identical signed receipt.
+      const legacy = JSON.parse(draft.snapshot);
+      legacy.version = 1;
+      delete legacy.consents;
+      draft.snapshot = JSON.stringify(legacy);
+      delete draft.messenger.accepted[invitation].coreConsent;
+    });
+    assert.equal(await createMessenger(recipient.ctx).join(welcome), group);
+  }
+}
 console.log("Browser messenger transport passed with real WASM");

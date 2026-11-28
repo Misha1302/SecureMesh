@@ -53,6 +53,7 @@ class NativeDelivery {
   Object? _error;
   StackTrace? _errorStack;
   int _sent = 0, _received = 0;
+  int _fastPollsRemaining = 0;
   bool _connected = false, _weak = false;
   Object? receiptError;
   bool _closed = false, _busy = false;
@@ -110,11 +111,18 @@ class NativeDelivery {
       final sent = _sent, received = _received;
       _sent = _received = 0;
       final remaining = (await crypto('outbox'))['messages'] as List;
+      // A gap between consecutive messages in an active chat should not
+      // trigger a full idle delay at both sender and recipient.
+      if (sent > 0 || received > 0) {
+        _fastPollsRemaining = 6;
+      }
+      final recentlyActive = _fastPollsRemaining > 0;
+      if (recentlyActive) _fastPollsRemaining--;
       return DeliveryProgress(
         sent,
         received,
         remaining.length,
-        active: _pull != null || _sends.isNotEmpty,
+        active: recentlyActive || _pull != null || _sends.isNotEmpty,
         connected: _connected,
         weak: _weak,
       );

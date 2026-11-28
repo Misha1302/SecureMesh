@@ -5,7 +5,10 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto as Provider;
-use openmls_traits::{crypto::OpenMlsCrypto, signatures::Signer, OpenMlsProvider};
+use openmls_traits::{
+    crypto::OpenMlsCrypto, random::OpenMlsRand, signatures::Signer, storage::StorageProvider as _,
+    types::AeadType, OpenMlsProvider,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -27,8 +30,19 @@ pub fn derive_server_credential_v2(
 }
 
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+const ATTACHMENT_LIMIT: usize = 4 * 1024 * 1024;
+const ATTACHMENT_TAG: usize = 16;
 type Store = Vec<(Vec<u8>, Vec<u8>)>;
 type Roster = BTreeMap<String, Vec<u8>>;
+
+#[derive(Serialize, Deserialize)]
+struct Consent {
+    sender: String,
+    key: Vec<u8>,
+    reference: String,
+    keypackage: String,
+    group: Option<String>,
+}
 
 #[derive(Serialize, Deserialize)]
 struct Profile {
@@ -38,6 +52,8 @@ struct Profile {
     pins: Roster,
     store: Store,
     pending: BTreeMap<String, Value>,
+    #[serde(default)]
+    consents: BTreeMap<String, Consent>,
     joined: BTreeMap<String, [u8; 32]>,
 }
 
@@ -62,11 +78,99 @@ fn bytes(req: &Value, name: &str, limit: usize) -> Result<Vec<u8>> {
     Ok(decoded)
 }
 
+fn canonical_uuid(value: &str) -> Result<()> {
+    ensure!(
+        uuid::Uuid::parse_str(value)?.to_string() == value,
+        "invalid identifier"
+    );
+    Ok(())
+}
+
+fn attachment_size(info: &Value) -> Result<usize> {
+    ensure!(info["v"] == 1, "unsupported attachment descriptor");
+    canonical_uuid(field(info, "blobId")?)?;
+    let size = info["size"].as_u64().context("missing attachment size")?;
+    ensure!(
+        (1..=ATTACHMENT_LIMIT as u64).contains(&size),
+        "invalid attachment size"
+    );
+    let name = field(info, "name")?;
+    ensure!(!name.trim().is_empty() && name.len() <= 255 && name != "." && name != ".."
+        && !name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')),
+        "invalid attachment name");
+    ensure!(
+        matches!(field(info, "media")?, "file" | "photo" | "voice" | "video"),
+        "invalid attachment media"
+    );
+    if let Some(caption) = info.get("caption") {
+        ensure!(
+            caption.as_str().is_some_and(|text| text.len() <= 2048),
+            "invalid attachment caption"
+        );
+    }
+    let key = B64.decode(field(info, "key")?)?;
+    let nonce = B64.decode(field(info, "nonce")?)?;
+    ensure!(
+        key.len() == 32 && nonce.len() == 12,
+        "invalid attachment key material"
+    );
+    ensure!(
+        B64.encode(&key) == field(info, "key")? && B64.encode(&nonce) == field(info, "nonce")?,
+        "noncanonical attachment key material"
+    );
+    Ok(size as usize)
+}
+
+fn attachment_aad(group: &str, id: &str, info: &Value) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&json!([
+        "SecureMesh/attachment/v1",
+        group,
+        id,
+        info["blobId"],
+        info["name"],
+        info["media"],
+        info["size"]
+    ]))?)
+}
+
+fn open_attachment(provider: &Provider, req: &Value) -> Result<Value> {
+    let group = field(req, "group")?;
+    let id = field(req, "id")?;
+    canonical_uuid(group)?;
+    canonical_uuid(id)?;
+    let info = &req["attachment"];
+    let size = attachment_size(info)?;
+    ensure!(
+        field(info, "media")? == "photo",
+        "unsupported attachment media"
+    );
+    let key = B64.decode(field(info, "key")?)?;
+    let nonce = B64.decode(field(info, "nonce")?)?;
+    let sealed = bytes(req, "ciphertext", ATTACHMENT_LIMIT + ATTACHMENT_TAG)?;
+    ensure!(
+        sealed.len() == size + ATTACHMENT_TAG,
+        "invalid sealed attachment length"
+    );
+    let plain = provider.crypto().aead_decrypt(
+        AeadType::Aes256Gcm,
+        &key,
+        &sealed,
+        &nonce,
+        &attachment_aad(group, id, info)?,
+    )?;
+    ensure!(plain.len() == size, "invalid attachment plaintext length");
+    Ok(json!({"name":info["name"],"media":"photo","size":size,"data":B64.encode(plain)}))
+}
+
 fn read_profile(snapshot: Option<&str>, req: &Value, provider: &Provider) -> Result<Profile> {
     if let Some(snapshot) = snapshot {
         ensure!(field(req, "op")? != "init", "already initialized");
         let mut profile: Profile = serde_json::from_str(snapshot)?;
-        ensure!(profile.version == 1, "unsupported profile version");
+        ensure!(
+            [1, 2].contains(&profile.version),
+            "unsupported profile version"
+        );
+        profile.version = 2;
         ensure!(
             profile.pins.get(&profile.identity) == Some(&profile.public),
             "identity pin mismatch"
@@ -85,12 +189,13 @@ fn read_profile(snapshot: Option<&str>, req: &Value, provider: &Provider) -> Res
     signer.store(provider.storage())?;
     let public = signer.public().to_vec();
     Ok(Profile {
-        version: 1,
+        version: 2,
         pins: [(identity.clone(), public.clone())].into(),
         identity,
         public,
         store: Vec::new(),
         pending: BTreeMap::new(),
+        consents: BTreeMap::new(),
         joined: BTreeMap::new(),
     })
 }
@@ -162,6 +267,17 @@ fn roster(profile: &Profile, group: &MlsGroup) -> Result<Roster> {
 fn transcript(req: &Value, welcome: &[u8]) -> Result<Vec<u8>> {
     let reference = bytes(req, "reference", 32)?;
     ensure!(reference.len() == 32, "invalid package reference");
+    let MlsMessageBodyIn::Welcome(parsed) = MlsMessageIn::tls_deserialize_exact(welcome)?.extract()
+    else {
+        bail!("expected MLS Welcome");
+    };
+    let [secret] = parsed.secrets() else {
+        bail!("expected one Welcome recipient");
+    };
+    ensure!(
+        secret.new_member().as_slice() == reference,
+        "Welcome KeyPackage reference mismatch"
+    );
     Ok(format!(
         "SecureMesh/conversation-establish/v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n1",
         coordinate(req, "group")?,
@@ -272,6 +388,18 @@ fn join(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<Value
         MlsGroup::load(provider.storage(), &GroupId::from_slice(gid.as_bytes()))?.is_none(),
         "group already exists"
     );
+    let invitation = coordinate(req, "invitation")?;
+    let receipt = profile
+        .consents
+        .get(invitation)
+        .context("local invitation consent required")?;
+    ensure!(
+        receipt.sender == sender
+            && receipt.key == *key
+            && receipt.reference == field(req, "reference")?
+            && receipt.group.is_none(),
+        "invitation consent mismatch"
+    );
     let welcome = match MlsMessageIn::tls_deserialize_exact(&welcome)?.extract() {
         MlsMessageBodyIn::Welcome(welcome) => welcome,
         _ => bail!("expected MLS Welcome"),
@@ -294,6 +422,11 @@ fn join(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<Value
             && members.contains_key(&profile.identity),
         "unexpected MLS participant"
     );
+    profile
+        .consents
+        .get_mut(invitation)
+        .context("missing consent")?
+        .group = Some(gid.to_owned());
     profile.joined.insert(gid.to_owned(), digest);
     Ok(json!({"epoch":group.epoch().as_u64()}))
 }
@@ -310,6 +443,7 @@ fn operation(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<
         "init" | "identity" => {
             Ok(json!({"identity":profile.identity,"public_key":B64.encode(&profile.public)}))
         }
+        "attachment_open" => open_attachment(provider, req),
         "sign" => {
             let signature = signer
                 .sign(&bytes(req, "payload", 16384)?)
@@ -348,6 +482,71 @@ fn operation(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<
                 "reference":B64.encode(kp.hash_ref(provider.crypto())?.as_slice())}),
             )
         }
+        "directory_consent" => {
+            let invitation = coordinate(req, "invitation")?;
+            let sender = coordinate(req, "sender")?;
+            let key = bytes(req, "senderKey", 32)?;
+            ensure!(
+                req["confirmed"] == true && sender != profile.identity,
+                "explicit recipient consent required"
+            );
+            check_pin(profile, sender, &key)?;
+            ensure!(
+                req.get("keypackage").is_some() == req.get("reference").is_some(),
+                "incomplete consent package"
+            );
+            if let Some(existing) = profile.consents.get(invitation) {
+                ensure!(
+                    existing.sender == sender
+                        && existing.key == key
+                        && (req.get("keypackage").is_none()
+                            || (req["keypackage"] == existing.keypackage
+                                && req["reference"] == existing.reference)),
+                    "invitation consent mismatch"
+                );
+                return Ok(
+                    json!({"keypackage":existing.keypackage,"reference":existing.reference}),
+                );
+            }
+            let offered = if req.get("keypackage").is_some() {
+                // An older vault stores the public package alongside its local invitation.
+                // The user has independently re-confirmed this contact before this operation.
+                let raw = bytes(req, "keypackage", 16384)?;
+                let kp = KeyPackageIn::tls_deserialize_exact(&raw)?
+                    .validate(provider.crypto(), ProtocolVersion::Mls10)?;
+                let leaf = kp.leaf_node();
+                let hash = kp.hash_ref(provider.crypto())?;
+                ensure!(
+                    kp.ciphersuite() == SUITE
+                        && BasicCredential::try_from(leaf.credential().clone())?.identity()
+                            == profile.identity.as_bytes()
+                        && leaf.signature_key().as_slice() == profile.public
+                        && hash.as_slice() == bytes(req, "reference", 32)?,
+                    "legacy consent package mismatch"
+                );
+                let local: Option<KeyPackageBundle> = provider.storage().key_package(&hash)?;
+                ensure!(local.is_some(), "legacy local package unavailable");
+                json!({"keypackage":B64.encode(raw),"reference":field(req,"reference")?})
+            } else {
+                operation(provider, profile, &json!({"op":"keypackage"}))?
+            };
+            let reference = field(&offered, "reference")?.to_owned();
+            ensure!(
+                !profile.consents.values().any(|r| r.reference == reference),
+                "package already bound"
+            );
+            profile.consents.insert(
+                invitation.to_owned(),
+                Consent {
+                    sender: sender.to_owned(),
+                    key,
+                    reference,
+                    keypackage: field(&offered, "keypackage")?.to_owned(),
+                    group: None,
+                },
+            );
+            Ok(offered)
+        }
         "directory_pending" => match profile.pending.get(coordinate(req, "invitation")?) {
             Some(result) => Ok(json!({"prepared":true,"request":result})),
             None => Ok(json!({"prepared":false})),
@@ -358,6 +557,31 @@ fn operation(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<
             let gid = coordinate(req, "group")?;
             let id = coordinate(req, "id")?;
             let text = field(req, "text")?;
+            let photo = match req.get("photo") {
+                Some(_) => {
+                    let plain = bytes(req, "photo", 1024 * 1024)?;
+                    ensure!(!plain.is_empty(), "empty photo");
+                    let key = provider.rand().random_array::<32>()?;
+                    let nonce = provider.rand().random_array::<12>()?;
+                    let info = json!({"v":1,"blobId":coordinate(req, "blobId")?,"size":plain.len(),
+                        "name":"photo.jpg","media":"photo","key":B64.encode(key),"nonce":B64.encode(nonce)});
+                    let sealed = provider.crypto().aead_encrypt(
+                        AeadType::Aes256Gcm,
+                        &key,
+                        &plain,
+                        &nonce,
+                        &attachment_aad(gid, id, &info)?,
+                    )?;
+                    Some((info, Some(B64.encode(sealed))))
+                }
+                None if req.get("attachment").is_some() => {
+                    let info = &req["attachment"];
+                    attachment_size(info)?;
+                    ensure!(info["media"] == "photo", "invalid photo descriptor");
+                    Some((info.clone(), None))
+                }
+                None => None,
+            };
             ensure!(
                 !text.is_empty() && text.chars().count() <= 4000,
                 "invalid message text"
@@ -365,13 +589,18 @@ fn operation(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<
             let mut group = group(provider, gid)?;
             ensure!(group.is_active(), "inactive conversation");
             roster(profile, &group)?;
-            let payload = json!({"id":id,"group":gid,"sender":profile.identity,"text":text});
+            let mut payload = json!({"id":id,"group":gid,"sender":profile.identity,"text":text});
+            if let Some((info, _)) = &photo {
+                payload["attachment"] = info.clone();
+            }
             let message =
                 group.create_message(provider, &signer, &serde_json::to_vec(&payload)?)?;
-            Ok(
-                json!({"id":id,"group":gid,"epoch":group.epoch().as_u64(),"kind":1,
-                "ciphertext":B64.encode(message.tls_serialize_detached()?)}),
-            )
+            let mut result = json!({"id":id,"group":gid,"epoch":group.epoch().as_u64(),"kind":1,
+                "ciphertext":B64.encode(message.tls_serialize_detached()?)});
+            if let Some((info, Some(sealed))) = photo {
+                result["photo"] = json!({"descriptor":info,"sealed":sealed});
+            }
+            Ok(result)
         }
         "process" => process(provider, profile, req),
         _ => bail!("unsupported crypto operation"),
@@ -413,9 +642,20 @@ fn process(provider: &Provider, profile: &Profile, req: &Value) -> Result<Value>
                     && coordinate(&message, "id")? == coordinate(req, "id")?,
                 "message binding mismatch"
             );
-            if !message["attachment"].is_null() || !message["type"].is_null() {
-                // The ratchet can advance, but never expose attachment keys or
-                // render control messages in the browser text UI.
+            if !message["type"].is_null() {
+                // The ratchet advances, but private call/control payloads remain unsupported.
+                return Ok(
+                    json!({"id":message["id"],"group":gid,"sender":sender,"unsupported":true}),
+                );
+            }
+            if !message["attachment"].is_null() {
+                let attachment = &message["attachment"];
+                if attachment_size(attachment).is_ok()
+                    && attachment["media"].as_str() == Some("photo")
+                {
+                    return Ok(json!({"id":message["id"],"group":gid,"sender":sender,
+                        "attachment":attachment}));
+                }
                 return Ok(
                     json!({"id":message["id"],"group":gid,"sender":sender,"unsupported":true}),
                 );

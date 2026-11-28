@@ -2,6 +2,9 @@ package com.example.securemesh_client
 
 import android.app.Activity
 import android.content.Intent
+import android.os.Build
+import android.os.Bundle
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -13,6 +16,16 @@ class MainActivity : FlutterActivity() {
     private val notifications by lazy { MessageNotifications(this) }
     private val exportRequest = 47291
     private var pending: Pair<ByteArray, MethodChannel.Result>? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // Launchers can render a live surface in Overview even when persisted
+        // task snapshots are disabled. Protect the window before Flutter draws.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            setRecentsScreenshotEnabled(false)
+        }
+    }
 
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)

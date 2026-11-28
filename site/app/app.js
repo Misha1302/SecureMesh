@@ -6,15 +6,44 @@ const copyStatus = document.querySelector('#copy-status');
 const offlineStatus = document.querySelector('#offline-status');
 const standalone = window.matchMedia('(display-mode: standalone)');
 
+const installButton = document.querySelector('#install-app');
+const installResult = document.querySelector('#install-result');
+let installPrompt;
+let installAccepted = false;
+
 function updateInstallInstructions() {
-  const isInstalled = standalone.matches || navigator.standalone === true;
-  document.querySelector('#standalone').hidden = !isInstalled;
-  document.querySelector('#install-steps').hidden = isInstalled;
-  document.querySelector('#install-help').hidden = isInstalled;
+  const separateWindow = standalone.matches || navigator.standalone === true;
+  document.querySelector('#standalone').hidden = !separateWindow;
+  document.querySelector('#install-guide').hidden = separateWindow || installAccepted;
+  installButton.hidden = separateWindow || installAccepted || !installPrompt;
 }
 
-updateInstallInstructions();
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+  updateInstallInstructions();
+});
+installButton.addEventListener('click', async () => {
+  const prompt = installPrompt;
+  if (!prompt) return;
+  installPrompt = undefined;
+  installResult.textContent = '';
+  updateInstallInstructions();
+  try {
+    await prompt.prompt();
+    await prompt.userChoice;
+  } catch {
+    if (!installAccepted) installResult.textContent = 'Откройте инструкцию для своего устройства ниже.';
+  }
+});
+window.addEventListener('appinstalled', () => {
+  installAccepted = true;
+  installPrompt = undefined;
+  installResult.textContent = 'Браузер принял установку SecureMesh.';
+  updateInstallInstructions();
+});
 standalone.addEventListener?.('change', updateInstallInstructions);
+updateInstallInstructions();
 
 copyButton.hidden = false;
 copyButton.addEventListener('click', async () => {
@@ -36,7 +65,7 @@ function showOfflineStatus(text, ready = false) {
 
 async function activateOfflineGuide() {
   if (!('serviceWorker' in navigator)) {
-    showOfflineStatus('Для сохранения справки откройте HTTPS-страницу в Safari.');
+    showOfflineStatus('Для сохранения справки откройте HTTPS-страницу в браузере.');
     return;
   }
 

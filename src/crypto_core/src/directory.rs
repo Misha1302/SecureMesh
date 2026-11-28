@@ -34,6 +34,21 @@ fn transcript(req: &Value, welcome: &[u8]) -> Result<Vec<u8>> {
         reference.len() == 32 && welcome.len() <= 32768,
         "invalid welcome binding"
     );
+    ensure!(
+        s(req, "sender")? != s(req, "recipient")?,
+        "distinct devices required"
+    );
+    let message = MlsMessageIn::tls_deserialize_exact(welcome)?;
+    let MlsMessageBodyIn::Welcome(parsed) = message.extract() else {
+        bail!("not welcome");
+    };
+    let [secret] = parsed.secrets() else {
+        bail!("expected one Welcome recipient");
+    };
+    ensure!(
+        secret.new_member().as_slice() == reference,
+        "Welcome KeyPackage reference mismatch"
+    );
     Ok(format!(
         "SecureMesh/conversation-establish/v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n1",
         s(req, "group")?,
@@ -47,6 +62,66 @@ fn transcript(req: &Value, welcome: &[u8]) -> Result<Vec<u8>> {
     .into_bytes())
 }
 
+fn check_initial_group(
+    db: &Connection,
+    group: &MlsGroup,
+    sender: &str,
+    recipient: &str,
+) -> Result<()> {
+    check_group(db, group)?;
+    let members = roster::members(group)?;
+    ensure!(
+        group.is_active()
+            && group.epoch().as_u64() == 1
+            && members.len() == 2
+            && members.contains_key(sender)
+            && members.contains_key(recipient),
+        "invalid initial group"
+    );
+    Ok(())
+}
+
+fn consent(db: &Connection, req: &Value, identity: &str) -> Result<Value> {
+    let invitation = s(req, "invitation")?;
+    ensure!(
+        uuid::Uuid::parse_str(invitation)?.to_string() == invitation,
+        "invalid invitation"
+    );
+    match s(req, "op")? {
+        "directory_consent" => {
+            let sender = s(req, "sender")?;
+            let key = bytes(req, "senderKey")?;
+            let name = s(req, "username")?;
+            ensure!(
+                req["confirmed"] == true
+                    && uuid::Uuid::parse_str(sender)?.to_string() == sender
+                    && sender != identity
+                    && (name.is_empty()
+                        || ((3..=32).contains(&name.len())
+                            && name.bytes().all(|b| b.is_ascii_lowercase()
+                                || b.is_ascii_digit()
+                                || b == b'_')))
+                    && pinned_key(db, sender)?.as_deref() == Some(key.as_slice()),
+                "explicit consent for pinned sender required"
+            );
+            db.execute("INSERT INTO directory_consents(invitation,sender,sender_key,recipient,username) VALUES(?,?,?,?,?) ON CONFLICT(invitation) DO NOTHING",
+                params![invitation,sender,key,identity,name])?;
+            let matches: bool = db.query_row("SELECT sender=? AND sender_key=? AND recipient=? FROM directory_consents WHERE invitation=?",
+                params![sender,key,identity,invitation], |r|r.get(0))?;
+            ensure!(matches, "invitation sender changed");
+        }
+        "directory_withdraw_consent" => {
+            db.execute("DELETE FROM directory_consents WHERE invitation=? AND recipient=? AND joined_group IS NULL",params![invitation,identity])?;
+        }
+        "directory_consent_status" => {}
+        _ => bail!("unsupported consent operation"),
+    }
+    Ok(db.query_row("SELECT sender,sender_key,username,joined_group FROM directory_consents WHERE invitation=? AND recipient=?",
+        params![invitation,identity], |r|Ok(json!({"accepted":true, "sender":r.get::<_,String>(0)?,
+            "senderKey": B64.encode(r.get::<_,Vec<u8>>(1)?), "username":r.get::<_,String>(2)?, "group":r.get::<_,Option<String>>(3)?})))
+        .optional()?.unwrap_or_else(||json!({"accepted":false})))
+}
+
 pub(super) fn execute(
     db: &Connection,
     p: &Provider,
@@ -54,6 +129,30 @@ pub(super) fn execute(
     identity: &str,
     signer: &SignatureKeyPair,
 ) -> Result<Value> {
+    if matches!(
+        s(req, "op")?,
+        "directory_consent" | "directory_consent_status" | "directory_withdraw_consent"
+    ) {
+        return consent(db, req, identity);
+    }
+    if s(req, "op")? == "directory_consent_package" {
+        let invitation = s(req, "invitation")?;
+        let saved: Option<String> = db.query_row(
+            "SELECT keypackage FROM directory_consents WHERE invitation=? AND recipient=? AND joined_group IS NULL",
+            params![invitation,identity], |r|r.get(0))?;
+        if let Some(package) = saved {
+            // A parallel or repeated recovery can only replace the package it observed.
+            if req["replace"] != package {
+                return Ok(json!({"keypackage":package}));
+            }
+        }
+        let package = super::execute(db, p, &json!({"op":"keypackage"}))?;
+        db.execute(
+            "UPDATE directory_consents SET keypackage=? WHERE invitation=? AND recipient=? AND joined_group IS NULL",
+            params![s(&package, "keypackage")?, invitation, identity],
+        )?;
+        return Ok(package);
+    }
     if s(req, "op")? == "directory_pending" {
         let key = format!("bootstrap:{}", s(req, "invitation")?);
         let saved = db
@@ -121,21 +220,7 @@ pub(super) fn execute(
         "directory_sign" => {
             ensure!(s(req, "sender")? == identity, "sender mismatch");
             let group = load_group(p, s(req, "group")?)?;
-            check_group(db, &group)?;
-            let roster: std::collections::BTreeSet<_> = group
-                .members()
-                .map(|m| BasicCredential::try_from(m.credential).map(|c| c.identity().to_vec()))
-                .collect::<std::result::Result<_, _>>()?;
-            let expected = [
-                identity.as_bytes().to_vec(),
-                s(req, "recipient")?.as_bytes().to_vec(),
-            ]
-            .into_iter()
-            .collect();
-            ensure!(
-                roster == expected && group.epoch().as_u64() == 1,
-                "invalid initial group"
-            );
+            check_initial_group(db, &group, identity, s(req, "recipient")?)?;
             let signature = signer
                 .sign(&data)
                 .map_err(|_| anyhow!("signature rejected"))?;
@@ -155,10 +240,38 @@ pub(super) fn execute(
                 &key,
                 &bytes(req, "signature")?,
             )?;
+            let gid = s(req, "group")?;
+            let invitation = s(req, "invitation")?;
+            let authorized = db.execute("UPDATE directory_consents SET joined_group=?1 WHERE invitation=?2 AND sender=?3 AND sender_key=?4 AND recipient=?5 AND (joined_group IS NULL OR joined_group=?1)",
+                params![gid,invitation,sender,key,identity])?;
+            ensure!(
+                authorized == 1,
+                "matching local invitation consent required"
+            );
+            let slot = format!("directory-join:{gid}");
+            let binding = B64.encode(Sha256::digest(&data));
+            if let Some(saved) = db
+                .query_row("SELECT value FROM app_meta WHERE key=?", [&slot], |r| {
+                    r.get::<_, String>(0)
+                })
+                .optional()?
+            {
+                ensure!(saved == binding, "directory join context changed");
+                return Ok(json!({"already_joined":true}));
+            }
+            // Older stores only recorded the Welcome digest. It cannot prove which
+            // invitation and lease were accepted for an already established group.
+            ensure!(
+                MlsGroup::load(p.storage(), &GroupId::from_slice(gid.as_bytes()))?.is_none(),
+                "missing directory join context for existing group"
+            );
             let mut join = req.clone();
             join["op"] = json!("join");
             join["expected_members"] = json!([sender, identity]);
-            super::execute(db, p, &join)
+            let result = super::execute(db, p, &join)?;
+            check_initial_group(db, &load_group(p, gid)?, sender, identity)?;
+            set_meta(db, &slot, &binding)?;
+            Ok(result)
         }
         _ => bail!("unsupported directory operation"),
     }

@@ -1,0 +1,43 @@
+{
+  "source": "https://github.com/RustSec/advisory-db",
+  "revision": "c5279d0b0c9e8b70df666eb6d1edbabcfd1176bd",
+  "audit": "cargo-audit 0.23.0",
+  "locks": {
+    "src/browser_crypto/Cargo.lock": {
+      "sha256": "b0c6b589bf83f4983258c851ca9fb0378bc629796e7e72391adbde8a385fc45c",
+      "exit": 0,
+      "dependency_count": 187,
+      "advisory_count": 1571,
+      "vulnerabilities": [],
+      "warnings": {
+        "unmaintained": [
+          "RUSTSEC-2026-0173"
+        ]
+      }
+    },
+    "src/crypto_core/Cargo.lock": {
+      "sha256": "f5488a62047ed10503a285c2ad1a6add335a141b93ade2f83ecf01848cb75bd3",
+      "exit": 0,
+      "dependency_count": 295,
+      "advisory_count": 1571,
+      "vulnerabilities": [],
+      "warnings": {
+        "unmaintained": [
+          "RUSTSEC-2026-0173"
+        ]
+      }
+    },
+    "src/key_directory/Cargo.lock": {
+      "sha256": "7dd2971b4bda6a965312084457b5702cac83eddc07eb07729d4f5fc211243400",
+      "exit": 0,
+      "dependency_count": 342,
+      "advisory_count": 1571,
+      "vulnerabilities": [],
+      "warnings": {
+        "unmaintained": [
+          "RUSTSEC-2026-0173"
+        ]
+      }
+    }
+  }
+}

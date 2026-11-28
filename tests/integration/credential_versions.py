@@ -2,8 +2,6 @@
 import json
 import subprocess
 import tempfile
-import urllib.parse
-import urllib.request
 import uuid
 from pathlib import Path
 
@@ -30,11 +28,7 @@ def verify(d, root, legacy):
     d.request('/v1/auth/register', {**registration, 'credential': cred}, expected=400)
     d.request('/v1/auth/register', {**registration, 'password': '👩‍🔬' * 15}, expected=400)
     d.request('/v2/auth/register', {**registration, 'credential': cred}, expected=202)
-    query = urllib.parse.urlencode({'query': 'to:' + email})
-    with urllib.request.urlopen('http://127.0.0.1:58028/api/v1/search?' + query) as response:
-        message, = json.load(response)['messages']
-    with urllib.request.urlopen('http://127.0.0.1:58028/api/v1/message/' + message['ID']) as response:
-        token = json.load(response)['Text'].strip()
+    token = d.verification_token(email)
     d.request('/v1/auth/verify-email', {'token': token}, expected=204)
 
     def login(version, user, device, fields, expected=200, action='login'):

@@ -1,0 +1,20 @@
+{
+  "profile": "severe",
+  "seed": 7,
+  "messages_each_direction": 200,
+  "outcome": "incomplete",
+  "last_progress": {
+    "profile": "severe",
+    "seed": 7,
+    "offered": 400,
+    "received": 230,
+    "elapsed_seconds": 1190.000737,
+    "retries": 128
+  },
+  "failure": "Native trial stopped with TimeoutException: Missing durable messages at the 1200-second watchdog.",
+  "transport_revision": "before c4dffb3",
+  "rate_kbps_each_direction": 10,
+  "rtt_ms": 3000,
+  "packet_loss_percent": 10,
+  "provenance_note": "Recovered aggregate progress of the running child. The previous runner did not save per-message records or binary hashes on failure; latency percentiles are unavailable."
+}

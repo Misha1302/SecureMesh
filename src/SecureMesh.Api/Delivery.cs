@@ -22,6 +22,8 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         var digest=SHA256.HashData(input.Ciphertext);
         await using var c=await db.OpenConnectionAsync(ct);
         await using var tx=await c.BeginTransactionAsync(ct);
+        // Take the account lock before conversation and device locks; recovery uses it exclusively.
+        await Sql.LockTrustedDeliverySession(c,actor,ct);
         long epoch,seq; bool removed;
         // One conversation row serializes sequence allocation and MLS epoch compare-and-swap.
         await using(var cmd=Sql.Cmd(c,"SELECT epoch,next_seq,account_removed FROM conversations WHERE id=$1 FOR UPDATE",input.ConversationId))
@@ -44,6 +46,7 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         }
         if(existing is not null) {await tx.CommitAsync(ct); return existing;}
         if(removed) throw new ApiError(409,"CONVERSATION_READ_ONLY");
+        await ConversationMessageBlocks.RequireOpen(c,input.ConversationId,ct);
         // Revocation does not remove an MLS leaf. Serialize acceptance with device
         // revocation so no new envelope can be saved for a known stale roster.
         await using(var cmd=Sql.Cmd(c,"""
@@ -82,6 +85,7 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         }
         await using var c=await db.OpenConnectionAsync(ct);
         await using var tx=await c.BeginTransactionAsync(ct);
+        await Sql.LockTrustedDeliverySession(c,actor,ct);
         await using(var barrier=Sql.Cmd(c,"SELECT id FROM conversations WHERE id=$1 FOR SHARE",conversation))
             await barrier.ExecuteScalarAsync(ct);
         after=Math.Max(after,await Sql.DeliveryFloor(c,conversation,actor.DeviceId));
@@ -109,14 +113,15 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         await tx.CommitAsync(ct);
         return new Page(conversation,messages,next,more,peerProcessed);
     }
-    public async Task Ack(Actor actor,ProcessedAckRequest input)
+    public async Task Ack(Actor actor,ProcessedAckRequest input,CancellationToken ct=default)
     {
-        await using var c=await db.OpenConnectionAsync(); await using var tx=await c.BeginTransactionAsync();
+        await using var c=await db.OpenConnectionAsync(ct); await using var tx=await c.BeginTransactionAsync(ct);
+        await Sql.LockTrustedDeliverySession(c,actor,ct);
         await Sql.DeliveryFloor(c,input.ConversationId,actor.DeviceId);
         await using(var cmd=Sql.Cmd(c,"SELECT next_seq FROM conversations WHERE id=$1",input.ConversationId))
-        {var max=(long)(await cmd.ExecuteScalarAsync())!; if(input.Sequence<0 || input.Sequence>max) throw new ApiError(400,"INVALID_RECEIPT");}
-        await using(var cmd=Sql.Cmd(c,"INSERT INTO cursors VALUES($1,$2,$3) ON CONFLICT(conversation_id,device_id) DO UPDATE SET seq=greatest(cursors.seq,excluded.seq)",input.ConversationId,actor.DeviceId,input.Sequence)) await cmd.ExecuteNonQueryAsync();
-        await tx.CommitAsync();
+        {var max=(long)(await cmd.ExecuteScalarAsync(ct))!; if(input.Sequence<0 || input.Sequence>max) throw new ApiError(400,"INVALID_RECEIPT");}
+        await using(var cmd=Sql.Cmd(c,"INSERT INTO cursors VALUES($1,$2,$3) ON CONFLICT(conversation_id,device_id) DO UPDATE SET seq=greatest(cursors.seq,excluded.seq)",input.ConversationId,actor.DeviceId,input.Sequence)) await cmd.ExecuteNonQueryAsync(ct);
+        await tx.CommitAsync(ct);
     }
     public static void MapDelivery(WebApplication app)
     {
@@ -139,6 +144,6 @@ public sealed class Delivery(NpgsqlDataSource db, IDataProtectionProvider protec
         app.MapGet("/v1/sync",async(Guid conversationId,string? cursor,int? limit,HttpContext ctx,NpgsqlDataSource db,Delivery delivery)=>
             Results.Ok(await delivery.Sync(await Sql.Authenticate(ctx,db),conversationId,cursor,limit??100,ctx.RequestAborted)));
         app.MapPost("/v1/acks",async(ProcessedAckRequest input,HttpContext ctx,NpgsqlDataSource db,Delivery delivery)=>
-        {await delivery.Ack(await Sql.Authenticate(ctx,db),input);return Results.NoContent();});
+        {await delivery.Ack(await Sql.Authenticate(ctx,db),input,ctx.RequestAborted);return Results.NoContent();});
     }
 }

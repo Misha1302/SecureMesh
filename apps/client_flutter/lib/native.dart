@@ -11,8 +11,11 @@ import 'src/rust/api.dart';
 import 'local_client.dart';
 import 'session.dart';
 import 'session_inactivity.dart';
+import 'security_email_tile.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
+import 'chat_background.dart';
+import 'identity_qr.dart' show ProfileQr;
 import 'conversation_composer.dart';
 import 'conversation_timeline.dart';
 import 'attachment_transfer.dart';
@@ -231,7 +234,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     if (current == null) throw CryptoFailure();
     try {
       final result = jsonDecode(
-        await current.execute(request: jsonEncode({'op': op, ...args})),
+        await current.execute(request: jsonEncode({...args, 'op': op})),
       ) as Map<String, dynamic>;
       if (epoch != generation) throw CryptoFailure();
       return result;
@@ -466,7 +469,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         (operation, args) async {
           return jsonDecode(
             await unlocked.execute(
-              request: jsonEncode({'op': operation, ...args}),
+              request: jsonEncode({...args, 'op': operation}),
             ),
           ) as Map<String, dynamic>;
         },
@@ -825,6 +828,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     NotificationPreferences Function(NotificationPreferences)?
     updateNotificationPolicy,
     bool? backgroundLockPreference,
+    bool? autoTranscribe,
+    ({String? group, bool dark, String? color})? wallpaper,
+    ({String? group, bool dark, int? value})? dimming,
   }) {
     final epoch = generation;
     final write = profileWrites.then((_) async {
@@ -844,6 +850,28 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ])
                 key: profile![key],
             };
+      updated['transcribeOnOpen'] =
+          autoTranscribe ?? (profile!['transcribeOnOpen'] == true);
+      if (wallpaper != null) {
+        updated['chatBackgrounds'] = updateChatBackground(
+          profile,
+          wallpaper.group,
+          wallpaper.dark,
+          wallpaper.color,
+        );
+      } else if (profile!.containsKey('chatBackgrounds')) {
+        updated['chatBackgrounds'] = profile!['chatBackgrounds'];
+      }
+      if (dimming != null) {
+        updated['chatDimming'] = updateChatDimming(
+          profile,
+          dimming.group,
+          dimming.dark,
+          dimming.value,
+        );
+      } else if (profile!.containsKey('chatDimming')) {
+        updated['chatDimming'] = profile!['chatDimming'];
+      }
       // Preserve a newer privacy choice across concurrent profile/session writes.
       if (updateNotificationPolicy != null) {
         updated[NotificationPreferences.key] = updateNotificationPolicy(
@@ -1081,6 +1109,13 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         );
       } else if (failure is ApiFailure && failure.status == 401) {
         requireSignIn();
+      } else if (failure is ApiFailure &&
+          failure.code == 'CONVERSATION_MESSAGES_BLOCKED') {
+        connectionState = 'server';
+        error = tr(
+          'Доставка сообщений в этом чате приостановлена. Очередь сохранена.',
+          'Message delivery in this chat is paused. Your queue is saved.',
+        );
       } else if (failure is ApiFailure) {
         connectionState = 'server';
         error = tr(
@@ -1401,17 +1436,19 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       if (context.mounted) markConversationSeen(context);
     });
     final scheme = Theme.of(context).colorScheme;
-    final background = switch (profile?['chatBackground']) {
-      'blue' => Color.alphaBlend(
-        scheme.primary.withValues(alpha: .085),
-        scheme.surface,
+    final background = chatBackgroundColor(
+      scheme,
+      chatBackground(
+        profile,
+        profile?['group'] as String?,
+        scheme.brightness == Brightness.dark,
       ),
-      'mint' => Color.alphaBlend(
-        const Color(0xff439779).withValues(alpha: .13),
-        scheme.surface,
+      dimming: chatDimming(
+        profile,
+        profile?['group'] as String?,
+        scheme.brightness == Brightness.dark,
       ),
-      _ => scheme.surface,
-    };
+    );
     final factor = switch (profile?['chatTextSize']) {
       'larger' => 1.15,
       'largest' => 1.3,
@@ -2138,6 +2175,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               bytes,
               tr,
               key: ValueKey((group, voiceBlob)),
+              transcribeOnOpen: profile?['transcribeOnOpen'] == true,
               resumeAt: group == null || voiceBlob == null
                   ? Duration.zero
                   : voicePositions?.read(group, voiceBlob) ?? Duration.zero,
@@ -2965,6 +3003,30 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       },
       content: (section) => switch (section) {
         SettingsSection.profile => [
+          if (profile case {
+            'endpoint': final String endpoint,
+            'username': final String name,
+          })
+            ListTile(
+              leading: const Icon(Icons.qr_code),
+              title: Text(tr('QR-код профиля', 'Profile QR code')),
+              onTap: () => showDialog<void>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: Text('@$name'),
+                  content: SizedBox.square(
+                    dimension: 240,
+                    child: CustomPaint(painter: ProfileQr(endpoint, name)),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(tr('Закрыть', 'Close')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ListTile(
             leading: const Icon(Icons.notes_outlined),
             title: Text(tr('О себе и статус', 'Bio and status')),
@@ -3086,6 +3148,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               title: Text(tr('Войти снова', 'Sign in again')),
               onTap: reauthenticating ? null : () => signInAgain(context),
             ),
+          if (session case final AccountSession active when trusted)
+            SecurityEmailTile(
+              key: ObjectKey(active),
+              russian: ru,
+              request: active.request,
+            ),
           if (sessionInactivity case final SessionInactivity policy
               when profile?['trustState'] != 'DEVICE_PENDING_TRUST')
             SessionInactivityTile(
@@ -3140,6 +3208,38 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             ),
         ],
         SettingsSection.storage => [
+          if (Platform.isLinux)
+            SwitchListTile(
+              title: Text(
+                tr(
+                  'Распознавать открытые голосовые',
+                  'Transcribe opened voice messages',
+                ),
+              ),
+              subtitle: Text(
+                tr(
+                  'На этом устройстве, если установлена модель Whisper.',
+                  'On this device when a Whisper model is installed.',
+                ),
+              ),
+              value: profile?['transcribeOnOpen'] == true,
+              onChanged: (enabled) async {
+                final epoch = generation;
+                try {
+                  await persistProfile(
+                    {},
+                    removedFields: {},
+                    autoTranscribe: enabled,
+                  );
+                  if (mounted && epoch == generation) setState(() {});
+                } catch (_) {
+                  if (mounted && epoch == generation) {
+                    setState(() => appearanceSaveFailed = true);
+                  }
+                }
+              },
+            ),
+          if (appearanceSaveFailed) saveError,
           ProfileStorageSize(path: path.text.trim(), russian: ru),
         ],
         SettingsSection.appearance => [
@@ -3167,24 +3267,41 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ],
             ),
           ),
-          ListTile(
-            title: Text(tr('Фон переписки', 'Chat background')),
-            subtitle: Wrap(
-              spacing: 8,
-              children: [
-                for (final opt in [
-                  ('default', tr('Обычный', 'Default')),
-                  ('blue', tr('Голубой', 'Blue')),
-                  ('mint', tr('Мятный', 'Mint')),
-                ])
-                  ChoiceChip(
-                    label: Text(opt.$2),
-                    selected:
-                        (profile?['chatBackground'] ?? 'default') == opt.$1,
-                    onSelected: (_) => setChatStyle('chatBackground', opt.$1),
-                  ),
-              ],
-            ),
+          ChatBackgroundSettings(
+            profile: profile,
+            group: profile?['group'] as String?,
+            name: profile?['peerName'] as String?,
+            tr: tr,
+            saveDimming: (group, dark, value) async {
+              final epoch = generation;
+              try {
+                await persistProfile(
+                  {},
+                  removedFields: {},
+                  dimming: (group: group, dark: dark, value: value),
+                );
+                if (mounted && epoch == generation) setState(() {});
+              } catch (_) {
+                if (mounted && epoch == generation) {
+                  setState(() => appearanceSaveFailed = true);
+                }
+              }
+            },
+            save: (group, dark, color) async {
+              final epoch = generation;
+              try {
+                await persistProfile(
+                  {},
+                  removedFields: {},
+                  wallpaper: (group: group, dark: dark, color: color),
+                );
+                if (mounted && epoch == generation) setState(() {});
+              } catch (_) {
+                if (mounted && epoch == generation) {
+                  setState(() => appearanceSaveFailed = true);
+                }
+              }
+            },
           ),
           if (appearanceSaveFailed) saveError,
         ],

@@ -1,0 +1,165 @@
+{
+  "domain": "nodata-messenger.online",
+  "observed_utc": "2026-11-28T02:20:30+00:00",
+  "source": "System recursive resolver via dig. Direct nonrecursive SOA requests to both listed NS returned SERVFAIL without AA from this environment.",
+  "scope": "Selected public names only; TXT limited to SPF and DMARC. A provider zone export is still required before edits.",
+  "https": "curl system trust store: certificate verify error 18 (self-signed), no HTTP response",
+  "queries": [
+    {
+      "name": "nodata-messenger.online",
+      "type": "NS",
+      "status": "NOERROR",
+      "answers": [
+        {
+          "name": "nodata-messenger.online.",
+          "type": "NS",
+          "ttl": 3564,
+          "value": "ns2.hosting.reg.ru."
+        },
+        {
+          "name": "nodata-messenger.online.",
+          "type": "NS",
+          "ttl": 3564,
+          "value": "ns1.hosting.reg.ru."
+        }
+      ]
+    },
+    {
+      "name": "nodata-messenger.online",
+      "type": "SOA",
+      "status": "NOERROR",
+      "answers": [
+        {
+          "name": "nodata-messenger.online.",
+          "type": "SOA",
+          "ttl": 3582,
+          "value": "server20.hosting.reg.ru. support.reg.ru. 2026112802 10800 3600 604800 86400"
+        }
+      ]
+    },
+    {
+      "name": "nodata-messenger.online",
+      "type": "A",
+      "status": "NOERROR",
+      "answers": [
+        {
+          "name": "nodata-messenger.online.",
+          "type": "A",
+          "ttl": 3564,
+          "value": "31.31.198.122"
+        }
+      ]
+    },
+    {
+      "name": "nodata-messenger.online",
+      "type": "AAAA",
+      "status": "NOERROR",
+      "answers": [
+        {
+          "name": "nodata-messenger.online.",
+          "type": "AAAA",
+          "ttl": 3564,
+          "value": "2a00:f940:2:2:1:1:0:20"
+        }
+      ]
+    },
+    {
+      "name": "nodata-messenger.online",
+      "type": "MX",
+      "status": "NOERROR",
+      "answers": [
+        {
+          "name": "nodata-messenger.online.",
+          "type": "MX",
+          "ttl": 3600,
+          "value": "20 mx2.hosting.reg.ru."
+        },
+        {
+          "name": "nodata-messenger.online.",
+          "type": "MX",
+          "ttl": 3600,
+          "value": "10 mx1.hosting.reg.ru."
+        }
+      ]
+    },
+    {
+      "name": "nodata-messenger.online",
+      "type": "TXT",
+      "status": "NOERROR",
+      "answers": [
+        {
+          "name": "nodata-messenger.online.",
+          "type": "TXT",
+          "ttl": 3582,
+          "value": "\"v=spf1 ip4:31.31.198.122 a mx include:_spf.hosting.reg.ru ~all\""
+        }
+      ]
+    },
+    {
+      "name": "nodata-messenger.online",
+      "type": "CAA",
+      "status": "NOERROR",
+      "answers": []
+    },
+    {
+      "name": "_dmarc.nodata-messenger.online",
+      "type": "TXT",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "app.nodata-messenger.online",
+      "type": "A",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "app.nodata-messenger.online",
+      "type": "AAAA",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "app.nodata-messenger.online",
+      "type": "CNAME",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "api.nodata-messenger.online",
+      "type": "A",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "api.nodata-messenger.online",
+      "type": "AAAA",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "api.nodata-messenger.online",
+      "type": "CNAME",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "auth.nodata-messenger.online",
+      "type": "A",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "auth.nodata-messenger.online",
+      "type": "AAAA",
+      "status": "NXDOMAIN",
+      "answers": []
+    },
+    {
+      "name": "auth.nodata-messenger.online",
+      "type": "CNAME",
+      "status": "NXDOMAIN",
+      "answers": []
+    }
+  ]
+}

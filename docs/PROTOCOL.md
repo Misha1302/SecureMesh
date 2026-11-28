@@ -2,6 +2,8 @@
 
 API v1 supports verified local accounts, per-device Ed25519 proof of possession, opaque bearer sessions and single-use rotating refresh families. Later devices receive account-only pending sessions. Private delivery requires trusted activation; old-device approval alone does not activate the candidate. The candidate verifies its independently pinned approver and signs activation locally. See DEVICE_TRUST.md for the signed, expiring protocol and its remaining QR/multi-device limitations. Every active WebSocket frame revalidates the database session and device revocation. Authentication uses the Authorization header; no query-string tokens or cookies.
 
+Private send, sync and processed acknowledgements share the same database transaction gate on HTTPS and WebSocket. An operation takes a shared lock on its account and then rechecks its exact bearer session before accessing conversation state. Password recovery takes the same lock exclusively before revoking sessions. An operation that holds the lock first can finish against the old session. If recovery holds it first, an old-session operation returns 401 without reading or changing delivery state. A response may still arrive after recovery for an operation that already completed in the database.
+
 `/v1/messages` commits `messages`, immutable idempotency identity, per-conversation sequence/epoch update and `outbox` in one PostgreSQL transaction, returning durable ACK only after COMMIT. Conversation row locking serializes concurrent writers. Identical retries preserve ID/sequence even after epoch changes; changed ciphertext, kind or epoch gives 409. Sender device comes from authentication.
 
 `/v1/sync?conversationId=...&cursor=...&limit=...` has at most 100 events and 64 KiB ciphertext per page. Cursor is ASP.NET Data Protection authenticated and scoped to device+conversation. Keys persist in `.local/cursor-keys`; these are server cursor keys, not E2EE keys. Receipts are monotonic and cannot exceed the committed conversation sequence. Receipt remains a client assertion of local persistence, not proof a human read anything.
@@ -47,13 +49,13 @@ send a copy of the quoted message or fetch it from the relay for preview.
 
 A trusted device can use `GET /v1/users/me/photo` and `PUT /v1/users/me/photo`. The JSON field `pixels` is either null (no photo, or remove on update) or base64 of exactly 6,912 bytes of 48 × 48 RGB pixels, top row first. The client previews the center crop and sends it only after the user chooses Save. The server stores one current thumbnail per account. These profile pixels are visible to the server and are separate from encrypted message content.
 
-The update returns a nullable UUID `photoVersion`. Existing two-party conversation listings expose `peerPhotoVersion`; an unchanged thumbnail retains its version on retry. The client fetches the pixels using `GET /v1/conversations/{group}/photo/{version}` after a version is first seen. This request checks the same device membership and Welcome visibility as the listing. Unrelated conversations and retired versions return 404. Identical pixel data on different accounts has independent version identifiers. An old client can ignore the optional field. Removing a photo prevents future downloads but cannot erase copies a peer already obtained. Usernames, identity keys, trust decisions, and message formats are independent of photos.
+The update returns a nullable UUID `photoVersion`. Existing two-party conversation listings expose `peerPhotoVersion`; an unchanged thumbnail retains its version on retry. The client fetches the pixels using `GET /v1/conversations/{group}/photo/{version}` after a version is first seen. This request checks the same device membership and Welcome visibility as the listing. Blocking in either direction suppresses the version in conversation listings and denies downloads by a previously known version. Unblocking restores access for an eligible peer. Unrelated conversations and retired versions return 404. Identical pixel data on different accounts has independent version identifiers. An old client can ignore the optional field. Removing a photo prevents future downloads but cannot erase copies a peer already obtained. Usernames, identity keys, trust decisions, and message formats are independent of photos.
 
 ### Private-chat profile text
 
-A trusted device reads or replaces its account’s optional biography and status message at `/v1/users/me/profile-text`. GET returns nullable `bio` and `status` strings and an integer `revision`. PUT requires all three fields. Send null to clear a field. An update with a stale revision returns HTTP 409 unless it repeats values already saved. The client keeps the draft on conflict. The server normalizes text to NFC and accepts up to 280 Unicode scalar values for a biography and 80 for a single-line status. The status is user-authored text independent of presence.
+A trusted device reads or replaces its account’s optional biography and status message at `/v1/users/me/profile-text`. GET returns nullable `bio` and `status` strings and an integer `revision` and a boolean `visibleToPeers`. PUT requires bio, status and revision. A client editing visibility sends the entire edit to PUT `/v1/users/me/profile-text/with-visibility`. Older servers lack this route and reject the edit before storing the text. Do not retry through the legacy route. Enable visibility controls only after all API instances serving peer reads enforce visibility. Omitting visibility preserves the existing setting. The default preserves the established-peer audience for existing profiles. Send null to clear a field. An update with a stale revision returns HTTP 409 unless it repeats values already saved. The native and PWA editors keep the draft on conflict. The browser offers an explicit reload to replace the draft with the current server values and clears the form when the local profile locks. The server normalizes text to NFC and accepts up to 280 Unicode scalar values for a biography and 80 for a single-line status. The status is user-authored text independent of presence.
 
-Profile text is readable by the server. An active trusted device can request its peer’s fields at `GET /v1/conversations/{id}/profile-text/{peerDevice}` for an established one-to-one conversation. The directory must hold an acknowledged Welcome, including for existing conversations. Legacy conversations without this record cannot disclose profile text. The Flutter client fetches these fields when the user opens a contact profile whose stored conversation, username, device and identity key match the directory and the local key pin. Unrelated conversations and devices receive HTTP 404. These fields are omitted from directory listings. Clearing a field takes effect on the next fetch. Copies a peer already obtained may remain on their device.
+Profile text is readable by the server. An active trusted device can request its peer’s fields at `GET /v1/conversations/{id}/profile-text/{peerDevice}` for an established one-to-one conversation. The directory must hold an acknowledged Welcome, including for existing conversations. Legacy conversations without this record cannot disclose profile text. The Flutter client fetches these fields when the user opens a contact profile whose stored conversation, username, device and identity key match the directory and the local key pin. Unrelated conversations and devices receive HTTP 404. These fields are omitted from directory listings. When the owner hides the fields or either party blocks the other, the next authorized peer read returns null for both fields. The owner retains both values. Clearing a field takes effect on the next fetch. Copies a peer already obtained may remain on their device.
 
 ### Public text channels
 
@@ -87,3 +89,33 @@ Set `includeRestricted=true` in the catalog request to list your own channels, a
 Migration 011 keeps a public-only compatibility view for the original server binary, while all upgraded writes and visibility checks use the full catalog. Existing public channels retain their accounts, post IDs, subscriptions and visibility. The upgraded client labels restricted channels as server-readable.
 
 For two real Flutter sessions against the isolated HTTPS integration server, run `.local/venv/bin/python tests/integration/public_channels.py --ui` from the repository root after local bootstrap and Flutter dependency installation. Test accounts, device keys and credentials belong to that fixture.
+
+### Browser profile links
+
+The PWA shares its own HTTPS profile page with a fragment of the form `#/@username`. The client consumes the fragment locally and offers the username in the new-chat form after unlock. Opening a link neither sends a request nor verifies a cryptographic identity. An existing draft requires explicit replacement.
+
+### Native profile QR
+
+The profile QR encodes `securemesh:profile:v1:<https-origin>/@<username>`. The scanner in the new-chat form accepts only its configured origin and a lowercase username of 3–32 ASCII letters, digits or underscores. Scanning fills the contact field. The user still submits a chat request. Device verification uses a separate QR type and compares the device fingerprint.
+
+### Browser unread counts
+
+Each unlocked PWA profile counts newly decrypted incoming items that have a visible timeline entry. A duplicate envelope and the user's own echo add zero. The encrypted vault commits the message and received counter together. Existing vaults begin counting with the first newly processed message. The separate read counter advances to the observed count when the end of the selected conversation intersects the visible page. These counts remain local to the browser profile. Neither counter is sent to the peer or included in an OS notification.
+
+### Channel publication pins
+
+Channel owners may pin one live publication. On every authorized channel feed page,
+`GET /v1/public-channels/{id}/posts` returns `pinRevision` (initially zero)
+and `pinned` (null or an object with the current `seq` and `body`). The pin
+is visible to the owner and subscribers, including when pagination omits the
+publication. Accepting an invitation grants access to an invite-only feed.
+
+Use `PUT /v1/public-channels/{id}/pin` with the observed `expectedRevision`
+and a `seq` from that channel. Pass a null `seq` to unpin. Success returns
+204. A conflicting revision returns 409 and requires refreshing the feed.
+An immediate retry of a successful change is idempotent. Pin changes and
+publication deletion serialize on the channel row. Deleting the pinned post
+clears its pin and advances the revision in the same transaction. Migration
+`202611280113_ChannelPinCleanup` makes PostgreSQL perform the cleanup for
+both current and older API binaries, and clears any existing pin to a
+tombstone during upgrade.

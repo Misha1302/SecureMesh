@@ -64,23 +64,32 @@ public static class ProfilePhotos
         {
             var actor = await Sql.Authenticate(ctx, db);
             await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
+            await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
+            await Sql.LockTrustedDeliverySession(c, actor, ctx.RequestAborted);
             await using var cmd = Sql.Cmd(c, "SELECT pixels FROM profile_photos WHERE user_id=$1", actor.UserId);
-            return Results.Ok(new { pixels = await cmd.ExecuteScalarAsync(ctx.RequestAborted) as byte[] });
+            var pixels = await cmd.ExecuteScalarAsync(ctx.RequestAborted) as byte[];
+            await tx.CommitAsync(ctx.RequestAborted);
+            return Results.Ok(new { pixels });
         });
 
         app.MapGet("/v1/conversations/{id:guid}/photo/{version:guid}", async (Guid id, Guid version, HttpContext ctx, NpgsqlDataSource db) =>
         {
             var actor = await Sql.Authenticate(ctx, db);
             await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
+            await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
+            await Sql.LockTrustedDeliverySession(c, actor, ctx.RequestAborted);
             await using var cmd = Sql.Cmd(c, """
                 SELECT p.pixels FROM conversation_devices own JOIN members peer ON own.conversation_id=peer.conversation_id
                 JOIN devices d ON d.id=peer.device_id JOIN profile_photos p ON p.user_id=d.user_id
                 LEFT JOIN conversation_bootstraps b ON b.conversation_id=own.conversation_id
                 WHERE own.device_id=$1 AND own.conversation_id=$2 AND d.user_id<>$4
+                  AND d.trusted AND NOT d.revoked
+                  AND NOT EXISTS (SELECT 1 FROM contact_blocks WHERE (owner_id,blocked_id) IN ((d.user_id,$4),($4,d.user_id)))
                   AND p.version=$3 AND (b.conversation_id IS NULL OR b.sender_device=$1 OR b.received OR own.join_seq>0)
                   AND (SELECT count(*) FROM members WHERE conversation_id=$2)=2
                 """, actor.DeviceId, id, version, actor.UserId);
             var pixels = await cmd.ExecuteScalarAsync(ctx.RequestAborted) as byte[];
+            await tx.CommitAsync(ctx.RequestAborted);
             if (pixels is null) throw new ApiError(404, "PHOTO_NOT_FOUND");
             return Results.Ok(new { pixels });
         });

@@ -29,6 +29,37 @@ void main() {
       }
     });
   });
+  testWidgets(
+    'profile QR fills only a same-server username and cannot verify a device',
+    (tester) async {
+      await tester.runAsync(() async {
+        final recorder = ui.PictureRecorder();
+        ProfileQr(
+          'https://mesh.example',
+          'alice_42',
+        ).paint(Canvas(recorder), const Size.square(360));
+        final pic = recorder.endRecording();
+        final image = await pic.toImage(360, 360);
+        try {
+          final png = await image.toByteData(format: ui.ImageByteFormat.png);
+          XFile file() => XFile.fromData(png!.buffer.asUint8List());
+          expect(
+            await readProfileImage(file(), 'https://mesh.example'),
+            'alice_42',
+          );
+          await expectLater(
+            readProfileImage(file(), 'https://other.example'),
+            throwsFormatException,
+          );
+          await expectLater(readIdentityImage(file()), throwsFormatException);
+        } finally {
+          image.dispose();
+          pic.dispose();
+        }
+      });
+    },
+  );
+
   testWidgets('comparison requires the independent code of the target device', (
     tester,
   ) async {

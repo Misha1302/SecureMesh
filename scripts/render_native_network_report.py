@@ -19,6 +19,12 @@ for profile, rate, rtt, loss in [('gprs', 20, 1500, 3), ('severe', 10, 3000, 10)
             rows.append(f'| {profile} | {seed} | NOT_RUN | — | — | — | — |')
             continue
         data = json.loads(path.read_text())
+        if data.get('outcome') == 'incomplete':
+            progress = data.get('last_progress') or {}
+            description = f"{progress.get('received', '?')} of {progress.get('offered', '?')} at last sample"
+            failures.append(f'{profile}/{seed}: {description}')
+            rows.append(f'| {profile} | {seed} | FAIL ({description}) | — | — | — | [{path.name}](evidence/{path.name}) |')
+            continue
         records = data['records']
         counts = Counter(r['sender'] for r in records)
         reasons = []

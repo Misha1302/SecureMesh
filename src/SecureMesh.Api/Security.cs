@@ -60,15 +60,34 @@ public static class Sql
     public static byte[] Hash(string token) => SHA256.HashData(Encoding.UTF8.GetBytes(token));
     public static string Token() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
     internal static async Task LockTrustedProfileOwner(NpgsqlConnection c, Actor actor, CancellationToken cancellationToken)
+        => await LockAuthenticatedProfileOwner(c, actor, requireTrusted: true, cancellationToken: cancellationToken);
+
+    internal static async Task LockAuthenticatedProfileOwner(NpgsqlConnection c, Actor actor,
+        bool requireTrusted, CancellationToken cancellationToken)
     {
         // Serialize with device revocation, then recheck this session while it holds the account lock.
         await using (var owner = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", actor.UserId))
             await owner.ExecuteScalarAsync(cancellationToken);
         await using (var session = Sql.Cmd(c, """
             SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
-            WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND d.trusted AND NOT d.revoked
-                AND NOT s.used AND NOT s.revoked AND s.expires_at>now()
+            WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND (NOT $4 OR d.trusted) AND NOT d.revoked
+                AND NOT s.used AND NOT s.revoked AND s.expires_at>statement_timestamp()
                 AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
+            """, actor.SessionId, actor.DeviceId, actor.UserId, requireTrusted))
+            if (await session.ExecuteScalarAsync(cancellationToken) is null)
+                throw new ApiError(401, "AUTH_REQUIRED");
+    }
+
+    internal static async Task LockTrustedDeliverySession(NpgsqlConnection c, Actor actor,
+        CancellationToken cancellationToken)
+    {
+        await using (var owner = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR SHARE", actor.UserId))
+            await owner.ExecuteScalarAsync(cancellationToken);
+        await using (var session = Sql.Cmd(c, """
+            SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
+            WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND d.trusted AND NOT d.revoked
+              AND NOT s.used AND NOT s.revoked AND s.expires_at>statement_timestamp()
+              AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
             """, actor.SessionId, actor.DeviceId, actor.UserId))
             if (await session.ExecuteScalarAsync(cancellationToken) is null)
                 throw new ApiError(401, "AUTH_REQUIRED");

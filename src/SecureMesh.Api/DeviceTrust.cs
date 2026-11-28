@@ -22,11 +22,11 @@ public static class DeviceTrust
             var actor = await Sql.Authenticate(ctx, db, false);
             await using var c = await db.OpenConnectionAsync();
             await using var tx = await c.BeginTransactionAsync();
-            await LockAccount(c, actor.UserId);
+            await Sql.LockAuthenticatedProfileOwner(c, actor, requireTrusted: false, ctx.RequestAborted);
             byte[] key;
             await using (var cmd = Sql.Cmd(c, "SELECT public_key FROM devices WHERE id=$1 AND NOT trusted AND NOT revoked", actor.DeviceId))
                 key = await cmd.ExecuteScalarAsync() as byte[] ?? throw new ApiError(409, "DEVICE_NOT_PENDING");
-            await using (var expired = Sql.Cmd(c, "DELETE FROM device_enrollments WHERE device_id=$1 AND approved_at IS NULL AND expires_at<=now()", actor.DeviceId))
+            await using (var expired = Sql.Cmd(c, "DELETE FROM device_enrollments WHERE device_id=$1 AND approved_at IS NULL AND expires_at<=statement_timestamp()", actor.DeviceId))
                 await expired.ExecuteNonQueryAsync();
             await using (var existing = Sql.Cmd(c, "SELECT id,payload FROM device_enrollments WHERE device_id=$1 AND approved_at IS NULL", actor.DeviceId))
             await using (var r = await existing.ExecuteReaderAsync())
@@ -51,11 +51,11 @@ public static class DeviceTrust
             var actor = await Sql.Authenticate(ctx, db, false);
             await using var c = await db.OpenConnectionAsync();
             await using var tx = await c.BeginTransactionAsync();
-            await LockAccount(c, actor.UserId);
+            await Sql.LockAuthenticatedProfileOwner(c, actor, requireTrusted: false, ctx.RequestAborted);
             byte[] payload, key;
             await using (var cmd = Sql.Cmd(c, """
                 SELECT e.payload,d.public_key FROM device_enrollments e JOIN devices d ON d.id=e.device_id
-                WHERE e.id=$1 AND e.device_id=$2 AND e.user_id=$3 AND e.expires_at>now() AND e.approved_at IS NULL AND NOT d.revoked AND NOT d.trusted FOR UPDATE OF e
+                WHERE e.id=$1 AND e.device_id=$2 AND e.user_id=$3 AND e.expires_at>statement_timestamp() AND e.approved_at IS NULL AND NOT d.revoked AND NOT d.trusted FOR UPDATE OF e
                 """, id, actor.DeviceId, actor.UserId))
             await using (var r = await cmd.ExecuteReaderAsync())
             {
@@ -97,7 +97,7 @@ public static class DeviceTrust
             var actor = await Sql.Authenticate(ctx, db);
             await using var c = await db.OpenConnectionAsync();
             await using var tx = await c.BeginTransactionAsync();
-            await LockAccount(c, actor.UserId);
+            await Sql.LockAuthenticatedProfileOwner(c, actor, requireTrusted: true, ctx.RequestAborted);
             byte[] approverKey;
             await using (var cmd = Sql.Cmd(c, "SELECT public_key FROM devices WHERE id=$1 AND user_id=$2 AND trusted AND NOT revoked", actor.DeviceId, actor.UserId))
                 approverKey = await cmd.ExecuteScalarAsync() as byte[] ?? throw new ApiError(403, "APPROVER_NOT_TRUSTED");
@@ -106,7 +106,7 @@ public static class DeviceTrust
             await using (var cmd = Sql.Cmd(c, """
                 SELECT e.device_id,e.payload,e.candidate_signature,d.public_key
                 FROM device_enrollments e JOIN devices d ON d.id=e.device_id
-                WHERE e.id=$1 AND e.user_id=$2 AND e.expires_at>now() AND e.approved_at IS NULL
+                WHERE e.id=$1 AND e.user_id=$2 AND e.expires_at>statement_timestamp() AND e.approved_at IS NULL
                   AND e.candidate_signature IS NOT NULL AND NOT d.revoked AND NOT d.trusted FOR UPDATE OF e
                 """, id, actor.UserId))
             await using (var r = await cmd.ExecuteReaderAsync())
@@ -122,17 +122,17 @@ public static class DeviceTrust
             return Results.NoContent();
         });
 
-        app.MapPost("/v1/devices/enrollment/{id:guid}/activate",async(Guid id,EnrollmentSignature input,HttpContext ctx,NpgsqlDataSource db)=>
+        app.MapPost("/v1/devices/enrollment/{id:guid}/activate",async(Guid id,EnrollmentSignature input,HttpContext ctx,NpgsqlDataSource db,VerificationEmailQueue emails)=>
         {
             var actor=await Sql.Authenticate(ctx,db,false);
             await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
-            await LockAccount(c,actor.UserId);
+            await Sql.LockAuthenticatedProfileOwner(c, actor, requireTrusted: false, ctx.RequestAborted);
             byte[] grant,key;bool activated;
             await using(var cmd=Sql.Cmd(c,"""
                 SELECT e.grant_signature,d.public_key,e.activated_at IS NOT NULL
                 FROM device_enrollments e JOIN devices d ON d.id=e.device_id JOIN devices a ON a.id=e.approver_id
                 WHERE e.id=$1 AND e.device_id=$2 AND e.user_id=$3 AND e.approved_at IS NOT NULL
-                  AND (e.expires_at>now() OR e.activated_at IS NOT NULL) AND NOT d.revoked AND a.trusted AND NOT a.revoked FOR UPDATE OF e
+                  AND (e.expires_at>statement_timestamp() OR e.activated_at IS NOT NULL) AND NOT d.revoked AND a.trusted AND NOT a.revoked FOR UPDATE OF e
                 """,id,actor.DeviceId,actor.UserId))
             await using(var r=await cmd.ExecuteReaderAsync())
             {
@@ -146,14 +146,10 @@ public static class DeviceTrust
                 await using(var cmd=Sql.Cmd(c,"UPDATE device_enrollments SET activation_signature=$2,activated_at=now() WHERE id=$1",id,input.Signature)) await cmd.ExecuteNonQueryAsync();
                 await using(var cmd=Sql.Cmd(c,"UPDATE devices SET trusted=true WHERE id=$1 AND NOT revoked",actor.DeviceId))
                     if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(409,"DEVICE_REVOKED");
+                await emails.EnqueueNoticeAsync(c, actor.UserId, SecurityEmail.NewDevice, ctx.RequestAborted);
             }
             await tx.CommitAsync();return Results.NoContent();
         });
     }
 
-    private static async Task LockAccount(NpgsqlConnection c, Guid user)
-    {
-        await using var cmd = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", user);
-        await cmd.ExecuteScalarAsync();
-    }
 }

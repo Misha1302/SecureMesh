@@ -1,5 +1,7 @@
 # SecureMesh — local development checkpoint
 
+В интеграционной ветке доступны нативные клиенты и отдельная PWA. Проверенные сценарии, ограничения и состояние выпуска фиксируются в [сводке проекта](reports/PRODUCT_HANDOFF_RU.md). Инструкции для развёртывания PWA приведены в [руководстве](deploy/PWA_RU.md).
+
 Для первого изменения в проекте см. [руководство участника](CONTRIBUTING.md).
 
 ## SecureMesh V3: обязательные требования (19.11.2026)
@@ -49,4 +51,4 @@ make onboarding-recovery tests the production Dart setup controller with real AP
 
 make verify aggregates implemented build/crypto/API/trust/directory/restore/epoch/secret-pattern/format/widget/native checks, RustSec and both acceptance gates. It also validates native measurement provenance and metrics from retained full-size trials; long live network/GUI/blackout and disruptive DB checks have separate commands. Missing tools or failed/incomplete required gates remain failures. A component pass does not complete an unfinished acceptance row. See [STATUS](STATUS.md), [matrix](reports/TEST_RESULTS.md), [handoff](reports/FINAL_HANDOFF_RU.md).
 
-Linux was built/launched in Xvfb, including real GUI signup, routed DM, Unicode exchange and offline/SIGKILL/reopen delivery. Compact Linux is layout evidence, not Android verification. Android and Apple artifacts remain unverified. Browser private chat stays disabled pending a distinct WASM integration. No production deployment. V2 work is on codex/securemesh-v2; git status/log and STATUS.md are authoritative.
+Linux was built/launched in Xvfb, including real GUI signup, routed DM, Unicode exchange and offline/SIGKILL/reopen delivery. Compact Linux is layout evidence, not Android verification. Android API 35 has a separate emulator smoke test. The laboratory PWA uses a separate WASM integration for private messages and photos. Production release and physical-device validation remain open. [Platform evidence and active branch](reports/PRODUCT_HANDOFF_RU.md)

@@ -88,12 +88,13 @@ async function exchange(path, data, method = data === undefined ? "GET" : "POST"
     require(isToken(token), "SESSION_INVALID");
     headers.Authorization = `Bearer ${token}`;
   }
-  if (data !== undefined) headers["Content-Type"] = "application/json";
+  const binary = data instanceof Uint8Array;
+  if (data !== undefined) headers["Content-Type"] = binary ? "application/octet-stream" : "application/json";
   let response;
   try {
     response = await fetch(url.href, {
       method, headers,
-      body: data === undefined ? undefined : JSON.stringify(data),
+      body: data === undefined || binary ? data : JSON.stringify(data),
       redirect: "error", credentials: "omit", cache: "no-store",
       referrerPolicy: "no-referrer", mode: "cors",
     });
@@ -101,6 +102,7 @@ async function exchange(path, data, method = data === undefined ? "GET" : "POST"
     throw new AccountError("NETWORK_UNAVAILABLE");
   }
   require(!response.redirected && (!response.url || response.url === url.href), "SERVER_ORIGIN_MISMATCH");
+  if (binary && (response.status === 201 || response.status === 204)) return;
   let body;
   if (response.status !== 204 && response.status !== 202) {
     const json = /^application\/(?:json|problem\+json)(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "");
@@ -113,8 +115,70 @@ async function exchange(path, data, method = data === undefined ? "GET" : "POST"
       ? body.code : "SERVER_REQUEST_FAILED";
     throw new AccountError(code, response.status);
   }
-  require(body !== undefined || response.status === 202 || response.status === 204);
+  require(!binary && (body !== undefined || response.status === 202 || response.status === 204));
   return body;
+}
+
+async function exchangeBytes(path, token, maxBytes) {
+  const url = exchangeUrl(path);
+  require(typeof token === "string" && lowerHex.test(token) && token.length === 64, "SESSION_INVALID");
+  require(Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= 4 * 1024 * 1024 + 16);
+  require(/^\/v1\/conversations\/[0-9a-f-]{36}\/blobs\/[0-9a-f-]{36}$/.test(url.pathname), "INVALID_API_PATH");
+  let response;
+  try {
+    response = await fetch(url.href, {
+      method: "GET", headers: { Accept: "application/octet-stream", Authorization: `Bearer ${token}` },
+      redirect: "error", credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer", mode: "cors",
+    });
+  } catch {
+    throw new AccountError("NETWORK_UNAVAILABLE");
+  }
+  require(!response.redirected && (!response.url || response.url === url.href), "SERVER_ORIGIN_MISMATCH");
+  async function rejectBody(code) {
+    await response.body?.cancel().catch(() => {});
+    throw new AccountError(code, response.status);
+  }
+  if (!response.ok) {
+    let code = "SERVER_REQUEST_FAILED";
+    if (/^application\/(?:json|problem\+json)(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) {
+      try {
+        const body = JSON.parse(utf8.decode(await readBoundedBody(response, 4096)));
+        if (typeof body?.code === "string" && /^[A-Z][A-Z0-9_]{0,83}$/.test(body.code)) code = body.code;
+      } catch { /* The HTTP status still drives the normal authentication retry. */ }
+      throw new AccountError(code, response.status);
+    }
+    return rejectBody(code);
+  }
+  if (response.status !== 200 || !/^application\/octet-stream(?:\s*;|$)/i.test(response.headers.get("content-type") ?? ""))
+    return rejectBody("ACCOUNT_RESPONSE_MISMATCH");
+  return readBoundedBody(response, maxBytes);
+}
+
+async function readBoundedBody(response, maxBytes) {
+  const declared = response.headers.get("content-length");
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) <= 0 || Number(declared) > maxBytes)) {
+    await response.body?.cancel().catch(() => {});
+    throw new AccountError("ATTACHMENT_SIZE");
+  }
+  require(response.body?.getReader, "ACCOUNT_RESPONSE_MISMATCH");
+  const reader = response.body.getReader();
+  const bytes = new Uint8Array(declared === null ? maxBytes : Number(declared));
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      require(value.byteLength <= bytes.length - total, "ATTACHMENT_SIZE");
+      bytes.set(value, total);
+      total += value.byteLength;
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    if (error instanceof AccountError) throw error;
+    throw new AccountError("NETWORK_UNAVAILABLE");
+  }
+  require(total > 0 && (declared === null || total === Number(declared)), "ATTACHMENT_SIZE");
+  return bytes.subarray(0, total);
 }
 
 function checkChallenge(challenge, binding) {
@@ -174,6 +238,17 @@ export function createAccount(ctx) {
     });
   }
 
+  async function resendVerification(password) {
+    const state = ctx.state();
+    const binding = principal(state);
+    require(binding.userId === null, "ACCOUNT_BINDING_MISMATCH");
+    require(["registered", "verifying"].includes(state.registrationStage), "REGISTRATION_REQUIRED");
+    const credential = await ctx.derive(apiOrigin, binding.username, password);
+    decodeBase64(credential, 32);
+    stillBound(ctx.state(), binding);
+    await exchange("/v2/auth/resend-verification", { username: binding.username, credential });
+  }
+
   async function verify(code) {
     const state = ctx.state();
     const binding = principal(state);
@@ -199,6 +274,56 @@ export function createAccount(ctx) {
     }
     await ctx.update((draft) => {
       stillBound(draft, binding);
+      draft.registrationStage = "verified";
+      if (draft.registrationOrigin !== "recovery") draft.registrationOrigin = "verified-email";
+    });
+  }
+
+  async function requestRecovery(email) {
+    const state = ctx.state();
+    const binding = principal(state);
+    require(binding.userId === null, "ACCOUNT_BINDING_MISMATCH");
+    require(typeof email === "string" && email.trim().length > 0 && email.trim().length <= 254, "INVALID_EMAIL");
+    await exchange("/v1/auth/recovery/request", { email: email.trim() });
+  }
+
+  async function completeRecovery(code) {
+    const state = ctx.state();
+    const binding = principal(state);
+    require(binding.userId === null, "ACCOUNT_BINDING_MISMATCH");
+    require(typeof code === "string" && isToken(code.trim()), "INVALID_RECOVERY");
+    const credential = await ctx.derive(apiOrigin, binding.username);
+    decodeBase64(credential, 32);
+    stillBound(ctx.state(), binding);
+    // Record recovery before dispatch: a lost response cannot turn a reset into
+    // evidence that this local device verified a newly registered account.
+    const attempt = crypto.randomUUID();
+    let priorOrigin;
+    await ctx.update((draft) => {
+      stillBound(draft, binding);
+      priorOrigin = draft.registrationOrigin;
+      draft.registrationOrigin = "recovery";
+      draft.recoveryAttempt = attempt;
+    });
+    try {
+      await exchange("/v2/auth/recovery/complete", {
+        token: code.trim(), username: binding.username, credential,
+      });
+    } catch (error) {
+      if (error.status === 400 && error.code === "INVALID_RECOVERY") {
+        await ctx.update((draft) => {
+          stillBound(draft, binding);
+          if (draft.recoveryAttempt !== attempt) return;
+          delete draft.recoveryAttempt;
+          if (priorOrigin === undefined) delete draft.registrationOrigin;
+          else draft.registrationOrigin = priorOrigin;
+        });
+      }
+      throw error;
+    }
+    await ctx.update((draft) => {
+      stillBound(draft, binding);
+      if (draft.recoveryAttempt === attempt) delete draft.recoveryAttempt;
       draft.registrationStage = "verified";
     });
   }
@@ -243,7 +368,8 @@ export function createAccount(ctx) {
         if (!existing) {
           require(draft.registrationStage === "verified" || draft.registrationStage === "verifying", "REGISTRATION_CHANGED");
           draft.registrationStage = "verified";
-          draft.enrollmentVerified = me.trustState === "DEVICE_TRUSTED";
+          draft.enrollmentVerified = draft.registrationOrigin === "verified-email" &&
+            me.trustState === "DEVICE_TRUSTED";
         }
       });
       activityAttempt = -Infinity;
@@ -292,9 +418,7 @@ export function createAccount(ctx) {
     }
   }
 
-  async function api(path, data, method) {
-    const url = exchangeUrl(path);
-    require(!/^\/v[12]\/auth\/(?:register|verify-email|challenge|login|reauthenticate|refresh)(?:\/|$)/.test(url.pathname), "INVALID_API_PATH");
+  async function authenticated(sendRequest, handoff) {
     const state = ctx.state();
     const binding = principal(state);
     require(binding.userId !== null && !authenticating, "SESSION_REQUIRED");
@@ -308,7 +432,12 @@ export function createAccount(ctx) {
     };
     const observed = currentSession();
     const send = async (session) => {
-      const result = await exchange(path, data, method, session.accessToken);
+      const request = () => {
+        stillBound(ctx.state(), binding);
+        if (handoff) require(currentSession().accessToken === session.accessToken, "SESSION_CHANGED");
+        return sendRequest(session);
+      };
+      const result = await (handoff ? handoff(request) : request());
       stillBound(ctx.state(), binding);
       return result;
     };
@@ -335,6 +464,25 @@ export function createAccount(ctx) {
     }
   }
 
+  async function api(path, data, method, handoff) {
+    const url = exchangeUrl(path);
+    require(!/^\/v[12]\/auth\/(?:register|resend-verification|verify-email|challenge|login|reauthenticate|refresh)(?:\/|$)/.test(url.pathname), "INVALID_API_PATH");
+    if (/^\/v1\/messages\/?$/i.test(url.pathname))
+      require(typeof handoff === "function", "DELIVERY_GUARD_REQUIRED");
+    if (/^\/v1\/conversations\/[0-9a-f-]{36}\/blobs\/[0-9a-f-]{36}$/i.test(url.pathname) && method === "PUT") {
+      require(typeof handoff === "function", "DELIVERY_GUARD_REQUIRED");
+      require(data instanceof Uint8Array && data.length > 16 && data.length <= 1024 * 1024 + 16, "INVALID_BLOB");
+    } else {
+      require(!(data instanceof Uint8Array), "INVALID_API_PATH");
+    }
+    return authenticated((session) => exchange(path, data, method, session.accessToken), handoff);
+  }
+
+  async function apiBytes(path, maxBytes = 4 * 1024 * 1024 + 16) {
+    require(/^\/v1\/conversations\/[0-9a-f-]{36}\/blobs\/[0-9a-f-]{36}$/.test(exchangeUrl(path).pathname), "INVALID_API_PATH");
+    return authenticated((session) => exchangeBytes(path, session.accessToken, maxBytes));
+  }
+
   async function activity() {
     if (document.visibilityState !== "visible") return;
     const state = ctx.state();
@@ -345,5 +493,5 @@ export function createAccount(ctx) {
     await api("/v1/auth/session/activity", undefined, "POST");
   }
 
-  return { register, verify, login, api, activity };
+  return { register, resendVerification, verify, requestRecovery, completeRecovery, login, api, apiBytes, activity };
 }

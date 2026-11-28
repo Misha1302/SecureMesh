@@ -1,0 +1,160 @@
+using System.Security.Cryptography;
+using Microsoft.AspNetCore.DataProtection;
+using Npgsql;
+
+namespace SecureMesh;
+
+internal sealed class VerificationEmailQueue(
+    NpgsqlDataSource db,
+    IDataProtectionProvider protection,
+    VerificationEmail sender,
+    ILogger<VerificationEmailQueue> logger) : BackgroundService
+{
+    private const int MaxAttempts = 5;
+    private readonly IDataProtector protector = protection.CreateProtector("SecureMesh.VerificationEmail.v1");
+
+    public async Task EnqueueAsync(NpgsqlConnection connection, Guid user, string recipient,
+        CancellationToken cancellationToken, string purpose = "verification")
+    {
+        if (purpose is not ("verification" or "account_recovery"))
+            throw new ArgumentOutOfRangeException(nameof(purpose));
+        var token = Sql.Token();
+        var hash = Sql.Hash(token);
+        // The address has passed MailAddress validation and cannot contain a newline.
+        var payload = protector.Protect(purpose == "verification"
+            ? recipient + "\n" + token
+            : recipient + "\n" + token + "\n" + purpose);
+        await using var command = Sql.Cmd(connection, """
+            WITH created AS (
+                INSERT INTO email_tokens(hash,user_id,expires_at,purpose)
+                VALUES($1,$2,now()+interval '30 minutes',$3)
+                RETURNING hash,expires_at
+            )
+            INSERT INTO verification_email_queue(token_hash,payload,expires_at)
+            SELECT hash,$4,expires_at FROM created
+            """, hash, user, purpose, payload);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // The caller holds the account lock and commits the security event and mail together.
+    public async Task EnqueueNoticeAsync(NpgsqlConnection c, Guid owner, string purpose, CancellationToken ct)
+    {
+        var lastSent = purpose switch {
+            SecurityEmail.NewDevice => "device_email_at",
+            SecurityEmail.RefreshReuse => "refresh_reuse_email_at",
+            _ => throw new ArgumentOutOfRangeException(nameof(purpose))
+        };
+        await using var reserve = Sql.Cmd(c, $"""
+            UPDATE users SET {lastSent}=statement_timestamp()
+            WHERE id=$1 AND verified AND security_email_enabled
+              AND ({lastSent} IS NULL OR {lastSent} <= statement_timestamp()-interval '1 hour')
+            RETURNING email
+            """, owner);
+        if (await reserve.ExecuteScalarAsync(ct) is not string recipient) return;
+        var payload = protector.Protect(recipient + "\n\n" + purpose);
+        await using var enqueue = Sql.Cmd(c, """
+            INSERT INTO verification_email_queue(token_hash,security_owner,payload,expires_at)
+            VALUES($1,$2,$3,statement_timestamp()+interval '24 hours')
+            """, RandomNumberGenerator.GetBytes(32), owner, payload);
+        await enqueue.ExecuteNonQueryAsync(ct);
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (await DeliverNextAsync(stoppingToken)) continue;
+            }
+            catch (NpgsqlException) when (!stoppingToken.IsCancellationRequested)
+            {
+                logger.LogWarning("Verification email queue storage unavailable.");
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), stoppingToken);
+        }
+    }
+
+    private async Task<bool> DeliverNextAsync(CancellationToken cancellationToken)
+    {
+        // Reserve one provider attempt in the same statement as the queue lease.
+        // The reservation covers failures and process loss so retries also count against the cap.
+        await using var claim = db.CreateCommand("""
+            WITH candidate AS (
+                SELECT token_hash FROM verification_email_queue
+                WHERE next_attempt_at <= now() AND expires_at > now() AND attempts < $1
+                ORDER BY next_attempt_at LIMIT 1 FOR UPDATE SKIP LOCKED
+            ), reservation AS (
+                INSERT INTO verification_email_budget AS budget (singleton,hour_started_at,attempts)
+                SELECT true,date_trunc('hour',now(),'UTC'),1 FROM candidate
+                ON CONFLICT (singleton) DO UPDATE
+                SET hour_started_at=excluded.hour_started_at,
+                    attempts=CASE WHEN budget.hour_started_at=excluded.hour_started_at
+                        THEN budget.attempts+1 ELSE 1 END
+                WHERE budget.hour_started_at < excluded.hour_started_at
+                    OR (budget.hour_started_at=excluded.hour_started_at AND budget.attempts < $2)
+                RETURNING singleton
+            )
+            UPDATE verification_email_queue q
+            SET attempts=q.attempts+1, next_attempt_at=now()+interval '30 seconds'
+            FROM candidate CROSS JOIN reservation WHERE q.token_hash=candidate.token_hash
+            RETURNING q.token_hash,q.payload,q.attempts
+            """);
+        claim.Parameters.AddWithValue(MaxAttempts);
+        claim.Parameters.AddWithValue(sender.MaxAttemptsPerUtcHour);
+        byte[] hash;
+        string payload;
+        int attempt;
+        await using (var result = await claim.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await result.ReadAsync(cancellationToken))
+            {
+                await result.DisposeAsync();
+                await using var cleanup = db.CreateCommand("""
+                    DELETE FROM verification_email_queue
+                    WHERE expires_at <= now() OR (attempts >= $1 AND next_attempt_at <= now())
+                    """);
+                cleanup.Parameters.AddWithValue(MaxAttempts);
+                await cleanup.ExecuteNonQueryAsync(cancellationToken);
+                return false;
+            }
+
+            hash = result.GetFieldValue<byte[]>(0);
+            payload = result.GetString(1);
+            attempt = result.GetInt32(2);
+        }
+
+        try
+        {
+            var parts = protector.Unprotect(payload).Split('\n');
+            if (parts.Length is < 2 or > 3)
+                throw new CryptographicException("Invalid email queue payload.");
+            var purpose = parts.Length == 2 ? "verification" : parts[2];
+            if (purpose is SecurityEmail.NewDevice or SecurityEmail.RefreshReuse)
+            {
+                if (parts[1].Length != 0) throw new CryptographicException("Invalid notice payload.");
+            }
+            else if (purpose is not ("verification" or "account_recovery"))
+                throw new CryptographicException("Invalid email queue payload.");
+            await sender.SendAsync(parts[0], parts[1], purpose, cancellationToken);
+        }
+        catch (ApiError)
+        {
+            logger.LogWarning("Verification email delivery attempt failed.");
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            logger.LogWarning("Verification email payload could not be decrypted.");
+        }
+
+        await using var complete = db.CreateCommand("""
+            DELETE FROM verification_email_queue WHERE token_hash=$1 AND attempts=$2
+            """);
+        complete.Parameters.AddWithValue(hash);
+        complete.Parameters.AddWithValue(attempt);
+        await complete.ExecuteNonQueryAsync(cancellationToken);
+        return true;
+    }
+}

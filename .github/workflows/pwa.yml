@@ -22,6 +22,10 @@ on:
       - '.github/workflows/pwa.yml'
   workflow_dispatch:
 
+concurrency:
+  group: pwa-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -35,7 +39,9 @@ jobs:
           sparse-checkout: |
             site/app
             scripts/package-pwa.py
+            tests/pwa/package_origin.py
             tests/pwa/sw_release.py
+            tests/pwa/install_desktop.py
             src/browser_crypto
             src/crypto_core/src/server_credential.rs
           sparse-checkout-cone-mode: false
@@ -44,6 +50,8 @@ jobs:
           rustup toolchain install 1.100.0 --profile minimal --target wasm32-unknown-unknown
           cargo +1.100.0 install wasm-bindgen-cli --version 0.2.130 --locked --root "$RUNNER_TEMP/securemesh-wasm-cli"
           echo "$RUNNER_TEMP/securemesh-wasm-cli/bin" >> "$GITHUB_PATH"
+      - name: Verify API origin configuration
+        run: python3 tests/pwa/package_origin.py
       - name: Stage dedicated-origin bundle
         run: python3 scripts/package-pwa.py "$RUNNER_TEMP/securemesh-pwa"
       - name: Verify staged checksums
@@ -56,6 +64,7 @@ jobs:
           "$RUNNER_TEMP/pwa-venv/bin/pip" install playwright==1.57.0
           "$RUNNER_TEMP/pwa-venv/bin/playwright" install --with-deps chromium
           "$RUNNER_TEMP/pwa-venv/bin/python" tests/pwa/sw_release.py "$RUNNER_TEMP/securemesh-pwa"
+          "$RUNNER_TEMP/pwa-venv/bin/python" tests/pwa/install_desktop.py "$RUNNER_TEMP/securemesh-pwa"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: securemesh-pwa
@@ -81,11 +90,22 @@ jobs:
         run: |
           bash scripts/bootstrap.sh --services-only
           .local/venv/bin/pip install playwright==1.57.0
-          .local/venv/bin/playwright install --with-deps chromium
+          .local/venv/bin/playwright install --with-deps chromium firefox webkit
       - name: Verify browser accounts, encrypted storage, cross-platform MLS and offline delivery
         run: |
+          node tests/pwa/history_search.mjs
+          node tests/pwa/image_headers.mjs
           node tests/pwa/account.mjs
           node tests/pwa/messenger_transport.mjs
           node src/browser_crypto/tests/interop.mjs
-          .local/venv/bin/python tests/pwa/vault_browser.py
-          .local/venv/bin/python tests/pwa/live_browser.py
+          for browser in chromium firefox webkit; do
+            .local/venv/bin/python tests/pwa/vault_browser.py --browser "$browser"
+            .local/venv/bin/python tests/pwa/live_browser.py --browser "$browser"
+            .local/venv/bin/python tests/pwa/native_photo_browser.py --browser "$browser"
+          done
+          .local/venv/bin/python tests/pwa/contact_blocks_browser.py
+          .local/venv/bin/python tests/pwa/message_blocks_browser.py
+          .local/venv/bin/python tests/pwa/profile_links_browser.py
+          .local/venv/bin/python tests/pwa/history_search_browser.py
+          .local/venv/bin/python tests/pwa/recovery_browser.py
+          .local/venv/bin/python tests/pwa/private_image_browser.py

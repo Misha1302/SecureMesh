@@ -10,6 +10,7 @@ import 'package:record/record.dart';
 import 'package:securemesh_client/voice_note.dart';
 import 'package:securemesh_client/conversation_composer.dart';
 import 'package:securemesh_client/voice_wave.dart';
+import 'package:securemesh_client/voice_transcription.dart';
 
 class Mic extends Fake implements AudioRecorder {
   bool permission = false, released = false, paused = false;
@@ -40,6 +41,21 @@ class Mic extends Fake implements AudioRecorder {
   Future<void> dispose() async {
     released = true;
     await samples.close();
+  }
+}
+
+class _LocalTranscription extends LocalVoiceTranscription {
+  _LocalTranscription(this.enabled, this.result)
+    : super(modelPath: '/missing/model');
+  final bool enabled;
+  final String result;
+  Uint8List? input;
+  @override
+  Future<bool> get available async => enabled;
+  @override
+  Future<String> transcribe(Uint8List wav) async {
+    input = wav;
+    return result;
   }
 }
 
@@ -97,6 +113,7 @@ void main() {
                 resumeAt: memory.read(chat, 'clip'),
                 onPosition: (value) => memory.save(chat, 'clip', value),
                 makePlayer: () => player = _Player(),
+                transcription: _LocalTranscription(false, ''),
               ),
             ),
           ),
@@ -132,8 +149,70 @@ void main() {
     player.positions.add(const Duration(seconds: 10));
     await tester.pump();
     expect(memory.read('chat-a', 'clip'), Duration.zero);
+    await tester.pump();
+    await play();
+    expect(player.calls, [saved, 'play', Duration.zero, 'play']);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('local transcription is opt-in and displays a transient result', (
+    tester,
+  ) async {
+    final cache = Directory.systemTemp.createTempSync('mesh-voice-test-');
+    addTearDown(() => cache.deleteSync(recursive: true));
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (_) async => cache.path);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final samples = VoiceSamples()..add(Uint8List(voiceRate * 2));
+    final clip = samples.finish();
+    final local = _LocalTranscription(true, 'recognized locally');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VoicePlayer(clip, (_, en) => en, transcription: local),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(local.input, isNull);
+    expect(find.text('Transcribe locally'), findsOneWidget);
+    await tester.tap(find.text('Transcribe locally'));
+    await tester.pumpAndSettle();
+    expect(find.text('recognized locally'), findsOneWidget);
+    expect(local.input, clip);
+    await tester.tap(find.text('Hide transcript'));
+    await tester.pumpAndSettle();
+    expect(find.text('recognized locally'), findsNothing);
+    await tester.tap(find.text('Show transcript'));
+    await tester.pumpAndSettle();
+    expect(find.text('recognized locally'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'opened voice transcribes once with explicit profile preference',
+    (tester) async {
+      final samples = VoiceSamples()..add(Uint8List(voiceRate * 2));
+      final clip = samples.finish();
+      final local = _LocalTranscription(true, 'transient transcript');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VoicePlayer(
+              clip,
+              (_, en) => en,
+              transcription: local,
+              transcribeOnOpen: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(local.input, clip);
+      expect(find.text('transient transcript'), findsOneWidget);
+    },
+  );
 
   test(
     'voice samples saturate at 30 seconds and enforce the WAV structure',
