@@ -2571,6 +2571,7 @@ dependencies = [
  "akd",
  "anyhow",
  "async-trait",
+ "base64",
  "ed25519-dalek 2.2.0",
  "hex",
  "protobuf",
@@ -2580,6 +2581,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "uuid",
  "zeroize",
 ]
 

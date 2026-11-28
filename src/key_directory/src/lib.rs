@@ -89,6 +89,7 @@ pub fn encode_consistency(proof: &AppendOnlyProof) -> Result<Vec<u8>> {
     Ok(wire::AppendOnlyProof::from(proof).write_to_bytes()?)
 }
 
+pub mod contact;
 pub mod store;
 pub mod writer;
 

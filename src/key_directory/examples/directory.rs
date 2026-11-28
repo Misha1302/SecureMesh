@@ -1,5 +1,6 @@
 //! Local proof publisher and independent CLI verifier for one synthetic record.
-use securemesh_key_directory::store::Store;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use securemesh_key_directory::{contact::DeviceAddress, store::Store};
 use std::{
     env, fs,
     io::{IsTerminal, Read},
@@ -98,6 +99,22 @@ fn point(epoch: &str, root: &str) -> Result<Checkpoint> {
     })
 }
 
+fn check_device(
+    store: &Store,
+    account: &str,
+    device: &str,
+    package: &[u8],
+    proof: &[u8],
+) -> Result<Checkpoint> {
+    let address = DeviceAddress::parse(account, device)?;
+    let (head, key) = store.lookup_device_signing_key(&address, proof)?;
+    // Reuse the same OpenMLS decoder and identity/key checks as the API's public validator.
+    securemesh_crypto::validate_keypackage(&serde_json::json!({
+        "identity": device, "public_key": B64.encode(key.as_bytes()), "keypackage": B64.encode(package)
+    }).to_string())?;
+    Ok(head)
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let args: Vec<_> = env::args().skip(1).collect();
@@ -129,7 +146,16 @@ async fn main() -> Result<()> {
             println!("checkpoint {} record version {} value {}",checkpoint.epoch,verified.version,hex::encode(verified.value.0));
             Ok(())
         }
-        _ => bail!("usage: directory publish NEW_DIR | directory verify DIR VRF_KEY_HEX EPOCH_1_ROOT_HEX EPOCH_2_ROOT_HEX | directory pin PROFILE OWNER VRF EPOCH ROOT | directory advance PROFILE OWNER VRF OLD_EPOCH OLD_ROOT NEW_EPOCH NEW_ROOT PROOF | directory read PROFILE OWNER VRF LABEL PROOF"),
+        [mode, profile, owner, vrf, account, device, keypackage, proof] if mode == "check-device" => {
+            let mut package = Vec::new();
+            fs::File::open(keypackage)?.take(16385).read_to_end(&mut package)?;
+            ensure!((1..=16384).contains(&package.len()), "invalid KeyPackage length");
+            let store = Store::open(Path::new(profile), passphrase()?.as_str(), owner, digest(vrf)?)?;
+            let head = check_device(&store, account, device, &package, &read_proof(Path::new(proof))?)?;
+            println!("MLS KeyPackage matches directory device record at epoch {} root {}", head.epoch, hex::encode(head.root));
+            Ok(())
+        }
+        _ => bail!("usage: directory publish NEW_DIR | directory verify DIR VRF_KEY_HEX EPOCH_1_ROOT_HEX EPOCH_2_ROOT_HEX | directory pin PROFILE OWNER VRF EPOCH ROOT | directory advance PROFILE OWNER VRF OLD_EPOCH OLD_ROOT NEW_EPOCH NEW_ROOT PROOF | directory read PROFILE OWNER VRF LABEL PROOF | directory check-device PROFILE OWNER VRF ACCOUNT DEVICE KEYPACKAGE PROOF"),
     }
 }
 
@@ -172,6 +198,84 @@ mod tests {
             key
         )
         .is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn directory_proof_matches_real_native_keypackage_only_at_expected_address() -> Result<()>
+    {
+        const ACCOUNT: &str = "aaaa1111-2222-4333-8444-555555555555";
+        const DEVICE: &str = "bbbb2222-3333-4444-8555-666666666666";
+        const OTHER: &str = "cccc3333-4444-4555-8666-777777777777";
+        let tmp = tempfile::tempdir()?;
+        let make_device = |path: &Path, id: &str| -> Result<([u8; 32], Vec<u8>)> {
+            let native = NativeClient::open(
+                path.to_str().unwrap().into(),
+                "synthetic device password".into(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            let run = |req: serde_json::Value| -> Result<serde_json::Value> {
+                Ok(serde_json::from_str(
+                    &native
+                        .execute(req.to_string())
+                        .map_err(anyhow::Error::msg)?,
+                )?)
+            };
+            let init = run(serde_json::json!({"op":"init","identity":id}))?;
+            let kp = run(serde_json::json!({"op":"keypackage"}))?;
+            Ok((
+                B64.decode(init["public_key"].as_str().unwrap())?
+                    .try_into()
+                    .unwrap(),
+                B64.decode(kp["keypackage"].as_str().unwrap())?,
+            ))
+        };
+        let path = tmp.path().join("native");
+        let (key, package) = make_device(&path, DEVICE)?;
+        let (_, replacement) = make_device(&tmp.path().join("replacement"), DEVICE)?;
+        let (_, other) = make_device(&tmp.path().join("other"), OTHER)?;
+        let tree = Directory::<WhatsAppV1Configuration, _, _>::new(
+            StorageManager::new_no_cache(AsyncInMemoryDatabase::new()),
+            HardCodedAkdVRF,
+            AzksParallelismConfig::disabled(),
+        )
+        .await?;
+        let address = DeviceAddress::parse(ACCOUNT, DEVICE)?;
+        let (label, value) = address.publication(DEVICE.as_bytes(), &key)?;
+        // A second valid proof includes identical value bytes at another account's label.
+        let unrelated = DeviceAddress::parse(OTHER, DEVICE)?.label();
+        let head = tree
+            .publish(vec![
+                (label.clone(), value.clone()),
+                (unrelated.clone(), value),
+            ])
+            .await?;
+        let checkpoint = Checkpoint {
+            epoch: head.epoch(),
+            root: head.hash(),
+        };
+        let store = Store::provision(
+            &path,
+            "synthetic device password",
+            DEVICE,
+            *tree.get_public_key().await?.as_bytes(),
+            checkpoint,
+        )?;
+        let proof = encode_lookup(&tree.lookup(label).await?.0)?;
+        let wrong_value = encode_lookup(&tree.lookup(unrelated).await?.0)?;
+        assert_eq!(
+            check_device(&store, ACCOUNT, DEVICE, &package, &proof)?,
+            checkpoint
+        );
+        assert!(check_device(&store, OTHER, DEVICE, &package, &proof).is_err());
+        assert!(check_device(&store, OTHER, DEVICE, &package, &wrong_value).is_err());
+        assert!(check_device(&store, ACCOUNT, OTHER, &package, &proof).is_err());
+        assert!(check_device(&store, ACCOUNT, DEVICE, &replacement, &proof).is_err());
+        assert!(check_device(&store, ACCOUNT, DEVICE, &other, &proof).is_err());
+        let mut trailing = package;
+        trailing.push(0);
+        assert!(check_device(&store, ACCOUNT, DEVICE, &trailing, &proof).is_err());
+        assert_eq!(store.checkpoint()?, checkpoint);
         Ok(())
     }
 
