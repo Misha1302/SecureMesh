@@ -3,6 +3,7 @@ import 'display_name.dart';
 import 'identity_comparison.dart';
 import 'chat_preview.dart';
 import 'contact_profile.dart';
+import 'contact_blocks.dart';
 import 'attachment_transfer.dart';
 import 'conversation_media.dart';
 import 'profile_photo.dart';
@@ -1280,6 +1281,21 @@ class _AccountHubState extends State<AccountHub> {
                               ? null
                               : () => action(() => accept(r as Map)),
                         ),
+                      if (r['outgoing'] == false && widget.channelApi != null)
+                        IconButton(
+                          tooltip: tr(
+                            'Заблокировать запросы',
+                            'Block invitations',
+                          ),
+                          icon: const Icon(Icons.block),
+                          onPressed: blocked
+                              ? null
+                              : () => action(
+                                  () => manageContactBlocks(
+                                    r['username'] as String,
+                                  ),
+                                ),
+                        ),
                       IconButton(
                         tooltip: r['outgoing'] == true
                             ? tr('Отменить запрос', 'Cancel request')
@@ -1325,6 +1341,12 @@ class _AccountHubState extends State<AccountHub> {
             onTap: () => setState(() => channelsOpen = true),
           ),
 
+        if (widget.channelApi != null)
+          ListTile(
+            leading: const Icon(Icons.block),
+            title: Text(tr('Заблокированные аккаунты', 'Blocked accounts')),
+            onTap: blocked ? null : () => action(manageContactBlocks),
+          ),
         ExpansionTile(
           tilePadding: EdgeInsets.zero,
           leading: const Icon(Icons.devices_outlined),
@@ -1389,6 +1411,12 @@ class _AccountHubState extends State<AccountHub> {
     fetch: widget.api,
     route: peerPhotoRoute(chat['id'], chat['peerPhotoVersion']),
   );
+
+  Future<void> manageContactBlocks([String? username]) async {
+    final api = widget.channelApi;
+    if (api == null) return;
+    await showContactBlocks(context, api: api, tr: tr, username: username);
+  }
 
   Future<void> inspectContact(Map chat) async {
     final group = chat['id'] as String;

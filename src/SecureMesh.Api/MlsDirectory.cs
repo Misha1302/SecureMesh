@@ -14,6 +14,7 @@ public static class MlsDirectory
 {
     public static void MapMlsDirectory(this WebApplication app)
     {
+        app.MapContactBlocks();
         app.MapPost("/v1/chat-requests",async(ChatRequestInput input,HttpContext ctx,NpgsqlDataSource db)=>
         {
             var actor=await Sql.Authenticate(ctx,db);
@@ -26,6 +27,9 @@ public static class MlsDirectory
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=ANY($1) ORDER BY id FOR UPDATE",new Guid[]{actor.UserId,recipient})) await cmd.ExecuteNonQueryAsync();
             await using(var old=Sql.Cmd(c,"SELECT 1 FROM chat_requests WHERE id=$1 AND sender_device=$2 AND recipient_user=$3",input.Id,actor.DeviceId,recipient))
                 if(await old.ExecuteScalarAsync() is not null) return Results.Ok(new{id=input.Id});
+            await using (var blocked = Sql.Cmd(c, "SELECT 1 FROM contact_blocks WHERE owner_id=$1 AND blocked_id=$2", recipient, actor.UserId))
+                if (await blocked.ExecuteScalarAsync(ctx.RequestAborted) is not null)
+                    throw new ApiError(404, "USER_NOT_FOUND");
             await using(var pair=Sql.Cmd(c,"""
                 SELECT count(*) FROM chat_requests q JOIN devices d ON d.id=q.sender_device
                 WHERE d.user_id=$1 AND q.recipient_user=$2 AND q.created_at>now()-interval '1 day'
