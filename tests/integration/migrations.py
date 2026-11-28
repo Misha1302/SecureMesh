@@ -74,6 +74,7 @@ def main():
                 '202611280107_SecurityEmail',
                 '202611280108_ChannelReactions',
                 '202611280109_ChannelPostEditedAt',
+                '202611280110_ChannelComments',
                 '202611280111_ProfileTextVisibility',
             ]
             assert result.strip().splitlines() == expected

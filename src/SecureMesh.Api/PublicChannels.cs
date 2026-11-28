@@ -11,7 +11,7 @@ public sealed record PostEdit(int ExpectedRevision, string Body);
 public sealed record PostInput(Guid RequestId, string Body);
 public sealed record PostReaction(string Kind);
 
-public static class PublicChannels
+public static partial class PublicChannels
 {
     private static readonly Regex Slug = new("^[a-z0-9_]{3,32}\\z", RegexOptions.CultureInvariant);
     private static readonly Regex Prefix = new("^[a-z0-9_]{0,32}\\z", RegexOptions.CultureInvariant);
@@ -40,6 +40,10 @@ public static class PublicChannels
         routes.MapPut("/{id:guid}/posts/{seq:long}", Edit);
         routes.MapPut("/{id:guid}/posts/{seq:long}/reaction", PutReaction);
         routes.MapDelete("/{id:guid}/posts/{seq:long}/reaction", DeleteReaction);
+        var comments = routes.MapGroup("/{id:guid}/posts/{seq:long}/comments");
+        comments.MapGet("", ListComments);
+        comments.MapPost("", AddComment);
+        comments.MapDelete("/{comment:long}", DeleteComment);
         routes.MapPost("/{id:guid}/posts", Publish);
         routes.MapDelete("/{id:guid}/posts/{seq:long}", RemovePost);
     }
@@ -500,6 +504,8 @@ public static class PublicChannels
         await using var cmd=Sql.Cmd(c,"UPDATE public_channel_posts SET body=NULL,deleted_at=now() WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq);
         if(await cmd.ExecuteNonQueryAsync()!=0)
         {
+            await using (var comments=Sql.Cmd(c,"DELETE FROM public_channel_comments WHERE post_seq=$1",seq))
+                await comments.ExecuteNonQueryAsync();
             await using var reactions=Sql.Cmd(c,"DELETE FROM public_channel_reactions WHERE post_seq=$1",seq);
             await reactions.ExecuteNonQueryAsync();
         }

@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import 'display_name.dart';
+import 'channel_comments.dart';
 import 'local_client.dart';
 import 'transport.dart';
 
@@ -388,6 +389,20 @@ class _PublicChannelsState extends State<PublicChannels> {
     return tr('Изменено $date, $time', 'Edited $date, $time');
   }
 
+  Widget comments(Map post, String channel) => TextButton(
+    onPressed: busy
+        ? null
+        : () => showDialog<void>(
+            context: context,
+            builder: (_) => ChannelComments(
+              api: widget.api,
+              russian: widget.russian,
+              path: '$path/$channel/posts/${post['seq']}/comments',
+            ),
+          ),
+    child: Text(tr('Комментарии', 'Comments')),
+  );
+
   Widget reactions(Map post, String channel) {
     final summary = post['reactions'];
     if (summary is! Map) return const SizedBox.shrink();
@@ -540,6 +555,7 @@ class _PublicChannelsState extends State<PublicChannels> {
                   ].join(' · '),
                 ),
                 reactions(p, p['channelId'] as String),
+                comments(p, p['channelId'] as String),
               ],
             ),
           ),
@@ -688,6 +704,7 @@ class _PublicChannelsState extends State<PublicChannels> {
                     ].join(' · '),
                   ),
                   reactions(p, room!['id'] as String),
+                  comments(p, room!['id'] as String),
                 ],
               ),
               trailing: room!['owner'] == true
