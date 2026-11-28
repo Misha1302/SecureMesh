@@ -19,6 +19,8 @@ pub struct Policy {
 
 impl Policy {
     pub fn new(directory: [u8; 32], vrf: [u8; 32], roster: [[u8; 32]; 4]) -> Result<Self> {
+        akd::ecvrf::VRFPublicKey::try_from(vrf.as_slice())
+            .map_err(|_| anyhow::anyhow!("invalid directory VRF key"))?;
         let mut keys = Vec::with_capacity(4);
         let mut hash = Sha256::new();
         hash.update(b"SecureMesh/AKD/3-of-4/config/v1\0");

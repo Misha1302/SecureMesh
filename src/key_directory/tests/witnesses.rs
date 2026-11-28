@@ -9,7 +9,9 @@ use securemesh_key_directory::{
 fn three_distinct_pinned_signers_bind_the_entire_transition() -> Result<()> {
     let keys = [1, 2, 3, 4].map(|i| SigningKey::from_bytes(&[i; 32]));
     let roster = keys.each_ref().map(|k| k.verifying_key().to_bytes());
-    let policy = Policy::new([8; 32], [9; 32], roster)?;
+    let vrf = SigningKey::from_bytes(&[9; 32]).verifying_key().to_bytes();
+    let other_vrf = SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes();
+    let policy = Policy::new([8; 32], vrf, roster)?;
     let old = Checkpoint {
         epoch: 12,
         root: [10; 32],
@@ -36,7 +38,7 @@ fn three_distinct_pinned_signers_bind_the_entire_transition() -> Result<()> {
     assert!(policy.verify(old, new, &wrong).is_err());
     let mut weak = roster;
     weak[0] = [0; 32];
-    assert!(Policy::new([8; 32], [9; 32], weak).is_err());
+    assert!(Policy::new([8; 32], vrf, weak).is_err());
     assert!(policy.verify(old, new, &votes[..2]).is_err());
     assert!(policy
         .verify(old, new, &[votes[0], votes[0], votes[1]])
@@ -61,19 +63,19 @@ fn three_distinct_pinned_signers_bind_the_entire_transition() -> Result<()> {
             &votes
         )
         .is_err());
-    assert!(Policy::new([7; 32], [9; 32], roster)?
+    assert!(Policy::new([7; 32], vrf, roster)?
         .verify(old, new, &votes)
         .is_err());
-    assert!(Policy::new([8; 32], [7; 32], roster)?
+    assert!(Policy::new([8; 32], other_vrf, roster)?
         .verify(old, new, &votes)
         .is_err());
     let mut changed = roster;
     changed.swap(0, 3);
-    assert!(Policy::new([8; 32], [9; 32], changed)?
+    assert!(Policy::new([8; 32], vrf, changed)?
         .verify(old, new, &votes)
         .is_err());
     changed[2] = changed[3];
-    assert!(Policy::new([8; 32], [9; 32], changed).is_err());
+    assert!(Policy::new([8; 32], vrf, changed).is_err());
     assert!(policy.statement(new, old).is_err());
     Ok(())
 }
