@@ -1,0 +1,15 @@
+[package]
+name = "securemesh-key-directory"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[dependencies]
+akd = { version = "=0.13.0", default-features = false, features = ["public_auditing", "whatsapp_v1"] }
+anyhow = "=1.0.104"
+protobuf = "=3.7.2"
+
+[dev-dependencies]
+hex = "=0.4.3"
+tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread"] }
