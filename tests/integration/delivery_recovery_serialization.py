@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check deterministic HTTP and WSS delivery ordering against a real account reset."""
 import concurrent.futures
+import hashlib
 import json
 import os
 import subprocess
@@ -110,7 +111,7 @@ def run(db, root):
     ack_frame = d.wire.Frame(protocol_version=1, kind=d.wire.PROCESSED_ACK)
     ack_frame.processed_ack.conversation_id = uuid.UUID(group).bytes
     ack_frame.processed_ack.highest_contiguous_persisted_sequence = 1
-    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as pool:
         try:
             with hold_row(db, f"SELECT id FROM sessions WHERE device_id='{uuid.UUID(device.identity)}' AND NOT revoked FOR UPDATE"):
                 reset = pool.submit(complete, next_code, password + '-again')
@@ -122,18 +123,26 @@ def run(db, root):
                 ]
                 reads = [pool.submit(blob, blob_path, access, 'GET', 401, extra=headers)
                          for headers in ({}, {'Range': 'bytes=2-6'})]
+                upload_path = f"/v1/conversations/{group}/blobs/{uuid.uuid4()}"
+                uploads = [
+                    pool.submit(blob, upload_path, access, 'PUT', 401, ciphertext),
+                    pool.submit(blob, blob_path, access, 'DELETE', 401),
+                    pool.submit(blob, blob_path+'/parts', access, 'GET', 401),
+                    pool.submit(blob, upload_path+'/parts?offset=0', access, 'PUT', 401, ciphertext,
+                                extra={'X-Blob-Length': str(len(ciphertext)), 'X-Blob-SHA256': hashlib.sha256(ciphertext).hexdigest()}),
+                ]
                 websocket = [
                     pool.submit(streams[0].send, message, group),
                     pool.submit(streams[1].exchange, sync_frame),
                     pool.submit(streams[2].exchange, ack_frame),
                 ]
-                wait_for(db, "wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE id=$1 FOR SHARE%'", 8)
+                wait_for(db, "wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE id=$1 FOR SHARE%'", 12)
                 # The transaction locks only the recovering account. Its peer can still read the group.
                 peer = d.request(f'/v1/sync?conversationId={group}', token=receiver['session']['accessToken'])
                 assert len(peer['messages']) == 1
             reset.result(timeout=10)
             assert all(operation.result(timeout=10) == {'code': 'AUTH_REQUIRED'} for operation in http)
-            for operation in reads:
+            for operation in [*reads, *uploads]:
                 assert json.loads(operation.result(timeout=10)) == {'code': 'AUTH_REQUIRED'}
             for operation in websocket:
                 frame = operation.result(timeout=10)
@@ -143,6 +152,8 @@ def run(db, root):
             for stream in streams:
                 stream.close()
 
+    assert blob(blob_path, receiver['session']['accessToken'], 'GET', 200) == ciphertext
+    blob(upload_path, receiver['session']['accessToken'], 'GET', 404)
     assert scalar(db, f"SELECT count(*) FROM messages WHERE conversation_id='{uuid.UUID(group)}'") == '1'
     assert scalar(db, f"SELECT count(*) FROM cursors WHERE device_id='{uuid.UUID(device.identity)}'") == '0'
     d.sync(receiver['device'], receiver['session']['accessToken'], group)

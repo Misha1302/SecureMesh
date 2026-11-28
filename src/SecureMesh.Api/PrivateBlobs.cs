@@ -47,13 +47,14 @@ public static partial class PrivateBlobs
         if (await cmd.ExecuteScalarAsync(ct) is not false) throw new ApiError(409, "CONVERSATION_READ_ONLY");
     }
 
-    private static async Task LockMember(NpgsqlConnection c, Guid group, Guid device, CancellationToken ct)
+    private static async Task LockSessionAndMember(NpgsqlConnection c, Guid group, Actor actor, CancellationToken ct)
     {
+        await Sql.LockTrustedDeliverySession(c, actor, ct);
         await using var cmd = Sql.Cmd(c, """
             SELECT 1 FROM members m JOIN devices d ON d.id=m.device_id
             WHERE m.conversation_id=$1 AND m.device_id=$2 AND d.trusted AND NOT d.revoked
             FOR SHARE OF m,d
-            """, group, device);
+            """, group, actor.DeviceId);
         if (await cmd.ExecuteScalarAsync(ct) is null) throw new ApiError(403, "MEMBERSHIP_REQUIRED");
     }
 
@@ -79,7 +80,7 @@ public static partial class PrivateBlobs
             var digest = SHA256.HashData(bytes);
             await using var c = await db.OpenConnectionAsync(ct);
             await using var tx = await c.BeginTransactionAsync(ct);
-            await LockMember(c, group, actor.DeviceId, ct);
+            await LockSessionAndMember(c, group, actor, ct);
             await RequireWritable(c, group, ct);
             await LockUploads(c, ct);
             await using (var existing = Sql.Cmd(c, "SELECT owner_id,digest FROM private_blobs WHERE conversation_id=$1 AND blob_id=$2", group, id))
@@ -106,8 +107,7 @@ public static partial class PrivateBlobs
         var actor = await Sql.Authenticate(ctx, db);
         await using var c = await db.OpenConnectionAsync(ct);
         await using var tx = await c.BeginTransactionAsync(ct);
-        await Sql.LockTrustedDeliverySession(c, actor, ct);
-        await LockMember(c, group, actor.DeviceId, ct);
+        await LockSessionAndMember(c, group, actor, ct);
         // Use PostgreSQL's bytea slice for the bounded range used by native clients.
         // Other HTTP range forms retain the framework's standard file handling.
         if (System.Net.Http.Headers.RangeHeaderValue.TryParse(ctx.Request.Headers.Range, out var ranges) &&
@@ -119,15 +119,20 @@ public static partial class PrivateBlobs
                 SELECT octet_length(ciphertext), substring(ciphertext FROM $3 FOR $4)
                 FROM private_blobs WHERE conversation_id=$1 AND blob_id=$2
                 """, group, id, (int)start + 1, (int)(end - start + 1));
-            await using var reader = await part.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct)) throw new ApiError(404, "BLOB_NOT_FOUND");
-            var size = reader.GetInt32(0);
+            int size;
+            byte[] chunk;
+            await using (var reader = await part.ExecuteReaderAsync(ct))
+            {
+                if (!await reader.ReadAsync(ct)) throw new ApiError(404, "BLOB_NOT_FOUND");
+                size = reader.GetInt32(0);
+                chunk = reader.GetFieldValue<byte[]>(1);
+            }
+            await tx.CommitAsync(ct);
             if (start >= size)
             {
                 ctx.Response.Headers.ContentRange = $"bytes */{size}";
                 return Results.StatusCode(416);
             }
-            var chunk = reader.GetFieldValue<byte[]>(1);
             ctx.Response.Headers.AcceptRanges = "bytes";
             ctx.Response.Headers.ContentRange = $"bytes {start}-{start + chunk.Length - 1}/{size}";
             ctx.Response.StatusCode = 206;
@@ -144,7 +149,7 @@ public static partial class PrivateBlobs
         var actor = await Sql.Authenticate(ctx, db);
         await using var c = await db.OpenConnectionAsync(ct);
         await using var tx = await c.BeginTransactionAsync(ct);
-        await LockMember(c, group, actor.DeviceId, ct);
+        await LockSessionAndMember(c, group, actor, ct);
         await LockUploads(c, ct);
         await using var partial = Sql.Cmd(c, "DELETE FROM private_blob_uploads WHERE conversation_id=$1 AND blob_id=$2 AND owner_id=$3", group, id, actor.UserId);
         var removed = await partial.ExecuteNonQueryAsync(ct);

@@ -78,7 +78,7 @@ public static partial class PrivateBlobs
         var actor = await Sql.Authenticate(ctx, db);
         await using var c = await db.OpenConnectionAsync(ct);
         await using var tx = await c.BeginTransactionAsync(ct);
-        await LockMember(c, group, actor.DeviceId, ct);
+        await LockSessionAndMember(c, group, actor, ct);
         var upload = await Lookup(c, group, id, ct);
         if (upload is null || upload.Owner != actor.UserId) throw new ApiError(404, "BLOB_NOT_FOUND");
         return Ack(upload.Offset, upload.Complete, upload.Digest);
@@ -107,7 +107,7 @@ public static partial class PrivateBlobs
             await ctx.Request.Body.ReadExactlyAsync(data, ct);
             await using var c = await db.OpenConnectionAsync(ct);
             await using var tx = await c.BeginTransactionAsync(ct);
-            await LockMember(c, group, actor.DeviceId, ct);
+            await LockSessionAndMember(c, group, actor, ct);
             await RequireWritable(c, group, ct);
             await LockUploads(c, ct);
             var upload = await Lookup(c, group, id, ct);
