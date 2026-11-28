@@ -260,3 +260,5 @@ main:has(#conversations:not([hidden])) #title {
   .thread-header, #compose { padding: .5rem 0; }
   #timeline { padding: .65rem; }
 }
+
+#profile-text-form fieldset { display: grid; gap: .75rem; margin: 0; padding: 0; border: 0; min-width: 0; }

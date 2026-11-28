@@ -148,6 +148,20 @@
           </div>
         </section>
       </section>
+      <details id="profile-text" hidden>
+        <summary>Мой профиль</summary>
+        <form id="profile-text-form">
+          <fieldset disabled>
+            <label>О себе<textarea name="bio" rows="3"></textarea></label>
+            <label>Статус<input name="status" type="text" /></label>
+            <label class="check"><input name="visible" type="checkbox" />Показывать собеседникам</label>
+            <p>Описание и статус хранятся на сервере. Вы можете скрыть оба поля от собеседников.</p>
+            <button>Сохранить</button>
+          </fieldset>
+        </form>
+        <p id="profile-text-status" role="status"></p>
+        <button type="button" id="profile-text-reload" hidden>Загрузить с сервера</button>
+      </details>
       <details id="security-email" hidden>
         <summary>Письма о безопасности</summary>
         <label class="check"><input id="security-email-enabled" type="checkbox" disabled />Получать письма на подтверждённую почту</label>

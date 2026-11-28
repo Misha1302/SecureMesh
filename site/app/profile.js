@@ -234,6 +234,77 @@ function lock() {
   notice("");
   layout();
 }
+const profileForm = byId("profile-text-form");
+let profileRevision = null;
+let profileDirty = false;
+let profileRequest;
+
+function clearProfileText() {
+  profileRequest = undefined;
+  profileRevision = null;
+  profileDirty = false;
+  profileForm.reset();
+  profileForm.querySelector("fieldset").disabled = true;
+  byId("profile-text").open = false;
+  byId("profile-text-status").textContent = "";
+  show("profile-text-reload", false);
+}
+
+async function editProfileText(save) {
+  const current = opened;
+  if (!current || byId("profile-text").hidden || profileRequest) return;
+  if (save && profileRevision === null) return;
+  const fields = profileForm.elements;
+  const message = byId("profile-text-status");
+  if (save && ([...fields.bio.value].length > 280 || [...fields.status.value].length > 80)) {
+    message.textContent = "Описание допускает до 280 символов, статус — до 80.";
+    return;
+  }
+  const body = save ? {bio: fields.bio.value || null, status: fields.status.value || null,
+    visibleToPeers: fields.visible.checked, revision: profileRevision} : undefined;
+  const request = {};
+  profileRequest = request;
+  const fieldset = profileForm.querySelector("fieldset");
+  fieldset.disabled = true;
+  message.textContent = save ? "Сохранение…" : "Загрузка…";
+  show("profile-text-reload", false);
+  try {
+    const base = "/v1/users/me/profile-text";
+    const result = await current.account.api(save ? base + "/with-visibility" : base, body, save ? "PUT" : "GET");
+    if (opened !== current || profileRequest !== request) return;
+    if (!Number.isSafeInteger(result?.revision) || result.revision < 0 ||
+        typeof result.visibleToPeers !== "boolean" ||
+        ![result.bio, result.status].every(value => value === null || typeof value === "string"))
+      throw new Error("INVALID_PROFILE");
+    fields.bio.value = result.bio ?? "";
+    fields.status.value = result.status ?? "";
+    fields.visible.checked = result.visibleToPeers;
+    profileRevision = result.revision;
+    profileDirty = false;
+    message.textContent = save ? "Сохранено" : "";
+  } catch (error) {
+    if (opened !== current || profileRequest !== request) return;
+    message.textContent = error.status === 409
+      ? "Профиль изменён на другом устройстве. Загрузка с сервера заменит ваш черновик."
+      : save ? "Не удалось сохранить изменения. Проверьте текст и повторите." : "Не удалось загрузить профиль.";
+    show("profile-text-reload", !save || error.status === 409);
+  } finally {
+    if (profileRequest === request) {
+      profileRequest = undefined;
+      fieldset.disabled = profileRevision === null;
+    }
+  }
+}
+byId("profile-text").ontoggle = () => {
+  if (byId("profile-text").open && !profileDirty) editProfileText(false);
+};
+profileForm.oninput = () => { profileDirty = true; };
+profileForm.onsubmit = event => {
+  event.preventDefault();
+  editProfileText(true);
+};
+byId("profile-text-reload").onclick = () => editProfileText(false);
+
 async function securityEmail(choice) {
   const current = opened;
   if (!current || current.securityEmailBusy || !byId("security-email").open) return;
@@ -303,6 +374,8 @@ function layout() {
   show("account", !!state && !trusted);
   show("backup", !!state);
   show("conversations", trusted);
+  show("profile-text", trusted);
+  if (!trusted) clearProfileText();
   show("security-email", trusted);
   if (!trusted) {
     byId("security-email").open = false;
