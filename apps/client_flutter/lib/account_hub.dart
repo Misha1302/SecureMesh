@@ -1,6 +1,7 @@
 import 'chat_folders.dart';
 import 'display_name.dart';
 import 'identity_comparison.dart';
+import 'identity_qr.dart' show scanProfileCode;
 import 'chat_preview.dart';
 import 'contact_profile.dart';
 import 'contact_blocks.dart';
@@ -1113,6 +1114,50 @@ class _AccountHubState extends State<AccountHub> {
             autocorrect: false,
             decoration: InputDecoration(
               labelText: tr('Имя собеседника', 'Contact username'),
+              suffixIcon: IconButton(
+                tooltip: tr(
+                  'Сканировать QR-код профиля',
+                  'Scan profile QR code',
+                ),
+                icon: const Icon(Icons.qr_code_scanner),
+                onPressed: blocked
+                    ? null
+                    : () async {
+                        final endpoint = account['endpoint'] as String?;
+                        if (endpoint == null) return;
+                        try {
+                          final name = await scanProfileCode(
+                            context,
+                            tr,
+                            endpoint,
+                          );
+                          if (mounted &&
+                              composing &&
+                              account['endpoint'] == endpoint &&
+                              name != null) {
+                            username.text = name;
+                          }
+                        } on FormatException {
+                          if (mounted) {
+                            setState(
+                              () => actionError = tr(
+                                'Нужен QR-код профиля с вашего сервера.',
+                                'Choose a profile QR code from your server.',
+                              ),
+                            );
+                          }
+                        } catch (_) {
+                          if (mounted) {
+                            setState(
+                              () => actionError = tr(
+                                'Не удалось прочитать QR-код.',
+                                'Could not read the QR code.',
+                              ),
+                            );
+                          }
+                        }
+                      },
+              ),
               border: const OutlineInputBorder(),
             ),
           ),

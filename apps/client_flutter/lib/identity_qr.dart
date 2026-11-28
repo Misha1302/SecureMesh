@@ -13,11 +13,42 @@ import 'package:zxing2/qrcode.dart' as qr;
 const _prefix = 'securemesh:device:v1:';
 final _fingerprint = RegExp(r'^[A-F0-9]{64}$');
 
-class DeviceQr extends CustomPainter {
-  DeviceQr(this.code);
+String _profilePrefix(String endpoint) {
+  final uri = Uri.tryParse(endpoint);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasQuery ||
+      uri.hasFragment ||
+      (uri.path.isNotEmpty && uri.path != '/') ||
+      endpoint.length > 320) {
+    throw const FormatException();
+  }
+  return 'securemesh:profile:v1:${uri.origin}/@';
+}
+
+final _username = RegExp(r'^[a-z0-9_]{3,32}$');
+
+class ProfileQr extends _QrPainter {
+  ProfileQr(String endpoint, String username)
+    : super(
+        _username.hasMatch(username)
+            ? _profilePrefix(endpoint) + username
+            : throw const FormatException(),
+      );
+}
+
+class DeviceQr extends _QrPainter {
+  DeviceQr(String fingerprint)
+    : super(_prefix + fingerprint.replaceAll(' ', ''));
+}
+
+class _QrPainter extends CustomPainter {
+  _QrPainter(this.code);
   final String code;
   late final matrix = qr.Encoder.encode(
-    _prefix + code.replaceAll(' ', ''),
+    code,
     qr.ErrorCorrectionLevel.m,
   ).matrix!;
 
@@ -42,7 +73,7 @@ class DeviceQr extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(DeviceQr oldDelegate) => oldDelegate.code != code;
+  bool shouldRepaint(_QrPainter oldDelegate) => oldDelegate.code != code;
 }
 
 typedef _Frame = ({
@@ -52,6 +83,7 @@ typedef _Frame = ({
   int step,
   Uint8List data,
   bool gray,
+  String? profilePrefix,
 });
 String? _readCode(_Frame frame) {
   if (frame.width < 1 ||
@@ -81,6 +113,12 @@ String? _readCode(_Frame frame) {
     final code = qr.QRCodeReader()
         .decode(qr.BinaryBitmap(qr.HybridBinarizer(source)))
         .text;
+    final profilePrefix = frame.profilePrefix;
+    if (profilePrefix != null) {
+      if (!code.startsWith(profilePrefix)) return null;
+      final name = code.substring(profilePrefix.length);
+      return _username.hasMatch(name) ? name : null;
+    }
     if (code.startsWith(_prefix)) {
       final value = code.substring(_prefix.length);
       if (_fingerprint.hasMatch(value)) return value;
@@ -94,11 +132,23 @@ String? _readCode(_Frame frame) {
 Future<String?> scanIdentityCode(
   BuildContext context,
   String Function(String, String) tr,
+) => _scanCode(context, tr, null);
+
+Future<String?> scanProfileCode(
+  BuildContext context,
+  String Function(String, String) tr,
+  String endpoint,
+) => _scanCode(context, tr, _profilePrefix(endpoint));
+
+Future<String?> _scanCode(
+  BuildContext context,
+  String Function(String, String) tr,
+  String? profilePrefix,
 ) async {
   if (Platform.isAndroid || Platform.isIOS) {
     return showDialog<String>(
       context: context,
-      builder: (_) => _ScanCamera(tr),
+      builder: (_) => _ScanCamera(tr, profilePrefix),
     );
   }
   final file = await openFile(
@@ -111,10 +161,15 @@ Future<String?> scanIdentityCode(
     ],
   );
   if (file == null) return null;
-  return readIdentityImage(file);
+  return _readImage(file, profilePrefix);
 }
 
-Future<String> readIdentityImage(XFile file) async {
+Future<String> readIdentityImage(XFile file) => _readImage(file, null);
+
+Future<String> readProfileImage(XFile file, String endpoint) =>
+    _readImage(file, _profilePrefix(endpoint));
+
+Future<String> _readImage(XFile file, String? profilePrefix) async {
   final bytes = BytesBuilder(copy: false);
   await for (final part in file.openRead()) {
     if (bytes.length + part.length > 8 * 1024 * 1024) {
@@ -149,6 +204,7 @@ Future<String> readIdentityImage(XFile file) async {
                   data.lengthInBytes,
                 ),
                 gray: false,
+                profilePrefix: profilePrefix,
               )) ??
               (throw const FormatException());
         } finally {
@@ -166,7 +222,8 @@ Future<String> readIdentityImage(XFile file) async {
 }
 
 class _ScanCamera extends StatefulWidget {
-  const _ScanCamera(this.tr);
+  const _ScanCamera(this.tr, this.profilePrefix);
+  final String? profilePrefix;
   final String Function(String, String) tr;
   @override
   State<_ScanCamera> createState() => _ScanCameraState();
@@ -221,6 +278,7 @@ class _ScanCameraState extends State<_ScanCamera> with WidgetsBindingObserver {
             step: gray ? (plane.bytesPerPixel ?? 1) : 4,
             data: plane.bytes,
             gray: gray,
+            profilePrefix: widget.profilePrefix,
           ));
           if (code != null &&
               mounted &&
@@ -261,7 +319,11 @@ class _ScanCameraState extends State<_ScanCamera> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.tr('Сканировать код', 'Scan device code')),
+    title: Text(
+      widget.profilePrefix == null
+          ? widget.tr('Сканировать код устройства', 'Scan device code')
+          : widget.tr('Сканировать QR-код профиля', 'Scan profile QR code'),
+    ),
     content: failed
         ? Text(
             widget.tr(

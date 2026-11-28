@@ -89,3 +89,7 @@ Set `includeRestricted=true` in the catalog request to list your own channels, a
 Migration 011 keeps a public-only compatibility view for the original server binary, while all upgraded writes and visibility checks use the full catalog. Existing public channels retain their accounts, post IDs, subscriptions and visibility. The upgraded client labels restricted channels as server-readable.
 
 For two real Flutter sessions against the isolated HTTPS integration server, run `.local/venv/bin/python tests/integration/public_channels.py --ui` from the repository root after local bootstrap and Flutter dependency installation. Test accounts, device keys and credentials belong to that fixture.
+
+### Native profile QR
+
+The profile QR encodes `securemesh:profile:v1:<https-origin>/@<username>`. The scanner in the new-chat form accepts only its configured origin and a lowercase username of 3–32 ASCII letters, digits or underscores. Scanning fills the contact field. The user still submits a chat request. Device verification uses a separate QR type and compares the device fingerprint.

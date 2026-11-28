@@ -15,6 +15,7 @@ import 'security_email_tile.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
 import 'chat_background.dart';
+import 'identity_qr.dart' show ProfileQr;
 import 'conversation_composer.dart';
 import 'conversation_timeline.dart';
 import 'attachment_transfer.dart';
@@ -2995,6 +2996,30 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
       },
       content: (section) => switch (section) {
         SettingsSection.profile => [
+          if (profile case {
+            'endpoint': final String endpoint,
+            'username': final String name,
+          })
+            ListTile(
+              leading: const Icon(Icons.qr_code),
+              title: Text(tr('QR-код профиля', 'Profile QR code')),
+              onTap: () => showDialog<void>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: Text('@$name'),
+                  content: SizedBox.square(
+                    dimension: 240,
+                    child: CustomPaint(painter: ProfileQr(endpoint, name)),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(tr('Закрыть', 'Close')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ListTile(
             leading: const Icon(Icons.notes_outlined),
             title: Text(tr('О себе и статус', 'Bio and status')),
