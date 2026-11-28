@@ -39,6 +39,7 @@ void main() {
                           'bio': read == 1 ? '旧' : '新',
                           'status': null,
                           'revision': read,
+                          if (read == 1) 'visibleToPeers': true,
                         };
                       }
                       saved.add(data);
@@ -61,9 +62,16 @@ void main() {
         find.widgetWithText(TextField, 'Bio'),
         '  Зоя 👩‍🔬  ',
       );
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
-      expect(saved.first, {'bio': 'Зоя 👩‍🔬', 'status': null, 'revision': 1});
+      expect(saved.first, {
+        'bio': 'Зоя 👩‍🔬',
+        'status': null,
+        'revision': 1,
+        'visibleToPeers': false,
+      });
       expect(find.text('  Зоя 👩‍🔬  '), findsOneWidget);
       expect(
         tester
