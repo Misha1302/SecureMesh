@@ -92,6 +92,11 @@ class StaticHandler(SimpleHTTPRequestHandler):
             self.close_connection = True
             self.connection.shutdown(socket.SHUT_RDWR)
             return
+        if self.path == "/fixture-connectivity":
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
         super().do_GET()
 
     def log_message(self, *_):
@@ -438,11 +443,14 @@ def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
         else:
             # On WebKit Playwright's synthetic offline mode may reject even a
             # service-worker cache hit. Disconnect the actual fixture sockets.
+            probe = """async () => {
+              try { return (await fetch('/fixture-connectivity', {cache: 'no-store'})).status; }
+              catch { return 0; }
+            }"""
+            assert alice.evaluate(probe) == 204
             outage.set(True)
-            assert alice.evaluate("""async () => {
-              try { await fetch('/unavailable', {cache: 'no-store'}); return false; }
-              catch { return true; }
-            }""")
+            offline_status = alice.evaluate(probe)
+            assert offline_status == 0 or 500 <= offline_status <= 599, offline_status
         queued = "Очередь сохраняется после блокировки 🔐"
         alice.locator("#compose textarea").fill(queued)
         next_draft = "Текст следующего сообщения"
