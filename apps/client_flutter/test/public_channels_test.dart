@@ -7,7 +7,7 @@ void main() {
   testWidgets(
     'Reader discovers, subscribes and reads the separate public feed',
     (tester) async {
-      bool subscribed = false;
+      bool subscribed = false, revoked = false;
       String? search;
       Future<dynamic> api(
         String route, {
@@ -35,6 +35,7 @@ void main() {
           return null;
         }
         if (uri.path.endsWith('/posts') && subscribed) {
+          if (revoked) throw ApiFailure(404, 'CHANNEL_NOT_FOUND');
           return {
             'items': [
               {
@@ -72,6 +73,14 @@ void main() {
       await tester.tap(find.text('Unsubscribe'));
       await tester.pumpAndSettle();
       expect(find.text('Team update'), findsNothing);
+      await tester.tap(find.text('Subscribe'));
+      await tester.pumpAndSettle();
+      expect(find.text('Team update'), findsOneWidget);
+      revoked = true;
+      await tester.tap(find.text('Refresh posts'));
+      await tester.pumpAndSettle();
+      expect(find.text('Team update'), findsNothing);
+      expect(find.textContaining('This channel is unavailable'), findsOneWidget);
     },
   );
 

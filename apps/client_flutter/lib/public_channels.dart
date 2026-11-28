@@ -119,11 +119,19 @@ class _PublicChannelsState extends State<PublicChannels> {
 
   Future<void> feed({bool more = false}) async {
     final url = more ? '$roomPath/posts?before=$feedCursor' : '$roomPath/posts';
-    final result = await widget.api(url) as Map;
-    if (!mounted) return;
-    final page = (result['items'] as List).cast<Map>();
-    posts = more ? [...posts, ...page] : page;
-    feedCursor = result['next'] as int?;
+    try {
+      final result = await widget.api(url) as Map;
+      if (!mounted) return;
+      final page = (result['items'] as List).cast<Map>();
+      posts = more ? [...posts, ...page] : page;
+      feedCursor = result['next'] as int?;
+    } on ApiFailure catch (e) {
+      if (e.status == 401 || e.status == 403 || e.status == 404) {
+        posts = [];
+        feedCursor = null;
+      }
+      rethrow;
+    }
   }
 
   Future<void> aggregateFeed({bool more = false}) async {
@@ -133,11 +141,19 @@ class _PublicChannelsState extends State<PublicChannels> {
         if (more && aggregateCursor != null) 'before': aggregateCursor!,
       },
     );
-    final result = await widget.api(url.toString()) as Map;
-    if (!mounted) return;
-    final page = (result['items'] as List).cast<Map>();
-    aggregatePosts = more ? [...aggregatePosts, ...page] : page;
-    aggregateCursor = result['next'] as String?;
+    try {
+      final result = await widget.api(url.toString()) as Map;
+      if (!mounted) return;
+      final page = (result['items'] as List).cast<Map>();
+      aggregatePosts = more ? [...aggregatePosts, ...page] : page;
+      aggregateCursor = result['next'] as String?;
+    } on ApiFailure catch (e) {
+      if (e.status == 401 || e.status == 403) {
+        aggregatePosts = [];
+        aggregateCursor = null;
+      }
+      rethrow;
+    }
   }
 
   Future<void> open(Map target) async {

@@ -43,7 +43,7 @@ def run():
         assert len(page['items'])==16 and all(row['canDelete'] for row in page['items'])
         old=call(path+'?before='+str(page['next']),member)
         assert old['items']==[dict(id=own,body='First',username=owner['username'],canDelete=False)] and old['next'] is None
-        from delivery_recovery_serialization import hold_row, scalar as sql, wait_for
+        from delivery_recovery_serialization import hold_row, newest_code, scalar as sql, wait_for
         with ThreadPoolExecutor(max_workers=2) as pool:
             with hold_row(db,f"SELECT 1 FROM public_channel_subscriptions WHERE channel_id='{spec['id']}' FOR UPDATE"):
                 revoke=pool.submit(call,room+'/revoke-access',owner,{'username':member['username']},expected=204)
@@ -93,6 +93,19 @@ def run():
         call(post,owner,method='DELETE',expected=204)
         call(path,owner,expected=404)
         assert sql(db,'SELECT count(*) FROM public_channel_comments').strip()=='0'
+        # Recovery wins the owner lock while the old credentials are still visible to HTTP auth.
+        owner_device=uuid.UUID(owner['device'].identity)
+        code=newest_code(owner['username']+'@securemesh.test')
+        recovery={'token':code,'password':'recovered-'+uuid.uuid4().hex,'username':owner['username']}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            with hold_row(db,f"SELECT id FROM sessions WHERE device_id='{owner_device}' FOR UPDATE"):
+                reset=pool.submit(d.request,'/v1/auth/recovery/complete',recovery,expected=204)
+                wait_for(db,"wait_event_type='Lock' AND query LIKE 'UPDATE sessions SET revoked=true%'")
+                reads=[pool.submit(call,route,owner,expected=401) for route in
+                       (open_room+'/posts',base+'/feed',open_path)]
+                wait_for(db,"wait_event_type='Lock' AND query LIKE 'SELECT id FROM users WHERE id=$1 FOR SHARE%'",3)
+            reset.result(timeout=5)
+            assert all(read.result(timeout=5)=={'code':'AUTH_REQUIRED'} for read in reads)
     print('PASS restricted comments, retries, keyset pagination, moderation, concurrent revocation and independent posts, quotas and post deletion')
 
 

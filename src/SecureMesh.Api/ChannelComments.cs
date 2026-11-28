@@ -4,14 +4,15 @@ namespace SecureMesh;
 
 public static partial class PublicChannels
 {
-    private static async Task<ChannelAccess> CommentAccess(NpgsqlConnection c, Guid id, long seq, Actor actor, bool write)
+    private static async Task<ChannelAccess> CommentAccess(NpgsqlConnection c, Guid id, long seq, Actor actor, bool write, CancellationToken ct)
     {
-        await LockAccount(c, actor);
+        if (write) await LockAccount(c, actor);
+        else await Sql.LockTrustedDeliverySession(c, actor, ct);
         var access = await Access(c, id, actor);
         if (!access.Owner && !access.Subscribed) throw new ApiError(403,"CHANNEL_SUBSCRIPTION_REQUIRED");
         var lockMode = write ? "FOR UPDATE" : "FOR SHARE";
         await using var post = Sql.Cmd(c,$"SELECT seq FROM public_channel_posts WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL {lockMode}",id,seq);
-        if (await post.ExecuteScalarAsync() is null) throw new ApiError(404,"CHANNEL_POST_NOT_FOUND");
+        if (await post.ExecuteScalarAsync(ct) is null) throw new ApiError(404,"CHANNEL_POST_NOT_FOUND");
         return access;
     }
 
@@ -21,7 +22,7 @@ public static partial class PublicChannels
         if (before <= 0) throw new ApiError(400,"INVALID_CHANNEL_CURSOR");
         await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
         await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
-        var access = await CommentAccess(c,id,seq,actor,false);
+        var access = await CommentAccess(c,id,seq,actor,false,ctx.RequestAborted);
         await using var cmd = Sql.Cmd(c,"""
             SELECT cm.id,cm.body,u.username,cm.user_id=$3 FROM public_channel_comments cm
             JOIN users u ON u.id=cm.user_id WHERE cm.post_seq=$1 AND cm.id<$2 AND cm.body IS NOT NULL
@@ -47,7 +48,7 @@ public static partial class PublicChannels
         if (input.RequestId == Guid.Empty) throw new ApiError(400,"INVALID_REQUEST_ID");
         await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
         await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
-        await CommentAccess(c,id,seq,actor,true);
+        await CommentAccess(c,id,seq,actor,true,ctx.RequestAborted);
         await using (var old=Sql.Cmd(c,"SELECT id,body FROM public_channel_comments WHERE user_id=$1 AND post_seq=$2 AND request_id=$3",actor.UserId,seq,input.RequestId))
         await using (var r=await old.ExecuteReaderAsync())
             if (await r.ReadAsync())
@@ -77,7 +78,7 @@ public static partial class PublicChannels
         var actor=await Sql.Authenticate(ctx,db);
         await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
         await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
-        var access=await CommentAccess(c,id,seq,actor,true);
+        var access=await CommentAccess(c,id,seq,actor,true,ctx.RequestAborted);
         await using var cmd=Sql.Cmd(c,"""
             UPDATE public_channel_comments SET body=NULL,deleted_at=coalesce(deleted_at,now())
             WHERE post_seq=$1 AND id=$2 AND (user_id=$3 OR $4)

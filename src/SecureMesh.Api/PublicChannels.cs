@@ -333,7 +333,9 @@ public static partial class PublicChannels
                 throw new ApiError(400, "INVALID_CHANNEL_CURSOR");
             timestamp = new DateTime(ticks, DateTimeKind.Utc);
         }
-        await using var c = await db.OpenConnectionAsync();
+        await using var c = await db.OpenConnectionAsync(ctx.RequestAborted);
+        await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
+        await Sql.LockTrustedDeliverySession(c, actor, ctx.RequestAborted);
         await using var cmd = Sql.Cmd(c, $$"""
             WITH page AS MATERIALIZED (
                 SELECT p.seq,p.body,p.published_at,p.revision,ch.id,ch.slug,ch.title,p.edited_at
@@ -349,9 +351,9 @@ public static partial class PublicChannels
             ) reactions
             ORDER BY p.published_at DESC,p.seq DESC
             """, actor.UserId, timestamp, seq);
-        await using var r = await cmd.ExecuteReaderAsync();
+        await using var r = await cmd.ExecuteReaderAsync(ctx.RequestAborted);
         var items = new List<object>(); string? last = null; bool more = false;
-        while (await r.ReadAsync())
+        while (await r.ReadAsync(ctx.RequestAborted))
         {
             // Eight maximum-length Unicode posts fit the native transport’s 256 KiB limit.
             if (items.Count == 8) { more = true; break; }
@@ -368,8 +370,9 @@ public static partial class PublicChannels
     {
         var a=await Sql.Authenticate(ctx,db);
         if(before<=0)throw new ApiError(400,"INVALID_CHANNEL_CURSOR");
-        await using var c=await db.OpenConnectionAsync();
-        await using var tx=await c.BeginTransactionAsync();
+        await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
+        await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
+        await Sql.LockTrustedDeliverySession(c, a, ctx.RequestAborted);
         var access=await Access(c,id,a);
         if(!access.Owner && !access.Subscribed) throw new ApiError(403,"CHANNEL_SUBSCRIPTION_REQUIRED");
         await using var cmd=Sql.Cmd(c,$$"""
@@ -382,9 +385,9 @@ public static partial class PublicChannels
                 SELECT {{ReactionProjection}} FROM public_channel_reactions r WHERE r.post_seq=p.seq
             ) reactions ORDER BY p.seq DESC
             """,a.UserId,id,before??long.MaxValue);
-        await using var r=await cmd.ExecuteReaderAsync();
+        await using var r=await cmd.ExecuteReaderAsync(ctx.RequestAborted);
         var items=new List<object>(); long? last=null; bool more=false;
-        while(await r.ReadAsync())
+        while(await r.ReadAsync(ctx.RequestAborted))
         {
             if(items.Count==8){more=true;break;}
             last=r.GetInt64(0);items.Add(new{seq=last,body=r.GetString(1),publishedAt=r.GetDateTime(2),revision=r.GetInt32(3),editedAt=ReadEditTime(r,4),reactions=ReadReactions(r,5)});
