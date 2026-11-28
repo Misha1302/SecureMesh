@@ -21,3 +21,22 @@ All three seeds passed with 10 messages per direction on implementation `4b2a73d
 | 7 | 60.81 | 14.61 | 15.51 | 15.51 | [JSON](evidence/native-netem-edge-outage-7-10.json) |
 | 19 | 60.41 | 6.63 | 10.11 | 10.11 | [JSON](evidence/native-netem-edge-outage-19-10.json) |
 | 41 | 60.48 | 10.08 | 13.88 | 13.88 | [JSON](evidence/native-netem-edge-outage-41-10.json) |
+
+## Offline sender backlog qualification
+
+The native backlog trial measures queue recovery after a sender process dies
+with 1,000 unsent messages. It uses a functioning local TLS link to a real API
+and isolated PostgreSQL database. The producer queues without a transport, then
+is killed after the 1,000th SQLCipher write returns. Fresh native Dart transport
+instances reopen the two SQLCipher stores and use the ordinary delivery pump.
+
+Before running, the gates are zero missing, unexpected or duplicate IDs in the
+server and recipient stores, matching decrypted Unicode content and application
+epoch, an empty sender outbox, and local and server-side processed cursors at
+the end of the backlog. The API must have zero conversation messages before
+replay. Replay must cross at least two recipient sync pages and finish within
+180 seconds. Recovery p50, p95 and p99 are measured from native replay start to
+the first durable recipient ingest of each ID. The 180-second limit is a
+loopback qualification budget for the complete batch, including retries.
+The trial uses one established MLS epoch. Traffic shaping, a live epoch
+transition during recovery and device or operator performance are separate.
