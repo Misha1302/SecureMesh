@@ -55,7 +55,13 @@ def upgrade(previous_api: Path):
             executable.symlink_to(previous_api)
             with d.Server(database=database, legacy_bootstrap=False):
                 assert scalar("SELECT count(*) FROM information_schema.columns WHERE "
-                              "table_name='users' AND column_name='bio'") == '0'
+                              "table_name='users' AND column_name='profile_text_visible'") == '0'
+                existing_profile = None
+                if scalar("SELECT count(*) FROM information_schema.columns WHERE "
+                          "table_name='users' AND column_name='bio'") == '1':
+                    existing_profile = d.account(scratch)['session']['accessToken']
+                    d.request('/v1/users/me/profile-text', {'bio':'existing bio','status':None,'revision':0},
+                              token=existing_profile, method='PUT')
                 owner, peer, outsider = [d.account(scratch) for _ in range(3)]
                 owner['device'].pin(peer['device'])
                 peer['device'].pin(owner['device'])
@@ -65,12 +71,15 @@ def upgrade(previous_api: Path):
             executable.unlink()
             executable.symlink_to(current)
             with d.Server(database=database, legacy_bootstrap=False) as server:
+                if existing_profile:
+                    assert d.request('/v1/users/me/profile-text', token=existing_profile) == {
+                        'bio':'existing bio','status':None,'revision':1,'visibleToPeers':True}
                 owner_token, peer_token, outsider_token = [
                     account['session']['accessToken'] for account in (owner, peer, outsider)]
                 verify(d.request, owner_token, peer_token, outsider_token, pending['accessToken'],
                        group, owner['device'].identity)
                 server.restart()
-                assert d.request('/v1/users/me/profile-text', token=owner_token)['revision'] == 2
+                assert d.request('/v1/users/me/profile-text', token=owner_token)['revision'] == 5
                 assert scalar('SELECT count(*) FROM "__EFMigrationsHistory" WHERE '
                               '"MigrationId"=\'202611270015_ProfileText\'') == '1'
                 print('PASS old accounts, sessions and established chat survived the additive '

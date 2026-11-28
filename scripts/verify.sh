@@ -43,6 +43,7 @@ check account-recovery .local/venv/bin/python tests/integration/account_recovery
 check contact-blocks .local/venv/bin/python tests/integration/contact_blocks.py
 check mls-directory .local/venv/bin/python tests/integration/directory.py
 check public-channels .local/venv/bin/python tests/integration/public_channels.py
+check channel-comments .local/venv/bin/python tests/integration/channel_comments.py
 check restore-v2 .local/venv/bin/python tests/integration/restore_v2.py
 check secrets python3 scripts/scan_secrets.py
 check pub-osv python3 tools/audit_pub_osv.py
