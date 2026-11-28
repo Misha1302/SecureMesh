@@ -37,9 +37,15 @@ if (browserOrigin is not null)
         origin.Scheme != Uri.UriSchemeHttps || origin.HostNameType == UriHostNameType.Unknown ||
         origin.UserInfo.Length != 0 || browserOrigin != origin.GetLeftPart(UriPartial.Authority))
         throw new InvalidOperationException("BrowserClientOrigin must be one exact HTTPS origin.");
-    builder.Services.AddCors(options => options.AddPolicy("BrowserClient", policy => policy
-        .WithOrigins(browserOrigin).WithMethods("GET", "POST", "PUT")
-        .WithHeaders("Content-Type", "Authorization")));
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("BrowserClient", policy => policy
+            .WithOrigins(browserOrigin).WithMethods("GET", "POST", "PUT")
+            .WithHeaders("Content-Type", "Authorization"));
+        options.AddPolicy("BrowserContactUnblock", policy => policy
+            .WithOrigins(browserOrigin).WithMethods("DELETE")
+            .WithHeaders("Authorization"));
+    });
 }
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())

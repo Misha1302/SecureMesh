@@ -28,8 +28,9 @@ internal static class ContactBlocks
         });
         routes.MapPut("/{username}", (string username, HttpContext ctx, NpgsqlDataSource db) =>
             SetAsync(username, ctx, db, block: true));
-        routes.MapDelete("/{username}", (string username, HttpContext ctx, NpgsqlDataSource db) =>
+        var unblock = routes.MapDelete("/{username}", (string username, HttpContext ctx, NpgsqlDataSource db) =>
             SetAsync(username, ctx, db, block: false));
+        if (app.Configuration["BrowserClientOrigin"] is not null) unblock.RequireCors("BrowserContactUnblock");
     }
 
     private static async Task<IResult> SetAsync(string username, HttpContext ctx, NpgsqlDataSource db, bool block)
