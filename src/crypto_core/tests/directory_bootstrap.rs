@@ -55,6 +55,26 @@ fn directory_checks_package_and_persists_the_accepted_context() {
     let mut join = prepared["binding"].clone();
     join["op"] = json!("directory_join");
     join["signature"] = prepared["signature"].clone();
+    assert!(recipient.execute(join.to_string()).is_err());
+    let approval = json!({"op":"directory_consent","confirmed":true,"invitation":join["invitation"],"sender":a["identity"],"senderKey":a["public_key"],"username":"alice"});
+    let mut wrong = approval.clone();
+    wrong["senderKey"] = b["public_key"].clone();
+    assert!(recipient.execute(wrong.to_string()).is_err());
+    let mut denied = approval.clone();
+    denied["confirmed"] = json!(false);
+    assert!(recipient.execute(denied.to_string()).is_err());
+    assert_eq!(call(&recipient, &approval)["accepted"], true);
+    call(
+        &recipient,
+        &json!({"op":"directory_withdraw_consent","invitation":join["invitation"]}),
+    );
+    assert!(recipient.execute(join.to_string()).is_err());
+    call(&recipient, &approval);
+    let publish = json!({"op":"directory_consent_package","invitation":join["invitation"]});
+    let package = call(&recipient, &publish);
+    drop(recipient);
+    let recipient = open("recipient");
+    assert_eq!(call(&recipient, &publish), package);
     assert_eq!(call(&recipient, &join)["epoch"], 1);
     drop(recipient);
     let recipient = open("recipient");
@@ -70,10 +90,18 @@ fn directory_checks_package_and_persists_the_accepted_context() {
         &sender,
         &json!({"op":"directory_prepare","invitation":Uuid::new_v4().to_string(),"lease":Uuid::new_v4().to_string(),"recipient":b["identity"],"keypackage":other_kp,"reference":other_reference}),
     );
+    let mut second = older["binding"].clone();
+    second["invitation"] = join["invitation"].clone();
+    second["signature"] = call(&sender, &second)["signature"].clone();
+    second["op"] = json!("directory_join");
+    assert!(recipient.execute(second.to_string()).is_err());
     call(
         &recipient,
         &json!({"op":"join","group":older["id"],"welcome":older["welcome"]}),
     );
+    let mut legacy = approval.clone();
+    legacy["invitation"] = older["binding"]["invitation"].clone();
+    call(&recipient, &legacy);
     let mut unrecorded = older["binding"].clone();
     unrecorded["op"] = json!("directory_join");
     unrecorded["signature"] = older["signature"].clone();

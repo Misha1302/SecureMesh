@@ -117,7 +117,8 @@ class NativeGui:
             requests=d.request('/v1/chat-requests',token=self.peer['session']['accessToken'])
             request=next(r for r in requests if r['senderDevice']==self.device.identity)
             self.peer['device'].pin(self.device)
-            kp=self.peer['device'].call('keypackage')['keypackage']
+            self.peer['device'].call('directory_consent',invitation=request['id'],sender=self.device.identity,senderKey=self.device.public,username=request['username'],confirmed=True)
+            kp=self.peer['device'].call('directory_consent_package',invitation=request['id'])['keypackage']
             d.request('/v1/crypto/keypackages',dict(payload=kp),token=self.peer['session']['accessToken'],expected=201)
             d.request(f"/v1/chat-requests/{request['id']}/accept",{},token=self.peer['session']['accessToken'],expected=204)
             print('Peer independently pinned GUI device, published real KeyPackage and accepted request.',flush=True)

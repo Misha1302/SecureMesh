@@ -81,6 +81,47 @@ fn check_initial_group(
     Ok(())
 }
 
+fn consent(db: &Connection, req: &Value, identity: &str) -> Result<Value> {
+    let invitation = s(req, "invitation")?;
+    ensure!(
+        uuid::Uuid::parse_str(invitation)?.to_string() == invitation,
+        "invalid invitation"
+    );
+    match s(req, "op")? {
+        "directory_consent" => {
+            let sender = s(req, "sender")?;
+            let key = bytes(req, "senderKey")?;
+            let name = s(req, "username")?;
+            ensure!(
+                req["confirmed"] == true
+                    && uuid::Uuid::parse_str(sender)?.to_string() == sender
+                    && sender != identity
+                    && (name.is_empty()
+                        || ((3..=32).contains(&name.len())
+                            && name.bytes().all(|b| b.is_ascii_lowercase()
+                                || b.is_ascii_digit()
+                                || b == b'_')))
+                    && pinned_key(db, sender)?.as_deref() == Some(key.as_slice()),
+                "explicit consent for pinned sender required"
+            );
+            db.execute("INSERT INTO directory_consents(invitation,sender,sender_key,recipient,username) VALUES(?,?,?,?,?) ON CONFLICT(invitation) DO NOTHING",
+                params![invitation,sender,key,identity,name])?;
+            let matches: bool = db.query_row("SELECT sender=? AND sender_key=? AND recipient=? FROM directory_consents WHERE invitation=?",
+                params![sender,key,identity,invitation], |r|r.get(0))?;
+            ensure!(matches, "invitation sender changed");
+        }
+        "directory_withdraw_consent" => {
+            db.execute("DELETE FROM directory_consents WHERE invitation=? AND recipient=? AND joined_group IS NULL",params![invitation,identity])?;
+        }
+        "directory_consent_status" => {}
+        _ => bail!("unsupported consent operation"),
+    }
+    Ok(db.query_row("SELECT sender,sender_key,username,joined_group FROM directory_consents WHERE invitation=? AND recipient=?",
+        params![invitation,identity], |r|Ok(json!({"accepted":true, "sender":r.get::<_,String>(0)?,
+            "senderKey": B64.encode(r.get::<_,Vec<u8>>(1)?), "username":r.get::<_,String>(2)?, "group":r.get::<_,Option<String>>(3)?})))
+        .optional()?.unwrap_or_else(||json!({"accepted":false})))
+}
+
 pub(super) fn execute(
     db: &Connection,
     p: &Provider,
@@ -88,6 +129,27 @@ pub(super) fn execute(
     identity: &str,
     signer: &SignatureKeyPair,
 ) -> Result<Value> {
+    if matches!(
+        s(req, "op")?,
+        "directory_consent" | "directory_consent_status" | "directory_withdraw_consent"
+    ) {
+        return consent(db, req, identity);
+    }
+    if s(req, "op")? == "directory_consent_package" {
+        let invitation = s(req, "invitation")?;
+        let saved: Option<String> = db.query_row(
+            "SELECT keypackage FROM directory_consents WHERE invitation=? AND recipient=? AND joined_group IS NULL",
+            params![invitation,identity], |r|r.get(0))?;
+        if let Some(package) = saved {
+            return Ok(json!({"keypackage":package}));
+        }
+        let package = super::execute(db, p, &json!({"op":"keypackage"}))?;
+        db.execute(
+            "UPDATE directory_consents SET keypackage=? WHERE invitation=?",
+            params![s(&package, "keypackage")?, invitation],
+        )?;
+        return Ok(package);
+    }
     if s(req, "op")? == "directory_pending" {
         let key = format!("bootstrap:{}", s(req, "invitation")?);
         let saved = db
@@ -176,6 +238,13 @@ pub(super) fn execute(
                 &bytes(req, "signature")?,
             )?;
             let gid = s(req, "group")?;
+            let invitation = s(req, "invitation")?;
+            let authorized = db.execute("UPDATE directory_consents SET joined_group=?1 WHERE invitation=?2 AND sender=?3 AND sender_key=?4 AND recipient=?5 AND (joined_group IS NULL OR joined_group=?1)",
+                params![gid,invitation,sender,key,identity])?;
+            ensure!(
+                authorized == 1,
+                "matching local invitation consent required"
+            );
             let slot = format!("directory-join:{gid}");
             let binding = B64.encode(Sha256::digest(&data));
             if let Some(saved) = db

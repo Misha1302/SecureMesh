@@ -25,9 +25,10 @@ def establish(a,b,check_crash=False):
     da,db=a['device'],b['device'];at=a['session']['accessToken'];bt=b['session']['accessToken']
     invitation=str(uuid.uuid4());lease=str(uuid.uuid4())
     d.request('/v1/chat-requests',dict(id=invitation,username=b['username']),token=at,expected=201)
+    db.call('directory_consent',invitation=invitation,sender=da.identity,senderKey=da.public,username=a['username'],confirmed=True)
     d.request(f'/v1/chat-requests/{invitation}/accept',{},token=bt,expected=204)
     assert not next(q for q in d.request('/v1/chat-requests',token=at) if q['id']==invitation)['established']
-    published=d.request('/v1/crypto/keypackages',dict(payload=db.call('keypackage')['keypackage']),token=bt,expected=201)
+    published=d.request('/v1/crypto/keypackages',dict(payload=db.call('directory_consent_package',invitation=invitation)['keypackage']),token=bt,expected=201)
     package=d.request('/v1/crypto/keypackages/lease',dict(invitationId=invitation,requestId=lease),token=at)
     assert package['reference']==published['reference']
     # Independent pins are a prerequisite, never inferred from the directory response.
@@ -82,6 +83,7 @@ def main():
         group=str(uuid.uuid4());da.call('create',group=group)
         da.call('add',reject=True,group=group,keypackage=kp)
         da.pin(db);db.pin(da)
+        db.call('directory_consent',invitation=invitation,sender=da.identity,senderKey=da.public,username=a['username'],confirmed=True)
         joined=da.call('add',group=group,keypackage=package['keypackage'])
         binding=dict(group=group,invitation=invitation,lease=lid,sender=da.identity,recipient=db.identity,reference=package['reference'],welcome=joined['welcome'])
         signature=da.call('directory_sign',**binding)['signature']

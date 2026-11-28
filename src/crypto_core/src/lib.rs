@@ -1001,6 +1001,10 @@ pub(crate) fn open_store(path: &str, pass: &str) -> Result<Connection> {
         group_id TEXT PRIMARY KEY,preview TEXT NOT NULL,own INTEGER NOT NULL,local_ms INTEGER NOT NULL,
         unread INTEGER NOT NULL,last_incoming TEXT)")?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS directory_consents(
+        invitation TEXT PRIMARY KEY,sender TEXT NOT NULL,sender_key BLOB NOT NULL,
+        recipient TEXT NOT NULL,username TEXT NOT NULL,joined_group TEXT UNIQUE,keypackage TEXT
+      );
       CREATE TABLE IF NOT EXISTS pins(identity TEXT PRIMARY KEY,public_key BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS outgoing(group_id TEXT,id TEXT,envelope TEXT NOT NULL,status TEXT NOT NULL,seq INTEGER,PRIMARY KEY(group_id,id));
       CREATE INDEX IF NOT EXISTS outbox_queued ON outgoing(status) WHERE status='queued';

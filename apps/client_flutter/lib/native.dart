@@ -231,7 +231,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     if (current == null) throw CryptoFailure();
     try {
       final result = jsonDecode(
-        await current.execute(request: jsonEncode({'op': op, ...args})),
+        await current.execute(request: jsonEncode({...args, 'op': op})),
       ) as Map<String, dynamic>;
       if (epoch != generation) throw CryptoFailure();
       return result;
@@ -466,7 +466,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         (operation, args) async {
           return jsonDecode(
             await unlocked.execute(
-              request: jsonEncode({'op': operation, ...args}),
+              request: jsonEncode({...args, 'op': operation}),
             ),
           ) as Map<String, dynamic>;
         },
