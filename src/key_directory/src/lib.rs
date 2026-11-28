@@ -90,3 +90,4 @@ pub fn encode_consistency(proof: &AppendOnlyProof) -> Result<Vec<u8>> {
 }
 
 pub mod store;
+pub mod writer;

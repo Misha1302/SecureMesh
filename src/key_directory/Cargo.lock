@@ -74,6 +74,7 @@ dependencies = [
  "hex",
  "log",
  "protobuf",
+ "serde",
  "tokio",
 ]
 
@@ -91,6 +92,8 @@ dependencies = [
  "protobuf",
  "protobuf-codegen",
  "protobuf-parse",
+ "serde",
+ "serde_bytes",
  "zeroize",
 ]
 
@@ -701,6 +704,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
 dependencies = [
  "pkcs8 0.10.2",
+ "serde",
  "signature 2.2.0",
 ]
 
@@ -2566,10 +2570,13 @@ version = "0.1.0"
 dependencies = [
  "akd",
  "anyhow",
+ "async-trait",
  "hex",
  "protobuf",
  "rusqlite",
  "securemesh-crypto",
+ "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "zeroize",
