@@ -20,6 +20,8 @@ builder.Services.AddSingleton(NpgsqlDataSource.Create(connection));
 var stateDirectory=builder.Configuration["StateDirectory"] ?? Path.Combine(Directory.GetCurrentDirectory(),".local");
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(stateDirectory,"cursor-keys")));
 builder.Services.AddSingleton(new VerificationEmail(builder.Configuration));
+builder.Services.AddSingleton<VerificationEmailQueue>();
+builder.Services.AddHostedService(services => services.GetRequiredService<VerificationEmailQueue>());
 builder.Services.AddSingleton<Delivery>();
 builder.Services.AddSingleton<PublicKeyPackageValidator>();
 builder.Services.AddRateLimiter(o =>

@@ -10,8 +10,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
-import urllib.request
 import uuid
 from pathlib import Path
 
@@ -91,10 +89,7 @@ class NativeGui:
         if 'fill' in command:
             field=command['fill']
             if field=='verification':
-                url='http://127.0.0.1:58028/api/v1/search?query='+urllib.parse.quote('to:'+self.values['email'])
-                with urllib.request.urlopen(url) as r:messages=json.load(r)['messages']
-                assert len(messages)==1
-                with urllib.request.urlopen('http://127.0.0.1:58028/api/v1/message/'+messages[0]['ID']) as r:value=json.load(r)['Text'].strip()
+                value=d.verification_token(self.values['email'])
             elif field=='path':value=str(self.account()[0].path)
             else:value=self.values[field]
             self.type(value)

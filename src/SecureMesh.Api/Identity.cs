@@ -20,7 +20,7 @@ public static class Identity
     {
         app.MapDeviceNames();
         foreach (var version in new[] {1, 2})
-        app.MapPost($"/v{version}/auth/register", async (Registration input, NpgsqlDataSource db, VerificationEmail email, CancellationToken cancellationToken) =>
+        app.MapPost($"/v{version}/auth/register", async (Registration input, NpgsqlDataSource db, VerificationEmailQueue email, CancellationToken cancellationToken) =>
         {
             var secret = Passwords.Input(version, input.Password, input.Credential) ?? throw new ApiError(400, "INVALID_REGISTRATION");
             var display = version == 2 ? DisplayNames.Normalize(input.DisplayName) : "";
@@ -29,18 +29,21 @@ public static class Identity
                 throw new ApiError(400, "INVALID_REGISTRATION");
             var phc = Passwords.Marker(version) + await Passwords.Hash(secret);
             var token = Sql.Token(); var user = Guid.NewGuid();
-            await using var c = await db.OpenConnectionAsync();
-            await using var tx = await c.BeginTransactionAsync();
-            try
-            {
-                await using var insert = Sql.Cmd(c, "INSERT INTO users(id,username,email,password_hash,display_name) VALUES($1,$2,$3,$4,NULLIF($5,''))", user, username, input.Email.ToLowerInvariant(), phc, display);
-                await insert.ExecuteNonQueryAsync();
-                await using var verify = Sql.Cmd(c, "INSERT INTO email_tokens VALUES($1,$2,now()+interval '30 minutes')", Sql.Hash(token), user);
-                await verify.ExecuteNonQueryAsync();
-            }
-            catch (PostgresException e) when (e.SqlState == "23505") { return Results.Accepted(); }
-            await email.SendAsync(input.Email, token, cancellationToken);
-            await tx.CommitAsync();
+            await using var c = await db.OpenConnectionAsync(cancellationToken);
+            await using var tx = await c.BeginTransactionAsync(cancellationToken);
+            await using var insert = Sql.Cmd(c, """
+                INSERT INTO users(id,username,email,password_hash,display_name)
+                VALUES($1,$2,$3,$4,NULLIF($5,'')) ON CONFLICT DO NOTHING
+                """, user, username, input.Email.ToLowerInvariant(), phc, display);
+            if (await insert.ExecuteNonQueryAsync(cancellationToken) == 0)
+                return Results.Accepted();
+
+            var tokenHash = Sql.Hash(token);
+            await using var verify = Sql.Cmd(c,
+                "INSERT INTO email_tokens VALUES($1,$2,now()+interval '30 minutes')", tokenHash, user);
+            await verify.ExecuteNonQueryAsync(cancellationToken);
+            await email.EnqueueAsync(c, tokenHash, input.Email, token, cancellationToken);
+            await tx.CommitAsync(cancellationToken);
             return Results.Accepted();
         });
         app.MapPost("/v1/auth/verify-email", async (Verification input, NpgsqlDataSource db) =>

@@ -18,7 +18,6 @@ import tempfile
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 import uuid
 
@@ -143,12 +142,7 @@ def registration():
     email = username + '@securemesh.test'
     password = secrets.token_urlsafe(24)
     d.request('/v1/auth/register', dict(username=username, email=email, password=password), expected=202)
-    search = 'http://127.0.0.1:58028/api/v1/search?query=' + urllib.parse.quote('to:' + email)
-    with urllib.request.urlopen(search, timeout=10) as response:
-        messages = json.load(response)['messages']
-    assert len(messages) == 1
-    with urllib.request.urlopen('http://127.0.0.1:58028/api/v1/message/' + messages[0]['ID'], timeout=10) as response:
-        token = json.load(response)['Text'].strip()
+    token = d.verification_token(email)
     d.request('/v1/auth/verify-email', dict(token=token), expected=204)
     return dict(username=username, password=password)
 

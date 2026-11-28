@@ -48,15 +48,26 @@ def login(username,password,device,expected=200,client_os=None):
     proof=device.call('sign',payload=challenge['payload'])['signature']
     return request('/v1/auth/login',dict(username=username,password=password,deviceId=device.identity,publicKey=device.public,challengeId=challenge['challengeId'],signature=proof,**({'clientOs':client_os} if client_os is not None else {})),expected=expected)
 
+def verification_token(email):
+    mail = 'http://127.0.0.1:58028/api/v1'
+    query = urllib.parse.urlencode({'query': 'to:' + email})
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with urllib.request.urlopen(f'{mail}/search?{query}', timeout=3) as response:
+            messages = json.load(response)['messages']
+        if messages:
+            message, = messages
+            with urllib.request.urlopen(f"{mail}/message/{message['ID']}", timeout=3) as response:
+                return json.load(response)['Text'].strip()
+        time.sleep(.1)
+    raise AssertionError('Verification email did not arrive')
+
+
 def account(root, domain="securemesh.test"):
     username='u_'+uuid.uuid4().hex[:20]; email=username+'@'+domain; password=secrets.token_urlsafe(24)
     device=Device(root)
     request('/v1/auth/register',dict(username=username,email=email,password=password),expected=202)
-    search='http://127.0.0.1:58028/api/v1/search?query='+urllib.parse.quote('to:'+email)
-    with urllib.request.urlopen(search) as r: messages=json.load(r)['messages']
-    assert len(messages)==1
-    with urllib.request.urlopen('http://127.0.0.1:58028/api/v1/message/'+messages[0]['ID']) as r: email_body=json.load(r)
-    verification=email_body['Text'].strip()
+    verification=verification_token(email)
     login(username,password,device,expected=401)
     request('/v1/auth/verify-email',dict(token=verification),expected=204)
     request('/v1/auth/verify-email',dict(token=verification),expected=400)

@@ -7,11 +7,18 @@ internal sealed class VerificationEmail
 {
     private readonly string sender = "no-reply@securemesh.test";
     private readonly NetworkCredential? credentials;
+    private readonly int mailpitPort;
 
     public VerificationEmail(IConfiguration configuration)
     {
         var provider = configuration["VerificationEmail:Provider"];
-        if (provider is null or "Mailpit") return;
+        if (provider is null or "Mailpit")
+        {
+            mailpitPort = configuration.GetValue("VerificationEmail:MailpitPort", 51028);
+            if (mailpitPort is < 1 or > 65535)
+                throw new InvalidOperationException("VerificationEmail:MailpitPort must be a valid port.");
+            return;
+        }
         if (provider != "Resend")
             throw new InvalidOperationException("Unknown verification email provider.");
 
@@ -31,7 +38,7 @@ internal sealed class VerificationEmail
     public async Task SendAsync(string recipient, string token, CancellationToken cancellationToken)
     {
         using var smtp = credentials is null
-            ? new SmtpClient("127.0.0.1", 51028)
+            ? new SmtpClient("127.0.0.1", mailpitPort)
             : new SmtpClient("smtp.resend.com", 587) { EnableSsl = true, Credentials = credentials };
         using var message = new MailMessage(sender, recipient, "SecureMesh verification", token);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
