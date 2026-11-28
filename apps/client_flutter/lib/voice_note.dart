@@ -62,6 +62,7 @@ class VoicePlayer extends StatefulWidget {
     this.onPosition,
     this.makePlayer = AudioPlayer.new,
     this.transcription,
+    this.transcribeOnOpen = false,
   });
   final Uint8List bytes;
   final VoiceLabel tr;
@@ -69,6 +70,7 @@ class VoicePlayer extends StatefulWidget {
   final ValueChanged<Duration>? onPosition;
   final AudioPlayer Function() makePlayer;
   final LocalVoiceTranscription? transcription;
+  final bool transcribeOnOpen;
   @override
   State<VoicePlayer> createState() => _VoicePlayerState();
 }
@@ -89,6 +91,7 @@ class _VoicePlayerState extends State<VoicePlayer> {
   Future<void>? action;
   bool transcriptionAvailable = false, transcribing = false;
   String? transcript;
+  bool showTranscript = false, transcriptionFailed = false;
 
   @override
   void initState() {
@@ -98,9 +101,32 @@ class _VoicePlayerState extends State<VoicePlayer> {
     position = clamp(widget.resumeAt);
     unawaited(
       transcription.available.then((value) {
-        if (mounted) setState(() => transcriptionAvailable = value);
+        if (!mounted) return;
+        setState(() => transcriptionAvailable = value);
+        if (value && widget.transcribeOnOpen) unawaited(recognize());
       }),
     );
+  }
+
+  Future<void> recognize() async {
+    if (transcribing || !transcriptionAvailable) return;
+    setState(() {
+      transcribing = true;
+      transcriptionFailed = false;
+    });
+    try {
+      final text = await transcription.transcribe(widget.bytes);
+      if (mounted) {
+        setState(() {
+          transcript = text;
+          showTranscript = true;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => transcriptionFailed = true);
+    } finally {
+      if (mounted) setState(() => transcribing = false);
+    }
   }
 
   Duration clamp(Duration value) =>
@@ -259,30 +285,20 @@ class _VoicePlayerState extends State<VoicePlayer> {
           ],
         ),
         if (transcriptionAvailable) ...[
-          if (transcript != null) SelectableText(transcript!),
+          if (transcript != null && showTranscript) SelectableText(transcript!),
+          if (transcriptionFailed)
+            Text(
+              widget.tr(
+                'Не удалось распознать локально.',
+                'Local transcription failed.',
+              ),
+            ),
           TextButton.icon(
             onPressed: transcribing
                 ? null
-                : () async {
-                    setState(() => transcribing = true);
-                    try {
-                      final value = await transcription.transcribe(
-                        widget.bytes,
-                      );
-                      if (mounted) setState(() => transcript = value);
-                    } catch (_) {
-                      if (mounted) {
-                        setState(
-                          () => transcript = widget.tr(
-                            'Не удалось распознать локально.',
-                            'Local transcription failed.',
-                          ),
-                        );
-                      }
-                    } finally {
-                      if (mounted) setState(() => transcribing = false);
-                    }
-                  },
+                : transcript == null
+                ? recognize
+                : () => setState(() => showTranscript = !showTranscript),
             icon: transcribing
                 ? const SizedBox(
                     width: 16,
@@ -296,6 +312,12 @@ class _VoicePlayerState extends State<VoicePlayer> {
                       'Распознавание на устройстве…',
                       'Transcribing on device…',
                     )
+                  : transcript != null
+                  ? (showTranscript
+                        ? widget.tr('Скрыть текст', 'Hide transcript')
+                        : widget.tr('Показать текст', 'Show transcript'))
+                  : transcriptionFailed
+                  ? widget.tr('Повторить распознавание', 'Retry transcription')
                   : widget.tr('Распознать локально', 'Transcribe locally'),
             ),
           ),

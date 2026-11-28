@@ -175,13 +175,44 @@ void main() {
       ),
     );
     await tester.pump();
+    expect(local.input, isNull);
     expect(find.text('Transcribe locally'), findsOneWidget);
     await tester.tap(find.text('Transcribe locally'));
     await tester.pumpAndSettle();
     expect(find.text('recognized locally'), findsOneWidget);
     expect(local.input, clip);
+    await tester.tap(find.text('Hide transcript'));
+    await tester.pumpAndSettle();
+    expect(find.text('recognized locally'), findsNothing);
+    await tester.tap(find.text('Show transcript'));
+    await tester.pumpAndSettle();
+    expect(find.text('recognized locally'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets(
+    'opened voice transcribes once with explicit profile preference',
+    (tester) async {
+      final samples = VoiceSamples()..add(Uint8List(voiceRate * 2));
+      final clip = samples.finish();
+      final local = _LocalTranscription(true, 'transient transcript');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VoicePlayer(
+              clip,
+              (_, en) => en,
+              transcription: local,
+              transcribeOnOpen: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(local.input, clip);
+      expect(find.text('transient transcript'), findsOneWidget);
+    },
+  );
 
   test(
     'voice samples saturate at 30 seconds and enforce the WAV structure',

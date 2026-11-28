@@ -826,6 +826,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     NotificationPreferences Function(NotificationPreferences)?
     updateNotificationPolicy,
     bool? backgroundLockPreference,
+    bool? autoTranscribe,
     ({String? group, bool dark, String? color})? wallpaper,
   }) {
     final epoch = generation;
@@ -846,6 +847,8 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               ])
                 key: profile![key],
             };
+      updated['transcribeOnOpen'] =
+          autoTranscribe ?? (profile!['transcribeOnOpen'] == true);
       if (wallpaper != null) {
         updated['chatBackgrounds'] = updateChatBackground(
           profile,
@@ -2147,6 +2150,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               bytes,
               tr,
               key: ValueKey((group, voiceBlob)),
+              transcribeOnOpen: profile?['transcribeOnOpen'] == true,
               resumeAt: group == null || voiceBlob == null
                   ? Duration.zero
                   : voicePositions?.read(group, voiceBlob) ?? Duration.zero,
@@ -3149,6 +3153,38 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             ),
         ],
         SettingsSection.storage => [
+          if (Platform.isLinux)
+            SwitchListTile(
+              title: Text(
+                tr(
+                  'Распознавать открытые голосовые',
+                  'Transcribe opened voice messages',
+                ),
+              ),
+              subtitle: Text(
+                tr(
+                  'На этом устройстве, если установлена модель Whisper.',
+                  'On this device when a Whisper model is installed.',
+                ),
+              ),
+              value: profile?['transcribeOnOpen'] == true,
+              onChanged: (enabled) async {
+                final epoch = generation;
+                try {
+                  await persistProfile(
+                    {},
+                    removedFields: {},
+                    autoTranscribe: enabled,
+                  );
+                  if (mounted && epoch == generation) setState(() {});
+                } catch (_) {
+                  if (mounted && epoch == generation) {
+                    setState(() => appearanceSaveFailed = true);
+                  }
+                }
+              },
+            ),
+          if (appearanceSaveFailed) saveError,
           ProfileStorageSize(path: path.text.trim(), russian: ru),
         ],
         SettingsSection.appearance => [
