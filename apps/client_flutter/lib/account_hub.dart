@@ -188,6 +188,7 @@ class _AccountHubState extends State<AccountHub> {
     );
   }
 
+  final Set<String> locallyBlockedAvatars = {};
   bool directoryLoaded = false;
   bool working = false, fetching = false, trusted = false;
   bool get blocked => working || fetching;
@@ -317,6 +318,7 @@ class _AccountHubState extends State<AccountHub> {
             welcomes = pending;
             rosterWelcomes = linked;
             chats = existing;
+            locallyBlockedAvatars.clear();
             directoryLoaded = true;
             trusted = true;
             refreshError = null;
@@ -1454,13 +1456,23 @@ class _AccountHubState extends State<AccountHub> {
     key: ValueKey(chat['id']),
     username: contactName(chat),
     fetch: widget.api,
-    route: peerPhotoRoute(chat['id'], chat['peerPhotoVersion']),
+    route: locallyBlockedAvatars.contains(chat['peerName'])
+        ? null
+        : peerPhotoRoute(chat['id'], chat['peerPhotoVersion']),
   );
 
   Future<void> manageContactBlocks([String? username]) async {
     final api = widget.channelApi;
     if (api == null) return;
-    await showContactBlocks(context, api: api, tr: tr, username: username);
+    await showContactBlocks(
+      context,
+      api: api,
+      tr: tr,
+      username: username,
+      onBlocked: (name) {
+        if (mounted) setState(() => locallyBlockedAvatars.add(name));
+      },
+    );
   }
 
   Future<void> inspectContact(Map chat) async {

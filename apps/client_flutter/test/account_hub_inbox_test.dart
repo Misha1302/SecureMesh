@@ -98,13 +98,14 @@ void main() {
     },
   );
 
-  testWidgets('closing block dialog refreshes the cached avatar', (
+  testWidgets('block hides avatar through failed refresh and unblock', (
     tester,
   ) async {
     const group = '00000000-0000-0000-0000-000000000001';
     const version = '00000000-0000-0000-0000-000000000002';
     var blocked = false;
     var directoryReads = 0;
+    var failRefresh = false;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -117,6 +118,7 @@ void main() {
                 return {'trustState': 'DEVICE_TRUSTED', 'userId': 'me'};
               if (route == '/v1/conversations') {
                 directoryReads++;
+                if (failRefresh) throw StateError('offline');
                 return [
                   {
                     'id': group,
@@ -145,6 +147,11 @@ void main() {
             channelApi: (route, {data, method}) async {
               if (method == 'PUT') {
                 blocked = true;
+                failRefresh = true;
+                return null;
+              }
+              if (method == 'DELETE') {
+                blocked = false;
                 return null;
               }
               return {'items': <String>[]};
@@ -167,6 +174,20 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Block invitations').last);
     await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<CircleAvatar>(find.byType(CircleAvatar).first)
+          .foregroundImage,
+      isNull,
+    );
+    await tester.tap(find.text('Unblock'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<CircleAvatar>(find.byType(CircleAvatar).first)
+          .foregroundImage,
+      isNull,
+    );
     await tester.tap(find.text('Close').last);
     await tester.pumpAndSettle();
     expect(directoryReads, greaterThanOrEqualTo(2));
@@ -175,6 +196,16 @@ void main() {
           .widget<CircleAvatar>(find.byType(CircleAvatar).first)
           .foregroundImage,
       isNull,
+    );
+    expect(find.byKey(const ValueKey('chat-$group')), findsOneWidget);
+    failRefresh = false;
+    await tester.tap(find.byTooltip('Refresh'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<CircleAvatar>(find.byType(CircleAvatar).first)
+          .foregroundImage,
+      isNotNull,
     );
     await tester.pumpWidget(const SizedBox());
   });

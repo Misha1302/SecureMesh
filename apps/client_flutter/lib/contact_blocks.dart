@@ -11,17 +11,19 @@ Future<void> showContactBlocks(
   required DisplayNameApi api,
   required IdentityTranslation tr,
   String? username,
+  ValueChanged<String>? onBlocked,
 }) => showDialog<void>(
   context: context,
   barrierDismissible: false,
-  builder: (_) => _ContactBlocks(api, tr, username),
+  builder: (_) => _ContactBlocks(api, tr, username, onBlocked),
 );
 
 class _ContactBlocks extends StatefulWidget {
-  const _ContactBlocks(this.api, this.tr, this.username);
+  const _ContactBlocks(this.api, this.tr, this.username, this.onBlocked);
   final DisplayNameApi api;
   final IdentityTranslation tr;
   final String? username;
+  final ValueChanged<String>? onBlocked;
 
   @override
   State<_ContactBlocks> createState() => _ContactBlocksState();
@@ -89,6 +91,7 @@ class _ContactBlocksState extends State<_ContactBlocks> {
       if (!mounted) return;
       final names = items!.toSet();
       if (block) {
+        widget.onBlocked?.call(name);
         names.add(name);
         username.clear();
       } else {
