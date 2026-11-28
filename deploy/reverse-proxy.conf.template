@@ -4,6 +4,11 @@ map $http_upgrade $securemesh_upgrade {
     default upgrade;
     '' close;
 }
+# Match the original spelling so normalized URL aliases keep the standard limit.
+map "$request_method:$request_uri" $securemesh_whole_blob_put {
+    default 0;
+    "~^PUT:/v1/conversations/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/blobs/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:[?].*)?$" 1;
+}
 server {
     listen 443 ssl;
     server_name ${SECUREMESH_DOMAIN};
@@ -15,14 +20,26 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
     add_header Strict-Transport-Security "max-age=31536000" always;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $securemesh_upgrade;
+    proxy_buffering off;
+    proxy_read_timeout 90s;
+    proxy_send_timeout 90s;
+
+    # The server rewrite selects the size-limited location before nginx checks
+    # Content-Length. Restore the API path and keep its original query string.
+    if ($securemesh_whole_blob_put) {
+        rewrite ^ /_securemesh/whole-blob$uri last;
+    }
+    location ^~ /_securemesh/whole-blob/ {
+        internal;
+        client_max_body_size 4194320; # 4 MiB plus the AES-GCM tag.
+        rewrite ^/_securemesh/whole-blob(/v1/.*)$ $1 break;
+        proxy_pass http://api:8080;
+    }
     location / {
         proxy_pass http://api:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $securemesh_upgrade;
-        proxy_buffering off;
-        proxy_read_timeout 90s;
-        proxy_send_timeout 90s;
     }
 }
