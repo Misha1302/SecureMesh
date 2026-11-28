@@ -40,12 +40,18 @@ internal sealed class VerificationEmail
         credentials = new NetworkCredential("resend", key);
     }
 
-    public async Task SendAsync(string recipient, string token, CancellationToken cancellationToken)
+    public async Task SendAsync(string recipient, string token, string purpose, CancellationToken cancellationToken)
     {
+        var subject = purpose switch
+        {
+            "verification" => "SecureMesh verification",
+            "account_recovery" => "SecureMesh account recovery",
+            _ => throw new InvalidOperationException("Unknown email token purpose."),
+        };
         using var smtp = credentials is null
             ? new SmtpClient("127.0.0.1", mailpitPort)
             : new SmtpClient("smtp.resend.com", 587) { EnableSsl = true, Credentials = credentials };
-        using var message = new MailMessage(sender, recipient, "SecureMesh verification", token);
+        using var message = new MailMessage(sender, recipient, subject, token);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try

@@ -10,6 +10,8 @@ namespace SecureMesh;
 
 public sealed record Registration(string Username, string Email, string? Password = null, string? Credential = null, string? DisplayName = null);
 public sealed record Verification(string Token);
+public sealed record AccountRecoveryRequest(string Email);
+public sealed record AccountRecoveryCompletion(string Token, string? Password = null, string? Credential = null);
 public sealed record VerificationResend(string Username, string? Password = null, string? Credential = null);
 public sealed record Challenge(string Username, Guid DeviceId);
 public sealed record Login(string Username, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, string? ClientOs = null, string? Password = null, string? Credential = null, Guid? ExpectedUserId = null, string? ExpectedTrustState = null);
@@ -76,7 +78,8 @@ public static class Identity
 
                 // A freshly issued token blocks additional sends for five minutes.
                 await using var recent = Sql.Cmd(c, """
-                    SELECT 1 FROM email_tokens WHERE user_id=$1 AND expires_at>now()+interval '25 minutes' LIMIT 1
+                    SELECT 1 FROM email_tokens WHERE user_id=$1 AND purpose='verification'
+                      AND expires_at>now()+interval '25 minutes' LIMIT 1
                     """, user);
                 if (await recent.ExecuteScalarAsync(cancellationToken) is not null)
                     return Results.Accepted();
@@ -93,7 +96,7 @@ public static class Identity
                 if (await budget.ExecuteNonQueryAsync(cancellationToken) == 0)
                     return Results.Accepted();
 
-                await using var invalidate = Sql.Cmd(c, "DELETE FROM email_tokens WHERE user_id=$1", user);
+                await using var invalidate = Sql.Cmd(c, "DELETE FROM email_tokens WHERE user_id=$1 AND purpose='verification'", user);
                 await invalidate.ExecuteNonQueryAsync(cancellationToken);
                 await email.EnqueueAsync(c, user, recipient, cancellationToken);
                 await tx.CommitAsync(cancellationToken);
@@ -108,21 +111,130 @@ public static class Identity
             // Lock the account before touching tokens, matching the resend path.
             await using var owner = Sql.Cmd(c, """
                 SELECT u.id FROM users u JOIN email_tokens t ON t.user_id=u.id
-                WHERE t.hash=$1 AND NOT u.verified FOR UPDATE OF u
+                WHERE t.hash=$1 AND t.purpose='verification' AND NOT u.verified FOR UPDATE OF u,t
                 """, hash);
             if (await owner.ExecuteScalarAsync(cancellationToken) is not Guid user)
                 throw new ApiError(400, "INVALID_TOKEN");
             await using var verify = Sql.Cmd(c, """
                 UPDATE users SET verified=true WHERE id=$1 AND EXISTS (
-                    SELECT 1 FROM email_tokens WHERE hash=$2 AND user_id=$1 AND expires_at>statement_timestamp()
+                    SELECT 1 FROM email_tokens WHERE hash=$2 AND user_id=$1
+                      AND purpose='verification' AND expires_at>statement_timestamp()
                 )
                 """, user, hash);
             if (await verify.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ApiError(400, "INVALID_TOKEN");
-            await using var consume = Sql.Cmd(c, "DELETE FROM email_tokens WHERE user_id=$1", user);
+            await using var consume = Sql.Cmd(c, "DELETE FROM email_tokens WHERE user_id=$1 AND purpose='verification'", user);
             await consume.ExecuteNonQueryAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return Results.NoContent();
         });
+
+        app.MapPost("/v1/auth/recovery/request", async (AccountRecoveryRequest input,
+            NpgsqlDataSource db, VerificationEmailQueue email, CancellationToken cancellationToken) =>
+        {
+            // Keep the response indistinguishable for absent, unverified and rate-limited accounts.
+            if (input.Email is null || input.Email.Length > 254 ||
+                !MailAddress.TryCreate(input.Email, out var address) || address.Address != input.Email)
+                return Results.Accepted();
+            await using var c = await db.OpenConnectionAsync(cancellationToken);
+            await using var tx = await c.BeginTransactionAsync(cancellationToken);
+            Guid user;
+            string recipient;
+            await using (var owner = Sql.Cmd(c, "SELECT id,email FROM users WHERE email=$1 AND verified FOR UPDATE", input.Email.ToLowerInvariant()))
+            await using (var row = await owner.ExecuteReaderAsync(cancellationToken))
+            {
+                if (!await row.ReadAsync(cancellationToken)) return Results.Accepted();
+                user = row.GetGuid(0);
+                recipient = row.GetString(1);
+            }
+
+            // One message per five minutes, at most five requests in the rolling day.
+            await using (var recent = Sql.Cmd(c, """
+                SELECT 1 FROM email_tokens WHERE user_id=$1 AND purpose='account_recovery'
+                  AND expires_at>statement_timestamp()+interval '25 minutes' LIMIT 1
+                """, user))
+                if (await recent.ExecuteScalarAsync(cancellationToken) is not null)
+                    return Results.Accepted();
+            await using (var budget = Sql.Cmd(c, """
+                UPDATE users SET
+                    recovery_requests=CASE WHEN recovery_window>statement_timestamp()-interval '24 hours'
+                        THEN recovery_requests+1 ELSE 1 END,
+                    recovery_window=CASE WHEN recovery_window>statement_timestamp()-interval '24 hours'
+                        THEN recovery_window ELSE statement_timestamp() END
+                WHERE id=$1 AND (recovery_window IS NULL
+                    OR recovery_window<=statement_timestamp()-interval '24 hours' OR recovery_requests<5)
+                """, user))
+                if (await budget.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    return Results.Accepted();
+            await email.EnqueueAsync(c, user, recipient, cancellationToken, "account_recovery");
+            await tx.CommitAsync(cancellationToken);
+            return Results.Accepted();
+        });
+
+        foreach (var version in new[] { 1, 2 })
+            app.MapPost($"/v{version}/auth/recovery/complete", (AccountRecoveryCompletion input,
+                NpgsqlDataSource db, CancellationToken cancellationToken) => CompleteRecovery(input, db, version, cancellationToken));
+
+        async Task<IResult> CompleteRecovery(AccountRecoveryCompletion input, NpgsqlDataSource db,
+            int version, CancellationToken cancellationToken)
+        {
+            var secret = Passwords.Input(version, input.Password, input.Credential);
+            if (secret is null || input.Token is null ||
+                !Regex.IsMatch(input.Token, "^[a-f0-9]{64}$") ||
+                (version == 1 && new StringInfo(secret).LengthInTextElements < 16))
+                throw new ApiError(400, "INVALID_RECOVERY");
+            var tokenHash = Sql.Hash(input.Token);
+            Guid user;
+            string username;
+            string originalHash;
+            await using (var lookup = db.CreateCommand("""
+                SELECT u.id,u.username,u.password_hash FROM users u
+                JOIN email_tokens t ON t.user_id=u.id
+                WHERE t.hash=$1 AND t.purpose='account_recovery' AND t.expires_at>statement_timestamp() AND u.verified
+                """))
+            {
+                lookup.Parameters.AddWithValue(tokenHash);
+                await using var row = await lookup.ExecuteReaderAsync(cancellationToken);
+                if (!await row.ReadAsync(cancellationToken)) throw new ApiError(400, "INVALID_RECOVERY");
+                user = row.GetGuid(0);
+                username = row.GetString(1);
+                originalHash = row.GetString(2);
+            }
+            if (originalHash.StartsWith("sm2$", StringComparison.Ordinal) != (version == 2))
+                throw new ApiError(400, "INVALID_RECOVERY");
+            var newHash = Passwords.Marker(version) + await Passwords.Hash(secret);
+
+            await using var c = await db.OpenConnectionAsync(cancellationToken);
+            await using var tx = await c.BeginTransactionAsync(cancellationToken);
+            await using (var owner = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", user))
+                await owner.ExecuteScalarAsync(cancellationToken);
+            await using (var current = Sql.Cmd(c, """
+                SELECT 1 FROM users u JOIN email_tokens t ON t.user_id=u.id
+                WHERE u.id=$1 AND u.username=$2 AND u.verified AND t.hash=$3
+                  AND t.purpose='account_recovery' AND t.expires_at>statement_timestamp()
+                  AND (u.password_hash LIKE 'sm2$%')=$4
+                FOR UPDATE OF t
+                """, user, username, tokenHash, version == 2))
+                if (await current.ExecuteScalarAsync(cancellationToken) is null)
+                    throw new ApiError(400, "INVALID_RECOVERY");
+
+            await using (var update = Sql.Cmd(c, "UPDATE users SET password_hash=$1 WHERE id=$2", newHash, user))
+                if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    throw new ApiError(400, "INVALID_RECOVERY");
+            // Revoke bearer grants and one-time proofs before returning. Device trust and MLS keys are untouched.
+            await using (var revoke = Sql.Cmd(c, """
+                UPDATE sessions SET revoked=true
+                WHERE device_id IN (SELECT id FROM devices WHERE user_id=$1)
+                """, user))
+                await revoke.ExecuteNonQueryAsync(cancellationToken);
+            await using (var challenges = Sql.Cmd(c, "DELETE FROM auth_challenges WHERE username=$1", username))
+                await challenges.ExecuteNonQueryAsync(cancellationToken);
+            await using (var enrollments = Sql.Cmd(c, "DELETE FROM device_enrollments WHERE user_id=$1", user))
+                await enrollments.ExecuteNonQueryAsync(cancellationToken);
+            await using (var tokens = Sql.Cmd(c, "DELETE FROM email_tokens WHERE user_id=$1", user))
+                await tokens.ExecuteNonQueryAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return Results.NoContent();
+        }
         app.MapPost("/v1/auth/challenge", async (Challenge input, NpgsqlDataSource db) =>
         {
             if (!Regex.IsMatch(input.Username,"^[a-z0-9_]{3,32}$") || input.DeviceId == Guid.Empty) throw new ApiError(400,"INVALID_CHALLENGE");

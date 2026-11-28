@@ -14,20 +14,25 @@ internal sealed class VerificationEmailQueue(
     private readonly IDataProtector protector = protection.CreateProtector("SecureMesh.VerificationEmail.v1");
 
     public async Task EnqueueAsync(NpgsqlConnection connection, Guid user, string recipient,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string purpose = "verification")
     {
+        if (purpose is not ("verification" or "account_recovery"))
+            throw new ArgumentOutOfRangeException(nameof(purpose));
         var token = Sql.Token();
         var hash = Sql.Hash(token);
         // The address has passed MailAddress validation and cannot contain a newline.
-        var payload = protector.Protect(recipient + "\n" + token);
+        var payload = protector.Protect(purpose == "verification"
+            ? recipient + "\n" + token
+            : recipient + "\n" + token + "\n" + purpose);
         await using var command = Sql.Cmd(connection, """
             WITH created AS (
-                INSERT INTO email_tokens VALUES($1,$2,now()+interval '30 minutes')
+                INSERT INTO email_tokens(hash,user_id,expires_at,purpose)
+                VALUES($1,$2,now()+interval '30 minutes',$3)
                 RETURNING hash,expires_at
             )
             INSERT INTO verification_email_queue(token_hash,payload,expires_at)
-            SELECT hash,$3,expires_at FROM created
-            """, hash, user, payload);
+            SELECT hash,$4,expires_at FROM created
+            """, hash, user, purpose, payload);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -99,8 +104,13 @@ internal sealed class VerificationEmailQueue(
 
         try
         {
-            var parts = protector.Unprotect(payload).Split('\n', 2);
-            await sender.SendAsync(parts[0], parts[1], cancellationToken);
+            var parts = protector.Unprotect(payload).Split('\n');
+            if (parts.Length is < 2 or > 3)
+                throw new CryptographicException("Invalid email queue payload.");
+            var purpose = parts.Length == 2 ? "verification" : parts[2];
+            if (purpose is not ("verification" or "account_recovery"))
+                throw new CryptographicException("Invalid email queue payload.");
+            await sender.SendAsync(parts[0], parts[1], purpose, cancellationToken);
         }
         catch (ApiError)
         {
