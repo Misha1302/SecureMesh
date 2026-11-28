@@ -14,7 +14,7 @@ pub struct DeviceAddress {
     device: Uuid,
 }
 
-fn canonical_id(text: &str) -> Result<Uuid> {
+pub(crate) fn canonical_id(text: &str) -> Result<Uuid> {
     let id = Uuid::parse_str(text)?;
     ensure!(
         !id.is_nil() && id.hyphenated().to_string() == text,
@@ -23,7 +23,7 @@ fn canonical_id(text: &str) -> Result<Uuid> {
     Ok(id)
 }
 
-fn public_key(raw: &[u8; 32]) -> Result<VerifyingKey> {
+pub(crate) fn public_key(raw: &[u8; 32]) -> Result<VerifyingKey> {
     let key = VerifyingKey::from_bytes(raw)?;
     let point = key.to_edwards();
     ensure!(

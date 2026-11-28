@@ -94,3 +94,4 @@ pub mod store;
 pub mod writer;
 
 pub mod witness;
+pub mod roster;

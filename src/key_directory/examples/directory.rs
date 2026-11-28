@@ -155,7 +155,28 @@ async fn main() -> Result<()> {
             println!("MLS KeyPackage matches directory device record at epoch {} root {}", head.epoch, hex::encode(head.root));
             Ok(())
         }
-        _ => bail!("usage: directory publish NEW_DIR | directory verify DIR VRF_KEY_HEX EPOCH_1_ROOT_HEX EPOCH_2_ROOT_HEX | directory pin PROFILE OWNER VRF EPOCH ROOT | directory advance PROFILE OWNER VRF OLD_EPOCH OLD_ROOT NEW_EPOCH NEW_ROOT PROOF | directory read PROFILE OWNER VRF LABEL PROOF | directory check-device PROFILE OWNER VRF ACCOUNT DEVICE KEYPACKAGE PROOF"),
+        [mode, profile, owner, vrf, account, root] if mode == "pin-account-root" => {
+            let mut store = Store::open(Path::new(profile), passphrase()?.as_str(), owner, digest(vrf)?)?;
+            store.pin_account_root(account, digest(root)?)?;
+            println!("account root pinned");
+            Ok(())
+        }
+        [mode, profile, owner, vrf, account, proof, prior @ ..] if mode == "accept-roster" => {
+            ensure!(prior.len() <= 32, "too many intermediate rosters");
+            let mut chain = Vec::new();
+            for path in prior {
+                let mut bytes = Vec::new();
+                const MAX: usize = securemesh_key_directory::roster::MAX_SIGNED_BYTES;
+                fs::File::open(path)?.take(MAX as u64 + 1).read_to_end(&mut bytes)?;
+                ensure!(bytes.len() <= MAX, "oversized roster");
+                chain.push(bytes);
+            }
+            let store = Store::open(Path::new(profile), passphrase()?.as_str(), owner, digest(vrf)?)?;
+            let (head, roster) = store.accept_roster(account, &chain, &read_proof(Path::new(proof))?)?;
+            println!("accepted account roster version {} at directory epoch {} root {}", roster.version(), head.epoch, hex::encode(head.root));
+            Ok(())
+        }
+        _ => bail!("usage: directory publish NEW_DIR | directory verify DIR VRF_KEY_HEX EPOCH_1_ROOT_HEX EPOCH_2_ROOT_HEX | directory pin PROFILE OWNER VRF EPOCH ROOT | directory advance PROFILE OWNER VRF OLD_EPOCH OLD_ROOT NEW_EPOCH NEW_ROOT PROOF | directory read PROFILE OWNER VRF LABEL PROOF | directory check-device PROFILE OWNER VRF ACCOUNT DEVICE KEYPACKAGE PROOF | directory pin-account-root PROFILE OWNER VRF ACCOUNT ROOT | directory accept-roster PROFILE OWNER VRF ACCOUNT LOOKUP_PROOF [INTERMEDIATE_SIGNED_ROSTER ...]"),
     }
 }
 
