@@ -62,10 +62,17 @@ try {
     const accept = senderIsBrowser ? device : browser;
     const sender = senderIsBrowser ? alice : bob;
     const recipient = senderIsBrowser ? bob : alice;
-    const packageResponse = accept({ op: "keypackage" });
+    const invitation = randomUUID();
+    if (senderIsBrowser) {
+      device({ op: "directory_consent", confirmed: true, invitation,
+        sender: sender.identity, senderKey: sender.public_key, username: "alice" });
+    }
+    const packageResponse = senderIsBrowser
+      ? device({ op: "directory_consent_package", invitation })
+      : browser({ op: "keypackage" });
     const { reference } = client(["--validate-keypackage"], { ...recipient, ...packageResponse });
     if (packageResponse.reference) assert.equal(packageResponse.reference, reference);
-    const request = { op: "directory_prepare", invitation: randomUUID(), lease: randomUUID(),
+    const request = { op: "directory_prepare", invitation, lease: randomUUID(),
       recipient: recipient.identity, keypackage: packageResponse.keypackage, reference };
     const invite = prepare(request);
     assert.deepEqual(prepare(request), invite);
