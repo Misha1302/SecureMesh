@@ -240,7 +240,14 @@ main:has(#conversations:not([hidden])) #title {
   #conversations { display: block; height: auto; border: 0; overflow: visible; margin: .5rem 0; }
   #chat-sidebar { padding: .3rem 0; border: 0; }
   #thread-placeholder, .thread-open #chat-sidebar { display: none; }
-  #conversations.thread-open { height: calc(100dvh - 7.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 12rem; }
+  main:has(#conversations.thread-open:not([hidden])) {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+  }
+  main:has(#conversations.thread-open:not([hidden])) > * { flex-shrink: 0; }
+  main > #conversations.thread-open { flex: 1 1 0; min-height: 12rem; }
   #thread { height: 100%; }
   #to-chats { display: inline-block; flex-shrink: 0; }
   .thread-header, #compose { padding: .5rem 0; }

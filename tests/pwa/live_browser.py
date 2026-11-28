@@ -7,6 +7,7 @@ with python tests/pwa/live_browser.py. The API hostname maps to loopback only
 inside this test's Chromium process. Production network and DNS are untouched.
 """
 
+import argparse
 import base64
 import functools
 import hashlib
@@ -14,6 +15,7 @@ import json
 import os
 import re
 import secrets
+import select
 import socket
 import ssl
 import subprocess
@@ -24,7 +26,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -55,7 +57,45 @@ def postgres_database():
         subprocess.run(["dropdb", "--force", database], env=config, check=True)
 
 
+class Outage:
+    """Disconnect only sockets of this disposable test, including reused HTTP connections."""
+    def __init__(self):
+        self.guard = threading.Lock()
+        self.blocked = False
+        self.upstreams = set()
+
+    def set(self, blocked):
+        with self.guard:
+            self.blocked = blocked
+            if blocked:
+                for upstream in self.upstreams:
+                    try:
+                        upstream.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+    @contextmanager
+    def track(self, upstream):
+        with self.guard:
+            online = not self.blocked
+            if online:
+                self.upstreams.add(upstream)
+        try:
+            yield online
+        finally:
+            with self.guard:
+                self.upstreams.discard(upstream)
+
+
 class StaticHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        outage = getattr(self.server, "outage", None)
+        if outage and outage.blocked:
+            self.close_connection = True
+            self.connection.shutdown(socket.SHUT_RDWR)
+            return
+        super().do_GET()
+
     def log_message(self, *_):
         pass
 
@@ -69,7 +109,7 @@ class StaticHandler(SimpleHTTPRequestHandler):
 
 
 @contextmanager
-def origins(directory, connection):
+def origins(directory, connection, outage=None):
     cert = directory / "test-cert.pem"
     key = directory / "test-key.pem"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
@@ -79,6 +119,7 @@ def origins(directory, connection):
     public_der = subprocess.check_output(["openssl", "pkey", "-pubin", "-outform", "DER"], input=public_pem)
     pin = base64.b64encode(hashlib.sha256(public_der).digest()).decode()
     with ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(StaticHandler, directory=ROOT / "site")) as static:
+        static.outage = outage
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.load_cert_chain(cert, key)
         static.socket = tls.wrap_socket(static.socket, server_side=True)
@@ -123,7 +164,11 @@ def origins(directory, connection):
                 finally:
                     if process.poll() is None:
                         process.terminate()
-                        process.wait(timeout=10)
+                        try:
+                            process.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
         finally:
             static.shutdown()
             worker.join()
@@ -171,7 +216,7 @@ def device_code(page):
     return code.text_content()
 
 
-def exercise_archive(browser, exporter, app_origin, exporter_code, peer, messages, private_draft):
+def exercise_archive(browser, exporter, app_origin, exporter_code, peer, messages, private_draft, options):
     secret = secrets.token_urlsafe(25)
     exporter.locator("#backup summary").click()
     exporter.locator("#export [name=secret]").fill(secret)
@@ -183,7 +228,7 @@ def exercise_archive(browser, exporter, app_origin, exporter_code, peer, message
     assert all(text.encode() not in archive for text in messages)
     assert exporter_code.encode() not in archive
 
-    with browser.new_context() as context:
+    with browser.new_context(**options) as context:
         viewer = context.new_page()
         viewer.goto(app_origin + "/app/profile.html")
         viewer.locator("#archives > summary").click()
@@ -242,14 +287,73 @@ def exercise_archive(browser, exporter, app_origin, exporter_code, peer, message
         expect(viewer.locator("#my-code")).to_be_empty()
 
 
-def exercise(app_origin, api_port, pin):
-    with sync_playwright() as playwright:
+@contextmanager
+def launch_browser(playwright, engine, app_origin, api_port, pin, outage):
+    if engine == "chromium":
         browser = playwright.chromium.launch(args=[
             "--no-proxy-server",
             f"--host-resolver-rules=MAP {API_HOST} 127.0.0.1:{api_port}, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
             f"--ignore-certificate-errors-spki-list={pin}",
         ])
-        pages = [browser.new_context().new_page() for _ in range(2)]
+        try:
+            yield browser, {}
+        finally:
+            browser.close()
+        return
+
+    # Only these two TLS sockets exist on the test network. Applications keep
+    # the production origin and CORS path even on engines without host rules.
+    sockets = {f"{API_HOST}:443": api_port,
+               urllib.parse.urlparse(app_origin).netloc: urllib.parse.urlparse(app_origin).port}
+
+    class LoopbackTunnel(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_CONNECT(self):
+            if self.path not in sockets:
+                self.send_error(403)
+                return
+            if outage.blocked:
+                self.send_error(503)
+                return
+            with socket.create_connection(("127.0.0.1", sockets[self.path])) as upstream, outage.track(upstream) as online:
+                if not online:
+                    self.send_error(503)
+                    return
+                self.send_response(200)
+                self.end_headers()
+                try:
+                    while True:
+                        ready, _, _ = select.select([upstream, self.connection], [], [], 60)
+                        if not ready:
+                            return
+                        for source in ready:
+                            data = source.recv(65536)
+                            if not data:
+                                return
+                            destination = self.connection if source is upstream else upstream
+                            destination.sendall(data)
+                except OSError:
+                    return
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), LoopbackTunnel) as tunnel:
+        thread = threading.Thread(target=tunnel.serve_forever, daemon=True)
+        thread.start()
+        try:
+            browser = playwright[engine].launch(proxy={"server": f"http://127.0.0.1:{tunnel.server_port}"})
+            try:
+                yield browser, {"ignore_https_errors": True}
+            finally:
+                browser.close()
+        finally:
+            tunnel.shutdown()
+            thread.join()
+
+
+def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
+    with sync_playwright() as playwright, launch_browser(playwright, engine, app_origin, api_port, pin, outage) as (browser, options):
+        pages = [browser.new_context(**options).new_page() for _ in range(2)]
         traffic = []
         for page in pages:
             page.set_default_timeout(25_000)
@@ -258,7 +362,7 @@ def exercise(app_origin, api_port, pin):
                     and response.ok else None)
         alice, bob = pages
         suffix = uuid.uuid4().hex[:12]
-        alice_name, bob_name = f"pwa_a_{suffix}", f"pwa_b_{suffix}"
+        alice_name, bob_name = f"mila_{suffix[:6]}", f"alex_{suffix[:6]}"
         alice_code, alice_password = register(alice, app_origin, alice_name)
         bob_code, _ = register(bob, app_origin, bob_name)
         assert alice_code != bob_code
@@ -275,13 +379,48 @@ def exercise(app_origin, api_port, pin):
         bob.locator("[data-action=join]").click()
         for page, peer in [(alice, bob_name), (bob, alice_name)]:
             page.locator("#chat-list").get_by_role("button", name=re.compile(peer)).click()
-        first, reply = "Первое сообщение на iPhone 🔐", "Ответ с другого профиля 🔐"
+        first, reply = "Привет! Ты получил приглашение?", "Да, вижу наш чат."
         for sender, recipient, text in [(alice, bob, first), (bob, alice, reply)]:
             sender.locator("#compose textarea").fill(text)
             sender.locator("#compose button").click()
             expect(recipient.locator("#messages").get_by_text(text, exact=True)).to_be_visible(timeout=20_000)
 
-        alice.context.set_offline(True)
+        evidence = os.environ.get("SECUREMESH_CHAT_SCREENSHOTS")
+        if evidence:
+            target = Path(evidence)
+            target.mkdir(parents=True, exist_ok=True)
+            alice.screenshot(path=target / "desktop.png", animations="disabled")
+        previous_viewport = alice.viewport_size
+        alice.set_viewport_size({"width": 390, "height": 844})
+        expect(alice.locator("#chat-sidebar")).to_be_hidden()
+        expect(alice.locator("#to-chats")).to_be_visible()
+        expect(alice.locator("#messages time")).to_have_count(2)
+        expect(alice.locator("#compose button")).to_be_in_viewport(ratio=1)
+        if evidence:
+            alice.screenshot(path=target / "phone.png", animations="disabled")
+        alice.locator("#compose textarea").fill("Черновик при возврате")
+        alice.locator("#to-chats").click()
+        expect(alice.locator("#thread")).to_be_hidden()
+        alice.locator("#chat-list").get_by_role("button", name=re.compile(bob_name)).click()
+        expect(alice.locator("#compose textarea")).to_have_value("Черновик при возврате")
+        alice.set_viewport_size(previous_viewport)
+
+        # Enter the offline scenario only after the client has installed its offline shell.
+        deadline = time.monotonic() + 15
+        while not alice.evaluate("Boolean(navigator.serviceWorker.controller)"):
+            if time.monotonic() >= deadline:
+                raise AssertionError("Offline shell did not take control")
+            time.sleep(.1)
+        if engine == "chromium":
+            alice.context.set_offline(True)
+        else:
+            # On WebKit Playwright's synthetic offline mode may reject even a
+            # service-worker cache hit. Disconnect the actual fixture sockets.
+            outage.set(True)
+            assert alice.evaluate("""async () => {
+              try { await fetch('/unavailable', {cache: 'no-store'}); return false; }
+              catch { return true; }
+            }""")
         queued = "Очередь сохраняется после блокировки 🔐"
         alice.locator("#compose textarea").fill(queued)
         next_draft = "Текст следующего сообщения"
@@ -301,7 +440,10 @@ def exercise(app_origin, api_port, pin):
         expect(alice.locator("#compose textarea")).to_have_value(next_draft)
         expect(row).to_contain_text("В очереди")
         expect(bob.locator("#messages").get_by_text(queued, exact=True)).to_have_count(0)
-        alice.context.set_offline(False)
+        if engine == "chromium":
+            alice.context.set_offline(False)
+        else:
+            outage.set(False)
         expect(bob.locator("#messages").get_by_text(queued, exact=True)).to_be_visible(timeout=20_000)
         expect(row).to_contain_text("Принято сервером")
 
@@ -312,9 +454,9 @@ def exercise(app_origin, api_port, pin):
             assert set(row) == {"conversationId", "clientMessageId", "mlsEpoch", "envelopeKind", "ciphertext"}
             wire = base64.b64decode(row["ciphertext"], validate=True)
             assert row["envelopeKind"] == 1 and len(wire) > 32
-            assert not any(word.encode() in wire for word in ("сообщение", "профиля", "Очередь"))
+            assert not any(word.encode() in wire for word in (first, reply, queued))
         expect(bob.locator("#compose textarea")).to_have_value("")
-        exercise_archive(browser, alice, app_origin, alice_code, bob_name, [first, reply, queued], next_draft)
+        exercise_archive(browser, alice, app_origin, alice_code, bob_name, [first, reply, queued], next_draft, options)
         alice.reload()
         alice.locator("#password").fill(alice_password)
         alice.locator("#enter").click()
@@ -330,13 +472,16 @@ def exercise(app_origin, api_port, pin):
         alice.locator("#enter").click()
         alice.locator("#chat-list").get_by_role("button", name=re.compile(bob_name)).click()
         expect(alice.locator("#compose textarea")).to_have_value("")
-        browser.close()
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="securemesh-live-pwa-") as directory, postgres_database() as connection:
-        with origins(Path(directory), connection) as (app_origin, api_port, pin):
-            exercise(app_origin, api_port, pin)
-    print("Two isolated Chromium profiles exchanged verified MLS text through live .NET, PostgreSQL, and Mailpit")
+        outage = Outage()
+        with origins(Path(directory), connection, outage) as (app_origin, api_port, pin):
+            exercise(app_origin, api_port, pin, args.browser, outage)
+    print(f"Two isolated {args.browser} profiles exchanged verified MLS text through live .NET, PostgreSQL, and Mailpit")
     print("An offline message survived vault lock and unlock and was durably saved on reconnect")
     print("A fresh browser opened an encrypted history archive and rejected wrong passwords, tampering, and identity data")
