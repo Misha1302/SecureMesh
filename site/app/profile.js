@@ -201,6 +201,39 @@ function lock() {
   notice("");
   layout();
 }
+async function securityEmail(choice) {
+  const current = opened;
+  if (!current || current.securityEmailBusy || !byId("security-email").open) return;
+  current.securityEmailBusy = true;
+  const control = byId("security-email-enabled");
+  control.disabled = true;
+  byId("security-email-status").textContent = choice === undefined ? "Загрузка…" : "Сохранение…";
+  show("security-email-retry", false);
+  try {
+    const result = await current.account.api("/v1/users/me/security-email",
+      choice === undefined ? undefined : {enabled: choice}, choice === undefined ? "GET" : "PUT");
+    if (opened !== current) return;
+    if (typeof result?.enabled !== "boolean" || (choice !== undefined && result.enabled !== choice))
+      throw new Error("INVALID_PREFERENCE");
+    control.checked = result.enabled;
+    control.indeterminate = false;
+    control.disabled = false;
+    byId("security-email-status").textContent = choice === undefined ? "" : "Сохранено";
+  } catch {
+    if (opened !== current) return;
+    control.indeterminate = true;
+    byId("security-email-status").textContent = "Не удалось проверить настройку.";
+    show("security-email-retry", true);
+  } finally {
+    current.securityEmailBusy = false;
+  }
+}
+byId("security-email").ontoggle = () => {
+  if (byId("security-email").open) securityEmail();
+};
+byId("security-email-enabled").onchange = (event) => securityEmail(event.target.checked);
+byId("security-email-retry").onclick = () => securityEmail();
+
 function layout() {
   const state = opened?.handle.state;
   const trusted = Boolean(
@@ -237,6 +270,15 @@ function layout() {
   show("account", !!state && !trusted);
   show("backup", !!state);
   show("conversations", trusted);
+  show("security-email", trusted);
+  if (!trusted) {
+    byId("security-email").open = false;
+    byId("security-email-enabled").checked = false;
+    byId("security-email-enabled").indeterminate = true;
+    byId("security-email-enabled").disabled = true;
+    byId("security-email-status").textContent = "";
+    show("security-email-retry", false);
+  }
   if (!state) return;
   byId("account-name").textContent =
     state.displayName + " · @" + state.username;

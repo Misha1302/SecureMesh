@@ -134,6 +134,13 @@
           </form>
         </section>
       </section>
+      <details id="security-email" hidden>
+        <summary>Письма о безопасности</summary>
+        <label class="check"><input id="security-email-enabled" type="checkbox" disabled />Получать письма на подтверждённую почту</label>
+        <p>При подключении доверенного устройства или повторном использовании ключа сеанса.</p>
+        <p id="security-email-status" role="status"></p>
+        <button type="button" id="security-email-retry" hidden>Повторить</button>
+      </details>
       <section id="backup" hidden>
         <details>
           <summary>Сохранить копию переписки</summary>

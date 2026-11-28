@@ -11,6 +11,7 @@ import 'src/rust/api.dart';
 import 'local_client.dart';
 import 'session.dart';
 import 'session_inactivity.dart';
+import 'security_email_tile.dart';
 import 'delivery_client.dart';
 import 'conversation_drafts.dart';
 import 'chat_background.dart';
@@ -3098,6 +3099,12 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
               leading: const Icon(Icons.login),
               title: Text(tr('Войти снова', 'Sign in again')),
               onTap: reauthenticating ? null : () => signInAgain(context),
+            ),
+          if (session case final AccountSession active when trusted)
+            SecurityEmailTile(
+              key: ObjectKey(active),
+              russian: ru,
+              request: active.request,
             ),
           if (sessionInactivity case final SessionInactivity policy
               when profile?['trustState'] != 'DEVICE_PENDING_TRUST')
