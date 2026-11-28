@@ -314,7 +314,7 @@ export function createMessenger(ctx) {
       if (draftRevision && data.chats[group].draft?.revision === draftRevision) {
         delete data.chats[group].draft;
       }
-      data.chats[group].messages.push({ id, text, direction: "outgoing", status: "queued" });
+      data.chats[group].messages.push({ id, text, direction: "outgoing", status: "queued", recordedAt: Date.now() });
     });
     preferredSend = group;
     if (running) schedule(0);
@@ -382,13 +382,13 @@ export function createMessenger(ctx) {
       const data = transport(draft);
       const saved = data.chats[group];
       if (processed?.text !== undefined) {
-        saved.messages.push({ id: envelope.id, text: processed.text, direction: "incoming", status: "received" });
+        saved.messages.push({ id: envelope.id, text: processed.text, direction: "incoming", status: "received", recordedAt: Date.now() });
       } else if (processed?.unsupported === true) {
         saved.messages.push({
           id: envelope.id,
           text: "Зашифрованное вложение или событие. Этот клиент его не отображает.",
           direction: "incoming",
-          status: "unsupported",
+          status: "unsupported", recordedAt: Date.now(),
         });
       }
       if (processed?.active === false) saved.active = false;

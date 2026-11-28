@@ -256,6 +256,7 @@ function element(tag, text) {
   if (text !== undefined) node.textContent = text;
   return node;
 }
+const chatClock = new Intl.DateTimeFormat("ru", {hour: "2-digit", minute: "2-digit"});
 function renderChats() {
   const chats = opened?.handle.state.messenger?.chats ?? {};
   const list = byId("chat-list");
@@ -268,7 +269,17 @@ function renderChats() {
     opened.listSignature = signature;
     list.replaceChildren();
     for (const [id, peerName] of identities) {
-      const btn = element("button", "@" + peerName);
+      const btn = element("button");
+      const avatar = element("span", peerName.slice(0, 1).toUpperCase());
+      avatar.className = "chat-avatar";
+      avatar.setAttribute("aria-hidden", "true");
+      const body = element("span");
+      body.className = "chat-row-text";
+      const preview = element("span");
+      preview.className = "chat-preview";
+      body.append(element("strong", "@" + peerName), preview);
+      btn.append(avatar, body);
+      btn.dataset.chat = id;
       btn.onclick = () => {
         if (selected !== id) {
           opened.visibleMessages = 100;
@@ -278,13 +289,26 @@ function renderChats() {
         selected = id;
         opened.mesh.select(id);
         renderChats();
+        if (window.matchMedia("(max-width: 44rem)").matches) byId("peer").focus();
       };
       list.append(btn);
     }
     if (!identities.length)
       list.textContent = "Здесь появятся проверенные диалоги.";
   }
+  for (const button of list.querySelectorAll("button[data-chat]")) {
+    const id = button.dataset.chat;
+    const last = chats[id].messages.at(-1);
+    const preview = opened.getDraft(id)?.text;
+    const summary = preview ? "Черновик: " + preview : last?.text || "Пока нет сообщений";
+    const field = button.querySelector(".chat-preview");
+    if (field.textContent !== summary) field.textContent = summary;
+    if (id === selected) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
+  }
   const chat = chats[selected];
+  byId("conversations").classList.toggle("thread-open", Boolean(chat));
+  show("thread-placeholder", !chat);
   show("thread", Boolean(chat));
   if (!chat) return;
   byId("peer").textContent = "@" + chat.peerName;
@@ -297,23 +321,52 @@ function renderChats() {
     rows.map(({ id, status }) => [id, status]),
   ]);
   if (opened.timelineSignature === version) return;
+  const timeline = byId("timeline");
+  const previousHeight = timeline.scrollHeight;
+  const previousTop = timeline.scrollTop;
+  const wasAtEnd = previousHeight - previousTop - timeline.clientHeight < 48;
+  const newChat = opened.renderedGroup !== selected;
+  const previousFirst = messages.firstElementChild?.dataset.message;
+  const prepended = !newChat && previousFirst && rows[0]?.id !== previousFirst &&
+    rows.some((message) => message.id === previousFirst);
+  opened.renderedGroup = selected;
   opened.timelineSignature = version;
   messages.replaceChildren();
   for (const message of rows) {
-    const row = element("li", message.text);
+    const row = element("li");
+    row.append(element("span", message.text));
+    const footer = element("small");
+    if (Number.isFinite(message.recordedAt)) {
+      const when = new Date(message.recordedAt);
+      if (!Number.isNaN(when.getTime())) {
+        const time = element("time", chatClock.format(when));
+        time.dateTime = when.toISOString();
+        time.title = "Время на этом устройстве";
+        footer.append(time);
+      }
+    }
     row.dir = "auto";
+    row.dataset.message = message.id;
     if (message.direction === "outgoing") {
       row.className = "out";
-      row.append(
-        element(
-          "small",
-          message.status === "saved" ? "Принято сервером" : "В очереди",
-        ),
-      );
+      footer.append(element("span", message.status === "saved" ? "Принято сервером" : "В очереди"));
     }
+    if (footer.childNodes.length) row.append(footer);
     messages.append(row);
   }
+  if (prepended) timeline.scrollTop = previousTop + timeline.scrollHeight - previousHeight;
+  else if (newChat || wasAtEnd) timeline.scrollTop = timeline.scrollHeight;
 }
+byId("to-chats").onclick = () => {
+  const old = selected;
+  selected = null;
+  composeRevision++;
+  byId("compose").reset();
+  renderChats();
+  for (const button of byId("chat-list").querySelectorAll("button[data-chat]")) {
+    if (button.dataset.chat === old) button.focus();
+  }
+};
 function renderRequests(current, value) {
   const root = byId("requests");
   const rows = [];
