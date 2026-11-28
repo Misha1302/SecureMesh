@@ -78,6 +78,7 @@ def main():
                 '202611280111_ProfileTextVisibility',
                 '202611280112_ChannelPin',
                 '202611280113_ChannelPinCleanup',
+                '202611280114_ConversationMessageBlocks',
             ]
             assert result.strip().splitlines() == expected
             # A missing table in this disposable database must produce a bounded diagnostic.
