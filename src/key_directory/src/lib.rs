@@ -88,3 +88,5 @@ pub fn encode_lookup(proof: &LookupProof) -> Result<Vec<u8>> {
 pub fn encode_consistency(proof: &AppendOnlyProof) -> Result<Vec<u8>> {
     Ok(wire::AppendOnlyProof::from(proof).write_to_bytes()?)
 }
+
+pub mod store;

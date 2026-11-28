@@ -1,5 +1,10 @@
 //! Local proof publisher and independent CLI verifier for one synthetic record.
-use std::{env, fs, io::Read, path::Path};
+use securemesh_key_directory::store::Store;
+use std::{
+    env, fs,
+    io::{IsTerminal, Read},
+    path::Path,
+};
 
 use akd::{
     ecvrf::HardCodedAkdVRF,
@@ -59,6 +64,27 @@ fn read_proof(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn passphrase() -> Result<String> {
+    ensure!(
+        !std::io::stdin().is_terminal(),
+        "supply the native profile passphrase through redirected stdin"
+    );
+    let mut secret = String::new();
+    std::io::stdin().take(1025).read_to_string(&mut secret)?;
+    ensure!(secret.len() <= 1024, "passphrase input too large");
+    if secret.ends_with('\n') {
+        secret.pop();
+    }
+    Ok(secret)
+}
+
+fn point(epoch: &str, root: &str) -> Result<Checkpoint> {
+    Ok(Checkpoint {
+        epoch: epoch.parse()?,
+        root: digest(root)?,
+    })
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let args: Vec<_> = env::args().skip(1).collect();
@@ -73,6 +99,23 @@ async fn main() -> Result<()> {
             println!("verified record versions {} and {}, current value {}",old.version,new.version,hex::encode(new.value.0));
             Ok(())
         }
-        _ => bail!("usage: directory publish NEW_DIR | directory verify DIR VRF_KEY_HEX EPOCH_1_ROOT_HEX EPOCH_2_ROOT_HEX"),
+        [mode, profile, owner, key, epoch, root] if mode=="pin" => {
+            Store::provision(Path::new(profile),&passphrase()?,owner,digest(key)?,point(epoch,root)?)?;
+            println!("directory checkpoint provisioned");
+            Ok(())
+        }
+        [mode, profile, owner, key, old_epoch, old_root, new_epoch, new_root, proof] if mode=="advance" => {
+            let mut store = Store::open(Path::new(profile),&passphrase()?,owner,digest(key)?)?;
+            let outcome = store.advance(point(old_epoch,old_root)?,point(new_epoch,new_root)?,&read_proof(Path::new(proof))?).await?;
+            println!("{outcome:?}");
+            Ok(())
+        }
+        [mode, profile, owner, key, label, proof] if mode=="read" => {
+            let store = Store::open(Path::new(profile),&passphrase()?,owner,digest(key)?)?;
+            let (checkpoint,verified) = store.lookup(AkdLabel::from(label.as_str()),&read_proof(Path::new(proof))?)?;
+            println!("checkpoint {} record version {} value {}",checkpoint.epoch,verified.version,hex::encode(verified.value.0));
+            Ok(())
+        }
+        _ => bail!("usage: directory publish NEW_DIR | directory verify DIR VRF_KEY_HEX EPOCH_1_ROOT_HEX EPOCH_2_ROOT_HEX | directory pin PROFILE OWNER VRF EPOCH ROOT | directory advance PROFILE OWNER VRF OLD_EPOCH OLD_ROOT NEW_EPOCH NEW_ROOT PROOF | directory read PROFILE OWNER VRF LABEL PROOF"),
     }
 }

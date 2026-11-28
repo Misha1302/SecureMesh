@@ -9,7 +9,14 @@ license = "MIT"
 akd = { version = "=0.13.0", default-features = false, features = ["public_auditing", "whatsapp_v1"] }
 anyhow = "=1.0.104"
 protobuf = "=3.7.2"
+rusqlite = { version = "=0.41.1", features = ["bundled-sqlcipher-vendored-openssl"] }
 
 [dev-dependencies]
+securemesh-crypto = { path = "../crypto_core" }
+tempfile = "3"
 hex = "=0.4.3"
 tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread"] }
+
+# Keep the profile codec identical to crypto_core's SQLCipher 4.20.0 pin.
+[patch.crates-io]
+libsqlite3-sys = { git = "https://github.com/rusqlite/rusqlite.git", rev = "0f1ab7393ae5d62d44a94a5a5107c00b23d4ed58" }
