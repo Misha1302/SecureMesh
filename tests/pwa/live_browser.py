@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Live Chromium UI, Kestrel, PostgreSQL, and Mailpit on loopback.
+"""Live browser messaging through isolated loopback Kestrel, PostgreSQL and Mailpit.
 
-Prerequisites: local Compose db/mailpit, built Debug API and key-package validator,
-OpenSSL, PostgreSQL client tools, and Playwright Chromium. Run from any directory
-with python tests/pwa/live_browser.py. The API hostname maps to loopback only
-inside this test's Chromium process. Production network and DNS are untouched.
+Requires the local database/mail fixture, Debug API, native key-package validator,
+OpenSSL, PostgreSQL client tools and the selected Playwright browser engine.
 """
 
 import argparse

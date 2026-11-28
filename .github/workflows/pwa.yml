@@ -92,5 +92,6 @@ jobs:
           node src/browser_crypto/tests/interop.mjs
           for browser in chromium firefox webkit; do
             .local/venv/bin/python tests/pwa/vault_browser.py --browser "$browser"
+            .local/venv/bin/python tests/pwa/live_browser.py --browser "$browser"
           done
-          .local/venv/bin/python tests/pwa/live_browser.py
+          .local/venv/bin/python tests/pwa/recovery_browser.py
