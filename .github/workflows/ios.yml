@@ -3,6 +3,10 @@ on:
   pull_request:
     paths: ['apps/client_flutter/**', 'src/crypto_core/**', '.github/workflows/ios.yml']
   workflow_dispatch:
+concurrency:
+  group: ios-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 jobs:
