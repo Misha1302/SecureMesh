@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 
 import 'account_setup.dart';
+import 'account_recovery.dart';
 import 'account_credentials.dart';
 import 'display_name.dart';
 
@@ -199,6 +200,38 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
     } finally {
       if (mounted) setState(() => busy = false);
     }
+  }
+
+  Future<void> openAccountRecovery() async {
+    final base = httpsServerOrigin(endpoint.text);
+    if (base == null) {
+      setState(() {
+        editingServer = true;
+        error = (
+          ru: 'Укажите HTTPS-адрес сервера аккаунта.',
+          en: 'Enter your account’s HTTPS server address.',
+        );
+      });
+      return;
+    }
+    http ??= nativeHttpClient();
+    final name = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => AccountRecoveryPage(
+          endpoint: base,
+          request: bindLoginRequest(http!, base),
+          russian: ru,
+          initialUsername: username.text,
+        ),
+      ),
+    );
+    if (!mounted || name == null) return;
+    setState(() {
+      username.text = name;
+      password.clear();
+      revealed.clear();
+      error = null;
+    });
   }
 
   Future<void> submit() async {
@@ -733,6 +766,18 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           ),
                         ),
                       ),
+                      if (step == 2 &&
+                          !legacy &&
+                          !resuming &&
+                          !profileComplete &&
+                          !verifiedRegistrationHere &&
+                          draft == null)
+                        TextButton(
+                          onPressed: busy ? null : openAccountRecovery,
+                          child: Text(
+                            tr('Забыли пароль?', 'Forgot account password?'),
+                          ),
+                        ),
                       if (step == 1)
                         TextButton(
                           onPressed: busy ? null : resendVerification,
