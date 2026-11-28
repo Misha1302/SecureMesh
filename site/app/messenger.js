@@ -280,7 +280,7 @@ export function createMessenger(ctx) {
     return group;
   }
 
-  async function send(group, text) {
+  async function send(group, text, draftRevision) {
     ensureUsable(readChat(group));
     requireValue(typeof text === "string" && text.trim() && [...text].length <= 4000,
       "text", "Enter a message of 1–4000 characters");
@@ -288,6 +288,9 @@ export function createMessenger(ctx) {
     await ctx.run("queue", { group, id, text }, (draft, envelope) => {
       const data = transport(draft);
       data.outbox[id] = envelope;
+      if (draftRevision && data.chats[group].draft?.revision === draftRevision) {
+        delete data.chats[group].draft;
+      }
       data.chats[group].messages.push({ id, text, direction: "outgoing", status: "queued" });
     });
     preferredSend = group;

@@ -18,6 +18,7 @@ const show = (id, visible) => {
 const notice = (message) => {
   byId("notice").textContent = message;
 };
+let closingVault = Promise.resolve();
 let opened,
   selected,
   generation = 0,
@@ -88,6 +89,43 @@ function attach(handle, worker) {
   const instance = { handle, worker };
   opened = instance;
   let tail = Promise.resolve();
+  let timer;
+  const edited = new Map();
+  function applyEdits(profile, snapshot) {
+    for (const [id, edit] of snapshot) {
+      const chat = profile.messenger?.chats[id];
+      if (!chat) continue;
+      if (edit.text) chat.draft = edit;
+      else delete chat.draft;
+    }
+  }
+  instance.getDraft = (id) => edited.get(id) ?? handle.state.messenger?.chats[id]?.draft;
+  instance.edit = (id, text) => {
+    edited.set(id, { text, revision: crypto.randomUUID() });
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (edited.size && opened === instance) {
+        change(() => {}).catch((error) => {
+          if (opened === instance) notice(errorMessage(error));
+        });
+      }
+    }, 350);
+  };
+  instance.close = () => {
+    clearTimeout(timer);
+    if (!edited.size) {
+      closeVault(handle);
+      return;
+    }
+    // The UI and worker lock immediately. Finish only the pending local vault write.
+    closingVault = tail.then(async () => {
+      if (!edited.size) return;
+      const profile = structuredClone(handle.state);
+      applyEdits(profile, edited);
+      await commitVault(handle, profile);
+    }).catch(() => notice("Не удалось сохранить последнее изменение черновика."))
+      .finally(() => { edited.clear(); closeVault(handle); });
+  };
   function state() {
     if (opened !== instance) throw failure("locked");
     return handle.state;
@@ -95,10 +133,15 @@ function attach(handle, worker) {
   function change(work) {
     const next = tail.then(async () => {
       const draft = structuredClone(state());
+      const captured = new Map(edited);
+      applyEdits(draft, captured);
       const result = await work(draft);
       state();
       try {
         await commitVault(handle, draft);
+        for (const [id, edit] of captured) {
+          if (edited.get(id) === edit) edited.delete(id);
+        }
       } catch (error) {
         if (error.code === "conflict" && opened === instance) {
           lock();
@@ -138,7 +181,7 @@ function lock() {
   opened = null;
   current?.mesh.stop();
   current?.worker.stop();
-  if (current) closeVault(current.handle);
+  current?.close();
   selected = null;
   directory = {};
   for (const form of document.forms) form.reset();
@@ -226,7 +269,8 @@ function renderChats() {
       btn.onclick = () => {
         if (selected !== id) {
           opened.visibleMessages = 100;
-          byId("compose").reset();
+          byId("compose").elements.text.value = opened.getDraft(id)?.text ?? "";
+          composeRevision++;
         }
         selected = id;
         opened.mesh.select(id);
@@ -367,6 +411,8 @@ bind(byId("entry"), async () => {
   const worker = rpc();
   let handle;
   try {
+    await closingVault;
+    if (before !== generation) throw failure("locked");
     if (hasLocal) handle = await unlockVault(password);
     else {
       const username = form.elements.username.value.trim();
@@ -469,7 +515,10 @@ bind(byId("invite"), async () => {
   await refresh(current);
 });
 let composeRevision = 0;
-byId("compose").elements.text.addEventListener("input", () => composeRevision++);
+byId("compose").elements.text.addEventListener("input", (event) => {
+  composeRevision++;
+  if (opened && selected) opened.edit(selected, event.target.value);
+});
 bind(byId("compose"), async () => {
   const current = opened,
     form = byId("compose"),
@@ -477,7 +526,7 @@ bind(byId("compose"), async () => {
     revision = composeRevision,
     text = form.elements.text.value;
   if (!text.trim()) return;
-  await current.mesh.send(group, text);
+  await current.mesh.send(group, text, current.getDraft(group)?.revision);
   if (opened !== current) return;
   if (selected === group && composeRevision === revision) form.reset();
   renderChats();

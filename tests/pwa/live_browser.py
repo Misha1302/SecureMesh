@@ -171,7 +171,7 @@ def device_code(page):
     return code.text_content()
 
 
-def exercise_archive(browser, exporter, app_origin, exporter_code, peer, messages):
+def exercise_archive(browser, exporter, app_origin, exporter_code, peer, messages, private_draft):
     secret = secrets.token_urlsafe(25)
     exporter.locator("#backup summary").click()
     exporter.locator("#export [name=secret]").fill(secret)
@@ -229,6 +229,7 @@ def exercise_archive(browser, exporter, app_origin, exporter_code, peer, message
         archive_view.get_by_text("@" + peer, exact=True).click()
         for message in messages:
             expect(archive_view.get_by_text(message)).to_be_visible()
+        expect(archive_view.get_by_text(private_draft)).to_have_count(0)
         expect(viewer.locator("#conversations")).to_be_hidden()
         expect(viewer.locator("#my-code")).to_be_empty()
         assert viewer.evaluate("""async () => !(await (await import('/app/vault.js')).hasVault())""")
@@ -297,6 +298,7 @@ def exercise(app_origin, api_port, pin):
         alice.locator("#password").fill(alice_password)
         alice.locator("#enter").click()
         alice.locator("#chat-list").get_by_role("button", name=re.compile(bob_name)).click()
+        expect(alice.locator("#compose textarea")).to_have_value(next_draft)
         expect(row).to_contain_text("В очереди")
         expect(bob.locator("#messages").get_by_text(queued, exact=True)).to_have_count(0)
         alice.context.set_offline(False)
@@ -311,7 +313,23 @@ def exercise(app_origin, api_port, pin):
             wire = base64.b64decode(row["ciphertext"], validate=True)
             assert row["envelopeKind"] == 1 and len(wire) > 32
             assert not any(word.encode() in wire for word in ("сообщение", "профиля", "Очередь"))
-        exercise_archive(browser, alice, app_origin, alice_code, bob_name, [first, reply, queued])
+        expect(bob.locator("#compose textarea")).to_have_value("")
+        exercise_archive(browser, alice, app_origin, alice_code, bob_name, [first, reply, queued], next_draft)
+        alice.reload()
+        alice.locator("#password").fill(alice_password)
+        alice.locator("#enter").click()
+        alice.locator("#chat-list").get_by_role("button", name=re.compile(bob_name)).click()
+        expect(alice.locator("#compose textarea")).to_have_value(next_draft)
+        # Delete the draft and lock in the same JS turn, before autosave fires.
+        alice.locator("#compose textarea").evaluate("""field => {
+            field.value = '';
+            field.dispatchEvent(new Event('input', {bubbles: true}));
+            document.querySelector('#lock').click();
+        }""")
+        alice.locator("#password").fill(alice_password)
+        alice.locator("#enter").click()
+        alice.locator("#chat-list").get_by_role("button", name=re.compile(bob_name)).click()
+        expect(alice.locator("#compose textarea")).to_have_value("")
         browser.close()
 
 
