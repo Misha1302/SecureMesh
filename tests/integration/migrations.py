@@ -79,6 +79,7 @@ def main():
                 '202611280112_ChannelPin',
                 '202611280113_ChannelPinCleanup',
                 '202611280114_ConversationMessageBlocks',
+                '202611280115_ConversationMessageBlockBarrier',
             ]
             assert result.strip().splitlines() == expected
             # A missing table in this disposable database must produce a bounded diagnostic.
