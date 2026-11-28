@@ -165,8 +165,9 @@ class ChatBackgroundSettings extends StatelessWidget {
                 DropdownMenuItem(value: level, child: Text('$level%')),
             ],
             onChanged: (level) {
-              if (level != null)
+              if (level != null) {
                 saveDimming(id, dark, level == -1 ? null : level);
+              }
             },
           ),
         ],

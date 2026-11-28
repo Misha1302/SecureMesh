@@ -3250,8 +3250,9 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
                 );
                 if (mounted && epoch == generation) setState(() {});
               } catch (_) {
-                if (mounted && epoch == generation)
+                if (mounted && epoch == generation) {
                   setState(() => appearanceSaveFailed = true);
+                }
               }
             },
             save: (group, dark, color) async {
