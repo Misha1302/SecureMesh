@@ -468,14 +468,18 @@ bind(byId("invite"), async () => {
   notice("Приглашение отправлено.");
   await refresh(current);
 });
+let composeRevision = 0;
+byId("compose").elements.text.addEventListener("input", () => composeRevision++);
 bind(byId("compose"), async () => {
   const current = opened,
     form = byId("compose"),
+    group = selected,
+    revision = composeRevision,
     text = form.elements.text.value;
   if (!text.trim()) return;
-  await current.mesh.send(selected, text);
+  await current.mesh.send(group, text);
   if (opened !== current) return;
-  form.reset();
+  if (selected === group && composeRevision === revision) form.reset();
   renderChats();
 });
 function archiveValid(value) {

@@ -283,9 +283,15 @@ def exercise(app_origin, api_port, pin):
         alice.context.set_offline(True)
         queued = "Очередь сохраняется после блокировки 🔐"
         alice.locator("#compose textarea").fill(queued)
-        alice.locator("#compose button").click()
+        next_draft = "Текст следующего сообщения"
+        alice.locator("#compose").evaluate("""(form, draft) => {
+            form.requestSubmit();
+            form.elements.text.value = draft;
+            form.elements.text.dispatchEvent(new Event('input', {bubbles: true}));
+        }""", next_draft)
         row = alice.locator("#messages li").filter(has_text=queued)
         expect(row).to_contain_text("В очереди")
+        expect(alice.locator("#compose textarea")).to_have_value(next_draft)
         alice.locator("#lock").click()
         expect(alice.locator("#messages li")).to_have_count(0)
         alice.locator("#password").fill(alice_password)
