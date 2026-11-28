@@ -93,3 +93,7 @@ For two real Flutter sessions against the isolated HTTPS integration server, run
 ### Native profile QR
 
 The profile QR encodes `securemesh:profile:v1:<https-origin>/@<username>`. The scanner in the new-chat form accepts only its configured origin and a lowercase username of 3–32 ASCII letters, digits or underscores. Scanning fills the contact field. The user still submits a chat request. Device verification uses a separate QR type and compares the device fingerprint.
+
+### Browser unread counts
+
+Each unlocked PWA profile counts newly decrypted incoming items that have a visible timeline entry. A duplicate envelope and the user's own echo add zero. The encrypted vault commits the message and received counter together. Existing vaults begin counting with the first newly processed message. The separate read counter advances to the observed count when the end of the selected conversation intersects the visible page. These counts remain local to the browser profile. Neither counter is sent to the peer or included in an OS notification.

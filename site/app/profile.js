@@ -200,6 +200,10 @@ function attach(handle, worker) {
         return result;
       }),
   };
+  instance.markRead = (group, count) => change(draft => {
+    const chat = draft.messenger.chats[group];
+    if (chat) chat.readCount = Math.max(chat.readCount ?? 0, Math.min(count, chat.receivedCount ?? 0));
+  });
   instance.account = createAccount(ctx);
   instance.mesh = createMessenger({ ...ctx, api: instance.account.api, apiBytes: instance.account.apiBytes });
   return instance;
@@ -214,6 +218,7 @@ function lock() {
   const current = opened;
   opened = null;
   disposePhotoControls(current);
+  stopWatchingUnread();
   current?.mesh.stop();
   current?.worker.stop();
   current?.close();
@@ -405,6 +410,38 @@ function element(tag, text) {
   return node;
 }
 const chatClock = new Intl.DateTimeFormat("ru", {hour: "2-digit", minute: "2-digit"});
+let unreadWatch;
+function stopWatchingUnread() {
+  unreadWatch?.observer.disconnect();
+  unreadWatch = undefined;
+}
+function watchUnread(chat, target) {
+  const current = opened, group = selected, total = chat?.receivedCount ?? 0;
+  if (!current || !chat || !target || document.visibilityState !== "visible" || total <= (chat.readCount ?? 0)) {
+    stopWatchingUnread();
+    return;
+  }
+  if (unreadWatch?.target === target && unreadWatch.total === total) return;
+  stopWatchingUnread();
+  const observer = new IntersectionObserver(entries => {
+    if (unreadWatch?.observer !== observer || opened !== current || selected !== group ||
+        document.visibilityState !== "visible" || !entries.at(-1)?.isIntersecting) return;
+    observer.disconnect();
+    current.markRead(group, total).then(() => {
+      if (opened === current) renderChats();
+    }).catch(error => {
+      if (unreadWatch?.observer === observer) stopWatchingUnread();
+      if (opened === current) notice(errorMessage(error));
+    });
+  });
+  unreadWatch = {observer, target, total};
+  observer.observe(target);
+}
+document.addEventListener("visibilitychange", () => {
+  stopWatchingUnread();
+  if (opened && !byId("conversations").hidden) renderChats();
+});
+
 function renderChats() {
   const chats = opened?.handle.state.messenger?.chats ?? {};
   const list = byId("chat-list");
@@ -426,7 +463,10 @@ function renderChats() {
       const preview = element("span");
       preview.className = "chat-preview";
       body.append(element("strong", "@" + peerName), preview);
-      btn.append(avatar, body);
+      const unread = element("span");
+      unread.className = "chat-unread";
+      unread.hidden = true;
+      btn.append(avatar, body, unread);
       btn.dataset.chat = id;
       btn.onclick = () => {
         if (selected !== id) {
@@ -446,6 +486,13 @@ function renderChats() {
   }
   for (const button of list.querySelectorAll("button[data-chat]")) {
     const id = button.dataset.chat;
+    const unread = button.querySelector(".chat-unread");
+    const count = (chats[id].receivedCount ?? 0) - (chats[id].readCount ?? 0);
+    unread.hidden = count <= 0;
+    if (count > 0) {
+      unread.textContent = String(count);
+      unread.setAttribute("aria-label", "Непрочитанных сообщений: " + count);
+    }
     const last = chats[id].messages.at(-1);
     const preview = opened.getDraft(id)?.text;
     const summary = preview ? "Черновик: " + preview : last?.text || "Пока нет сообщений";
@@ -459,6 +506,7 @@ function renderChats() {
   show("thread-placeholder", !chat);
   show("thread", Boolean(chat));
   if (!chat) {
+    stopWatchingUnread();
     disposePhotoControls(opened);
     opened.mesh.select(null);
     opened.timelineSignature = null;
@@ -483,7 +531,10 @@ function renderChats() {
     selected,
     rows.map(({ id, status }) => [id, status]),
   ]);
-  if (opened.timelineSignature === version) return;
+  if (opened.timelineSignature === version) {
+    watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
+    return;
+  }
   const timeline = byId("timeline");
   const previousHeight = timeline.scrollHeight;
   const previousTop = timeline.scrollTop;
@@ -536,6 +587,7 @@ function renderChats() {
   }
   if (prepended) timeline.scrollTop = previousTop + timeline.scrollHeight - previousHeight;
   else if (newChat || wasAtEnd) timeline.scrollTop = timeline.scrollHeight;
+  watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
 }
 byId("to-chats").onclick = () => {
   const old = selected;

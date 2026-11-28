@@ -367,7 +367,7 @@ def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
         suffix = uuid.uuid4().hex[:12]
         alice_name, bob_name = f"mila_{suffix[:6]}", f"alex_{suffix[:6]}"
         alice_code, alice_password = register(alice, app_origin, alice_name)
-        bob_code, _ = register(bob, app_origin, bob_name)
+        bob_code, bob_password = register(bob, app_origin, bob_name)
         assert alice_code != bob_code
         profile_panel = alice.locator("#profile-text")
         profile_panel.locator("summary").click()
@@ -440,13 +440,31 @@ def exercise(app_origin, api_port, pin, engine="chromium", outage=None):
         establish.locator("..").locator("input").fill(bob_code)
         establish.click()
         bob.locator("[data-action=join]").click()
-        for page, peer in [(alice, bob_name), (bob, alice_name)]:
-            page.locator("#chat-list").get_by_role("button", name=re.compile(peer)).click()
+        alice.locator("#chat-list").get_by_role("button", name=re.compile(bob_name)).click()
         first, reply = "Привет! Ты получил приглашение?", "Да, вижу наш чат."
-        for sender, recipient, text in [(alice, bob, first), (bob, alice, reply)]:
-            sender.locator("#compose textarea").fill(text)
-            sender.locator("#compose button").click()
-            expect(recipient.locator("#messages").get_by_text(text, exact=True)).to_be_visible(timeout=20_000)
+        alice.locator("#compose textarea").fill(first)
+        alice.locator("#compose button").click()
+        bob_row = bob.locator("#chat-list").get_by_role("button", name=re.compile(alice_name))
+        badge = bob_row.locator(".chat-unread")
+        expect(badge).to_have_text("1", timeout=25_000)
+        bob.locator("#lock").click()
+        expect(bob.locator("#chat-list button")).to_have_count(0)
+        bob.locator("#password").fill(bob_password)
+        bob.locator("#enter").click()
+        expect(badge).to_have_text("1")
+        bob_row.click()
+        expect(bob.locator("#messages").get_by_text(first, exact=True)).to_be_visible()
+        bob.locator("#messages li").last.scroll_into_view_if_needed()
+        expect(badge).to_be_hidden()
+        bob.locator("#lock").click()
+        bob.locator("#password").fill(bob_password)
+        bob.locator("#enter").click()
+        expect(bob_row).to_be_visible()
+        expect(badge).to_be_hidden()
+        bob_row.click()
+        bob.locator("#compose textarea").fill(reply)
+        bob.locator("#compose button").click()
+        expect(alice.locator("#messages").get_by_text(reply, exact=True)).to_be_visible(timeout=20_000)
 
         evidence = os.environ.get("SECUREMESH_CHAT_SCREENSHOTS")
         if evidence:

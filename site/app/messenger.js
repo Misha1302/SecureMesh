@@ -611,6 +611,7 @@ export function createMessenger(ctx) {
     function finish(draft, processed) {
       const data = transport(draft);
       const saved = data.chats[group];
+      const previousLength = saved.messages.length;
       if (processed?.text !== undefined) {
         saved.messages.push({ id: envelope.id, text: processed.text, direction: "incoming", status: "received", recordedAt: Date.now() });
       } else if (processed?.attachment?.media === "photo") {
@@ -624,6 +625,7 @@ export function createMessenger(ctx) {
           status: "unsupported", recordedAt: Date.now(),
         });
       }
+      if (saved.messages.length > previousLength) saved.receivedCount = (saved.receivedCount ?? 0) + 1;
       if (processed?.active === false) saved.active = false;
       if (processed?.epoch !== undefined) saved.epoch = processed.epoch;
       saved.envelopes[envelope.seq] = envelope;

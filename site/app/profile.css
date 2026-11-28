@@ -262,3 +262,5 @@ main:has(#conversations:not([hidden])) #title {
 }
 
 #profile-text-form fieldset { display: grid; gap: .75rem; margin: 0; padding: 0; border: 0; min-width: 0; }
+
+.chat-unread { margin-inline-start: auto; padding: .05rem .45rem; border-radius: 1rem; background: var(--accent); color: var(--card); font-size: .875rem; font-weight: 650; }
