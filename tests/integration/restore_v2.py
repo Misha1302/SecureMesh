@@ -38,6 +38,8 @@ def main():
         posts = base+'/'+room+'/posts'
         post = {'requestId': str(uuid.uuid4()), 'body': 'Retained post'}
         sequence = d.request(posts, post, token=owner, expected=201)['seq']
+        pin = base+'/'+room+'/pin'
+        d.request(pin, {'expectedRevision':0, 'seq':sequence}, method='PUT', token=owner, expected=204)
         comments = posts+'/'+str(sequence)+'/comments'
         comment = {'requestId': str(uuid.uuid4()), 'body': 'Retained comment'}
         comment_id = d.request(comments, comment, token=owner, expected=201)['id']
@@ -67,6 +69,9 @@ def main():
         assert d.request('/v1/contact-blocks', token=owner) == {'items': [b['username']]}
         peer_fields = f"/v1/conversations/{group}/profile-text/{a['device'].identity}"
         assert d.request(peer_fields, token=peer) == {'bio':None, 'status':None}
+        feed = d.request(posts, token=owner)
+        assert feed['pinned'] == {'seq':sequence, 'body':post['body']} and feed['pinRevision'] == 1
+        d.request(posts, token=peer, expected=404)
         assert d.request(posts, post, token=owner)['seq'] == sequence
         assert d.request(comments, comment, token=owner)['id'] == comment_id
         assert [row['body'] for row in d.request(comments, token=owner)['items']] == [comment['body']]
