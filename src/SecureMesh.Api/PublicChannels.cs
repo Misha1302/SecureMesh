@@ -19,6 +19,7 @@ public static class PublicChannels
     {
         var routes = app.MapGroup("/v1/public-channels");
         routes.MapGet("", List);
+        routes.MapGet("/feed", AggregateFeed);
         routes.MapPost("", CreatePublic);
         routes.MapPost("/invite-only", CreateRestricted);
         routes.MapDelete("/{id:guid}", Remove);
@@ -284,6 +285,42 @@ public static class PublicChannels
         await using var update=Sql.Cmd(c,"UPDATE public_channel_posts SET body=$1,revision=revision+1 WHERE channel_id=$2 AND seq=$3 RETURNING revision",body,id,seq);
         var next=(int)(await update.ExecuteScalarAsync())!;await tx.CommitAsync();
         return Results.Ok(new{seq,revision=next});
+    }
+
+    // Cursor contains the exact database timestamp and globally unique sequence as a tie breaker.
+    private static async Task<IResult> AggregateFeed(string? before, HttpContext ctx, NpgsqlDataSource db)
+    {
+        var actor = await Sql.Authenticate(ctx, db);
+        DateTime timestamp = DateTime.MaxValue.ToUniversalTime();
+        long seq = long.MaxValue;
+        if (before is not null)
+        {
+            var parts = before.Split('~');
+            if (parts.Length != 2 || !long.TryParse(parts[0], out var ticks) ||
+                !long.TryParse(parts[1], out seq) || seq <= 0 || ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks)
+                throw new ApiError(400, "INVALID_CHANNEL_CURSOR");
+            timestamp = new DateTime(ticks, DateTimeKind.Utc);
+        }
+        await using var c = await db.OpenConnectionAsync();
+        await using var cmd = Sql.Cmd(c, """
+            SELECT p.seq,p.body,p.published_at,p.revision,ch.id,ch.slug,ch.title
+            FROM public_channel_subscriptions s
+            JOIN channel_catalog ch ON ch.id=s.channel_id AND NOT ch.invite_only
+            JOIN public_channel_posts p ON p.channel_id=ch.id AND p.body IS NOT NULL
+            WHERE s.user_id=$1 AND (p.published_at,p.seq)<($2,$3)
+            ORDER BY p.published_at DESC,p.seq DESC LIMIT 21
+            """, actor.UserId, timestamp, seq);
+        await using var r = await cmd.ExecuteReaderAsync();
+        var items = new List<object>(); string? last = null; bool more = false;
+        while (await r.ReadAsync())
+        {
+            if (items.Count == 20) { more = true; break; }
+            var published = r.GetDateTime(2); var postSeq = r.GetInt64(0);
+            last = $"{published.Ticks}~{postSeq}";
+            items.Add(new { seq = postSeq, body = r.GetString(1), publishedAt = published,
+                revision = r.GetInt32(3), channelId = r.GetGuid(4), slug = r.GetString(5), title = r.GetString(6) });
+        }
+        return Results.Ok(new { items, next = more ? last : null });
     }
 
     private static async Task<IResult> Feed(Guid id,long? before,HttpContext ctx,NpgsqlDataSource db)

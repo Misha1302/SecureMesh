@@ -41,6 +41,7 @@ def verify(request, owner, reader, outsider, pending, username):
     invite(username)
     request(root+'/subscription',token=reader,method='PUT',expected=204)
     assert request(listing,token=reader)['items'][0]['subscribed']
+    assert all(p['channelId'] != spec['id'] for p in request(path+'/feed',token=reader)['items'])
     before=request(root+'/posts',token=reader)['items'][0]
     assert before['revision']==1 and before['body']=='Original'
     edit={'expectedRevision':1,'body':'Corrected'}

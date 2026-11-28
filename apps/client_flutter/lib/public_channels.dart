@@ -25,14 +25,14 @@ class _PublicChannelsState extends State<PublicChannels> {
       title = TextEditingController(),
       post = TextEditingController(),
       inviteName = TextEditingController();
-  List<Map> rooms = [], posts = [];
+  List<Map> rooms = [], posts = [], aggregatePosts = [];
   Map? room;
-  String? directoryCursor, error;
+  String? directoryCursor, aggregateCursor, error;
   int? feedCursor;
   String activeQuery = '';
   bool restricted = false;
   String? inviteNote;
-  bool mine = false, creating = false, busy = false;
+  bool mine = false, creating = false, busy = false, aggregate = false;
   String? createId, creationKey, postId, postKey;
   String tr(String ru, String en) => widget.russian ? ru : en;
   String get roomPath => '$path/${room!['id']}';
@@ -123,6 +123,20 @@ class _PublicChannelsState extends State<PublicChannels> {
     final page = (result['items'] as List).cast<Map>();
     posts = more ? [...posts, ...page] : page;
     feedCursor = result['next'] as int?;
+  }
+
+  Future<void> aggregateFeed({bool more = false}) async {
+    final url = Uri(
+      path: '$path/feed',
+      queryParameters: {
+        if (more && aggregateCursor != null) 'before': aggregateCursor!,
+      },
+    );
+    final result = await widget.api(url.toString()) as Map;
+    if (!mounted) return;
+    final page = (result['items'] as List).cast<Map>();
+    aggregatePosts = more ? [...aggregatePosts, ...page] : page;
+    aggregateCursor = result['next'] as String?;
   }
 
   Future<void> open(Map target) async {
@@ -361,6 +375,8 @@ class _PublicChannelsState extends State<PublicChannels> {
                 : () {
                     if (room != null) {
                       run(closeRoom);
+                    } else if (aggregate) {
+                      setState(() => aggregate = false);
                     } else if (creating) {
                       setState(() => creating = false);
                     } else {
@@ -370,7 +386,10 @@ class _PublicChannelsState extends State<PublicChannels> {
           ),
           Expanded(
             child: Text(
-              room?['title'] as String? ?? tr('Каналы', 'Channels'),
+              room?['title'] as String? ??
+                  (aggregate
+                      ? tr('Лента подписок', 'Subscription feed')
+                      : tr('Каналы', 'Channels')),
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
@@ -416,6 +435,29 @@ class _PublicChannelsState extends State<PublicChannels> {
           title: Text(tr('Только по приглашению', 'Invite only')),
         ),
         action('Создать канал', 'Create channel', create),
+      ] else if (aggregate) ...[
+        Text(
+          tr(
+            'Публикации подписок на публичные каналы.',
+            'Posts from your public channel subscriptions.',
+          ),
+        ),
+        action('Обновить ленту', 'Refresh feed', aggregateFeed),
+        if (!busy && aggregatePosts.isEmpty)
+          Text(tr('Публикаций пока нет.', 'No posts yet.')),
+        for (final p in aggregatePosts)
+          ListTile(
+            title: SelectableText(p['body'] as String),
+            subtitle: Text(
+              '${p['title']} · @${p['slug']} · ${MaterialLocalizations.of(context).formatMediumDate(DateTime.parse(p['publishedAt'] as String).toLocal())}',
+            ),
+          ),
+        if (aggregateCursor != null)
+          action(
+            'Более ранние публикации',
+            'Older posts',
+            () => aggregateFeed(more: true),
+          ),
       ] else if (room == null) ...[
         TextField(
           enabled: !busy,
@@ -434,6 +476,15 @@ class _PublicChannelsState extends State<PublicChannels> {
         ),
         Wrap(
           children: [
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () => run(() async {
+                      aggregate = true;
+                      await aggregateFeed();
+                    }),
+              child: Text(tr('Лента подписок', 'Subscription feed')),
+            ),
             TextButton(
               onPressed: busy
                   ? null
