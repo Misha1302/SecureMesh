@@ -47,7 +47,7 @@ envsubst '$SECUREMESH_DOMAIN $SECUREMESH_TLS_CERT_PATH $SECUREMESH_TLS_KEY_PATH'
   < deploy/reverse-proxy.conf.template
 ```
 
-The local integration test renders this template with a loopback listener, a private TLS certificate and an isolated API/PostgreSQL fixture. Use the normal integration prerequisites and a locally cached `nginx:1.27-alpine` image. Override `SECUREMESH_TEST_NGINX_IMAGE` to test a different cached image.
+The local integration test renders this template with a loopback listener, a private TLS certificate and an isolated API/PostgreSQL fixture. It uses local PostgreSQL and Mailpit, the Debug API, the native crypto CLI, generated wire bindings, OpenSSL and a locally cached `nginx:1.27-alpine` image. Override `SECUREMESH_TEST_NGINX_IMAGE` to test a different cached image.
 
 ```sh
 .local/venv/bin/python tests/integration/nginx_private_blobs.py

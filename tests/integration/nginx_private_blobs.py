@@ -6,6 +6,7 @@ import os
 import socket
 import ssl
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -59,9 +60,13 @@ def ingress(root, api_port):
             except OSError:
                 time.sleep(.1)
         else:
-            logs = subprocess.run(["docker", "logs", container], capture_output=True, text=True)
-            raise RuntimeError("nginx did not become ready: " + logs.stderr)
+            raise RuntimeError("nginx did not become ready")
         yield endpoint, tls
+    except Exception:
+        # Retain proxy diagnostics before the ephemeral container is removed.
+        logs = subprocess.run(["docker", "logs", container], capture_output=True, text=True)
+        print(logs.stderr, file=sys.stderr)
+        raise
     finally:
         subprocess.run(["docker", "stop", "-t", "2", container], check=True, capture_output=True)
 
@@ -91,6 +96,14 @@ def verify(endpoint, tls, group, account):
         if proxy_limit:
             assert response["Content-Type"].startswith("text/html"), payload[:120]
         return payload
+
+    with patch.object(d, "BASE", f"https://127.0.0.1:{endpoint}"), patch.object(d, "TLS", tls):
+        stream = d.Stream(token, account["device"])
+        try:
+            assert stream.exchange(d.wire.Frame(protocol_version=1, kind=d.wire.PING)).kind == d.wire.PONG
+        finally:
+            stream.close()
+
 
     for size in (WHOLE_BLOB_MAX, PHOTO_MAX):
         route = f"/v1/conversations/{group}/blobs/{uuid.uuid4()}"
@@ -123,12 +136,6 @@ def verify(endpoint, tls, group, account):
     })
     assert send("GET", blob, 200) == part
     send("POST", "/v1/auth/session/activity", 200, body=b"x" * DEFAULT_MAX)
-    with patch.object(d, "BASE", f"https://127.0.0.1:{endpoint}"), patch.object(d, "TLS", tls):
-        stream = d.Stream(token, account["device"])
-        try:
-            assert stream.exchange(d.wire.Frame(protocol_version=1, kind=d.wire.PING)).kind == d.wire.PONG
-        finally:
-            stream.close()
 
 
 def main():
