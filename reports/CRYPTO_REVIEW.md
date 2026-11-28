@@ -11,3 +11,11 @@ Limitations: this is a CLI, not a verified Flutter bridge. Explicit pin confirma
 WASM storage provider explicitly does not support wasm32 in its upstream source; separate web provider/bridge is required. Browser private chat must remain disabled. Native/WASM platform probes are recorded separately; build support alone is not interoperability proof.
 
 Later checkpoint: Dart/FRB 2.13.0 native two-store OpenMLS smoke passed. Concurrent self-update commits now use staged persistence; epoch-conflict integration passed. Original standalone add/remove remains feasibility-only. RustSec found four advisories; see docs/SECURITY_LIMITATIONS.md and retained resolver probes. No security clearance or independent audit is claimed.
+
+## Integration evidence on 2026-11-28
+
+The November 18 observations above describe the original CLI spike. Native and browser clients now exchange MLS messages and private photos through a test relay. The browser uses a separate WASM build and a password-protected local vault. Chromium and Linux Playwright WebKit exchanged real encrypted images in both directions with the native core. A server that controls delivered browser code can still compromise an unlocked browser session. [Interoperability harness](../tests/pwa/native_photo_browser.py)
+
+The native directory verifier checks a complete signed roster and all active device KeyPackages against one pinned AKD checkpoint in one SQLCipher transaction. Tests cover omitted, duplicate, additional, revoked and stale device data. An independent model reviewed the library contract at db6a716 and reran its integration test. Binding a human-readable account name to the initial owner key, obtaining a fresh checkpoint from independent operators and checking current authorization at send time remain release gates. Native device-fingerprint comparison remains available. [Verified-set test](../src/key_directory/tests/package_set.rs) · [Directory implementation](../src/key_directory/README.md)
+
+The native profile QR carries the configured server and username for chat discovery. It provides no evidence about the account owner's identity and grants no device trust. [QR protocol](../docs/PROTOCOL.md) · [Current project status](PRODUCT_HANDOFF_RU.md)
