@@ -79,7 +79,8 @@ label {
 .check {
   display: flex;
   gap: 0.55rem;
-  align-items: baseline;
+  align-items: center;
+  min-height: 44px;
 }
 input:not([type="checkbox"]),
 textarea {
@@ -92,6 +93,10 @@ textarea {
   background: var(--card);
   color: inherit;
   font: inherit;
+}
+input::placeholder {
+  color: color-mix(in srgb, var(--text) 65%, var(--card));
+  opacity: 1;
 }
 button,
 summary {
