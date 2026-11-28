@@ -40,6 +40,8 @@ check account-removal .local/venv/bin/python tests/integration/account_removal.p
 check private-blobs .local/venv/bin/python tests/integration/private_blobs.py
 check verification-email-queue .local/venv/bin/python tests/integration/verification_email_queue.py
 check account-recovery .local/venv/bin/python tests/integration/account_recovery.py
+check security-email .local/venv/bin/python tests/integration/security_email.py
+check profile-text .local/venv/bin/python tests/integration/profile_text.py
 check contact-blocks .local/venv/bin/python tests/integration/contact_blocks.py
 check mls-directory .local/venv/bin/python tests/integration/directory.py
 check public-channels .local/venv/bin/python tests/integration/public_channels.py
