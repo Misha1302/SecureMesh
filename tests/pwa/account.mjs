@@ -132,7 +132,8 @@ assert.equal(ctx.state().session.deviceId, identity);
 assert.equal(ctx.state().enrollmentVerified, true);
 assert.equal(signs(), 1);
 
-const recovery = context();
+const savedMessenger = { accepted: { prior: { peerKey: publicKey, posted: true } } };
+const recovery = context({messenger: savedMessenger});
 const recoveryAccount = createAccount(recovery.ctx);
 fake = ({ path, data }) => {
   if (path === "/v1/auth/recovery/request") {
@@ -148,6 +149,32 @@ await recoveryAccount.completeRecovery(emailCode);
 assert.equal(recovery.ctx.state().registrationStage, "verified");
 assert.equal(calls.at(-1).path, "/v2/auth/recovery/complete");
 await assert.rejects(recoveryAccount.completeRecovery("bad-code"), /INVALID_RECOVERY/);
+
+const rejected = context({registrationStage: "verified", registrationOrigin: "verified-email"});
+fake = () => request({code: "INVALID_RECOVERY"}, 400);
+await assert.rejects(createAccount(rejected.ctx).completeRecovery(emailCode), /INVALID_RECOVERY/);
+assert.equal(rejected.ctx.state().registrationOrigin, "verified-email");
+
+// Server-reported trust cannot attest an independent enrollment after recovery.
+fake = async ({ path }) => {
+  if (path === "/v1/auth/challenge") return request(challenge());
+  if (path === "/v2/auth/login") return request(session());
+  assert.equal(path, "/v1/users/me");
+  return request(me);
+};
+for (const profile of [recovery, context({registrationStage: "verified", messenger: savedMessenger})]) {
+  const reopenedAccount = createAccount(profile.ctx);
+  await reopenedAccount.login(passphrase);
+  assert.equal(profile.ctx.state().enrollmentVerified, false);
+  assert.deepEqual(profile.ctx.state().messenger, savedMessenger);
+  await assert.rejects(reopenedAccount.api("/v1/conversations"), /DEVICE_ENROLLMENT_REQUIRED/);
+}
+const lostReset = context({registrationStage: "verified", registrationOrigin: "verified-email", messenger: savedMessenger});
+fake = () => { throw new TypeError("lost reset response"); };
+await assert.rejects(createAccount(lostReset.ctx).completeRecovery(emailCode), /NETWORK_UNAVAILABLE/);
+assert.equal(lostReset.ctx.state().registrationOrigin, "recovery");
+assert.deepEqual(lostReset.ctx.state().messenger, savedMessenger);
+
 
 await ctx.update((state) => { state.session = null; });
 fake = ({ path, data }) => {
@@ -243,6 +270,7 @@ await assert.rejects(uncertainAccount.verify(emailCode), /NETWORK_UNAVAILABLE/);
 assert.equal(ambiguous.ctx.state().registrationStage, "verifying");
 await uncertainAccount.login(passphrase);
 assert.equal(ambiguous.ctx.state().registrationStage, "verified");
+assert.equal(ambiguous.ctx.state().enrollmentVerified, false);
 
 const pending = context({ registrationStage: "verified" });
 const pendingAccount = createAccount(pending.ctx);

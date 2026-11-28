@@ -211,6 +211,7 @@ export function createAccount(ctx) {
     await ctx.update((draft) => {
       stillBound(draft, binding);
       draft.registrationStage = "verified";
+      if (draft.registrationOrigin !== "recovery") draft.registrationOrigin = "verified-email";
     });
   }
 
@@ -230,11 +231,35 @@ export function createAccount(ctx) {
     const credential = await ctx.derive(apiOrigin, binding.username);
     decodeBase64(credential, 32);
     stillBound(ctx.state(), binding);
-    await exchange("/v2/auth/recovery/complete", {
-      token: code.trim(), username: binding.username, credential,
-    });
+    // Record recovery before dispatch: a lost response cannot turn a reset into
+    // evidence that this local device verified a newly registered account.
+    const attempt = crypto.randomUUID();
+    let priorOrigin;
     await ctx.update((draft) => {
       stillBound(draft, binding);
+      priorOrigin = draft.registrationOrigin;
+      draft.registrationOrigin = "recovery";
+      draft.recoveryAttempt = attempt;
+    });
+    try {
+      await exchange("/v2/auth/recovery/complete", {
+        token: code.trim(), username: binding.username, credential,
+      });
+    } catch (error) {
+      if (error.status === 400 && error.code === "INVALID_RECOVERY") {
+        await ctx.update((draft) => {
+          stillBound(draft, binding);
+          if (draft.recoveryAttempt !== attempt) return;
+          delete draft.recoveryAttempt;
+          if (priorOrigin === undefined) delete draft.registrationOrigin;
+          else draft.registrationOrigin = priorOrigin;
+        });
+      }
+      throw error;
+    }
+    await ctx.update((draft) => {
+      stillBound(draft, binding);
+      if (draft.recoveryAttempt === attempt) delete draft.recoveryAttempt;
       draft.registrationStage = "verified";
     });
   }
@@ -279,7 +304,8 @@ export function createAccount(ctx) {
         if (!existing) {
           require(draft.registrationStage === "verified" || draft.registrationStage === "verifying", "REGISTRATION_CHANGED");
           draft.registrationStage = "verified";
-          draft.enrollmentVerified = me.trustState === "DEVICE_TRUSTED";
+          draft.enrollmentVerified = draft.registrationOrigin === "verified-email" &&
+            me.trustState === "DEVICE_TRUSTED";
         }
       });
       activityAttempt = -Infinity;

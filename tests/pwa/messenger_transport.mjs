@@ -15,6 +15,7 @@ const clients = new Map();
 let loseAck = false;
 let wrongSender = false;
 let replaceKey = false;
+let omitChats = false;
 let sendCalls = [];
 const digest = (ciphertext) => createHash("sha256").update(Buffer.from(ciphertext, "base64")).digest("base64");
 
@@ -81,6 +82,7 @@ function client(username) {
       return null;
     }
     if (path === "/v1/conversations") {
+      if (omitChats) return [];
       return [...groups].filter(([, group]) => group.members.includes(username))
         .map(([id, group]) => {
           const peerName = group.members.find((name) => name !== username);
@@ -215,9 +217,29 @@ assert.equal(placeholder.status, "unsupported");
 assert(placeholder.text.includes("Зашифрованное"));
 assert(!placeholder.text.includes("fixture plaintext"));
 
+const queuedBeforeChange = await reopened.send(group, "durable pre-conflict draft");
+const attemptsBeforeChange = sendCalls.length;
 replaceKey = true;
 await reopened.refresh();
 await assert.rejects(reopened.send(group, "blocked"), { code: "changed-key" });
+assert.equal(alice.ctx.state().messenger.chats[group].peerKey, bob.own.public_key);
+
+const afterConflict = createMessenger(alice.ctx);
+omitChats = true;
+await afterConflict.tick();
+assert.equal(sendCalls.length, attemptsBeforeChange);
+assert(alice.ctx.state().messenger.outbox[queuedBeforeChange]);
+const originalCode = await fingerprint(bob.own.public_key);
+await assert.rejects(afterConflict.reconfirmChat(group, originalCode), {code: "changed-key"});
+omitChats = false;
+await assert.rejects(afterConflict.reconfirmChat(group, originalCode), {code: "changed-key"});
+replaceKey = false;
+await afterConflict.refresh();
+await assert.rejects(afterConflict.send(group, "still blocked"), {code: "changed-key"});
+await assert.rejects(afterConflict.reconfirmChat(group, "bad"), {code: "verification"});
+await afterConflict.reconfirmChat(group, originalCode);
+await afterConflict.tick();
+assert(!alice.ctx.state().messenger.outbox[queuedBeforeChange]);
 assert.equal(alice.ctx.state().messenger.chats[group].peerKey, bob.own.public_key);
 
 // Keep the background directory cadence independent of the active thread and

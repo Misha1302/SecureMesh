@@ -354,6 +354,9 @@ function renderChats() {
   show("thread", Boolean(chat));
   if (!chat) return;
   byId("peer").textContent = "@" + chat.peerName;
+  show("reconfirm-chat", Boolean(chat.bindingConflict));
+  show("compose", !chat.bindingConflict);
+  if (opened.renderedGroup !== selected) byId("reconfirm-chat").reset();
   const messages = byId("messages");
   const count = opened.visibleMessages ?? 100;
   show("earlier", chat.messages.length > count);
@@ -421,12 +424,13 @@ function renderRequests(current, value) {
   for (const row of value?.welcomes ?? []) {
     const receipt = current.handle.state.messenger?.accepted?.[row.invitation];
     if (!receipt?.posted || receipt.reference !== row.reference ||
+        row.recipient !== current.handle.state.identity.identity ||
         receipt.peerDevice !== row.sender || receipt.peerKey !== row.senderKey) {
       rows.push(["blocked", row, "Приглашение не совпадает с сохранённым согласием. Попросите собеседника отправить новое."]);
     } else if (!receipt.coreConsent && !receipt.joined) {
       rows.push(["reconfirm", row, "Сверить код и повторно принять приглашение"]);
     } else {
-      rows.push(["join", row, "Открыть проверенное приглашение"]);
+      rows.push(["join", row, "Проверить приглашение и открыть чат"]);
     }
   }
   // Keep the fingerprint field and its focus during background refreshes.
@@ -624,6 +628,14 @@ for (const id of ["register", "verify", "resend-verification", "recovery-request
     }
   });
 }
+bind(byId("reconfirm-chat"), async () => {
+  const current = opened, group = selected, form = byId("reconfirm-chat");
+  await current.mesh.reconfirmChat(group, form.elements.code.value);
+  if (opened === current && selected === group) {
+    form.reset();
+    renderChats();
+  }
+});
 bind(byId("invite"), async () => {
   const f = byId("invite"),
     current = opened;

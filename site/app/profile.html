@@ -128,6 +128,11 @@
             <button id="earlier" hidden>Показать предыдущие сообщения</button>
             <ol id="messages" aria-label="Сообщения"></ol>
           </div>
+          <form id="reconfirm-chat" hidden>
+            <p>Данные собеседника в каталоге расходились с сохранёнными. Отправка приостановлена. Сверьте прежний код устройства напрямую с собеседником.</p>
+            <label>Прежний код устройства<input name="code" required autocomplete="off" spellcheck="false" /></label>
+            <button>Проверить и возобновить отправку</button>
+          </form>
           <form id="compose">
             <textarea aria-label="Сообщение" placeholder="Сообщение" name="text" required maxlength="4000" rows="2"></textarea>
             <button>Отправить</button>

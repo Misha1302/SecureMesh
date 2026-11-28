@@ -97,7 +97,7 @@ export function createMessenger(ctx) {
 
   function ensureUsable(chat) {
     requireValue(chat.active !== false, "inactive-chat", "This conversation is inactive");
-    requireValue(!remoteBlocked.has(chat.id), "changed-key", "The conversation contact changed");
+    requireValue(!chat.bindingConflict && !remoteBlocked.has(chat.id), "changed-key", "The conversation contact changed");
   }
 
   async function identity() {
@@ -109,9 +109,9 @@ export function createMessenger(ctx) {
     const fields = { identity: peer.peerDevice, public_key: peer.peerKey };
     const { status } = await ctx.run("peer_key_status", fields);
     requireValue(status === "unknown" || status === "matches", "changed-key", "The contact device key changed");
-    if (alreadyBound && !entered) {
-      requireValue(status === "matches", "verification", "The contact device key must be verified");
-      return;
+    if (alreadyBound) {
+      requireValue(status === "matches", "verification", "The saved contact device key is unavailable");
+      if (!entered) return;
     }
     const enteredCode = typeof entered === "string" && entered.length <= 256
       ? entered.replace(/\s+/gu, "").toUpperCase() : "";
@@ -129,10 +129,17 @@ export function createMessenger(ctx) {
     requireValue(Array.isArray(requests) && requests.length <= 100 &&
       Array.isArray(welcomes) && welcomes.length <= 20 && Array.isArray(chats) && chats.length <= 100,
       "format", "Invalid conversation directory");
+    const changed = [];
     for (const row of chats) {
       const chat = state().chats?.[uuid(row.id)];
-      if (chat && !samePeer(chat, row)) remoteBlocked.add(row.id);
+      if (chat && !samePeer(chat, row)) {
+        remoteBlocked.add(row.id);
+        if (!chat.bindingConflict) changed.push(row.id);
+      }
     }
+    if (changed.length) await ctx.update((draft) => {
+      for (const id of changed) transport(draft).chats[id].bindingConflict = true;
+    });
     directory = { requests, welcomes, chats };
     const pending = welcomes.length || requests.some((row) => !row.established);
     const populated = Object.keys(state().chats ?? {}).length > 0;
@@ -147,6 +154,25 @@ export function createMessenger(ctx) {
       throw error;
     }).finally(() => { directoryRequest = undefined; });
     return directoryRequest;
+  }
+
+  async function reconfirmChat(group, code) {
+    const chat = readChat(group);
+    requireValue(chat.bindingConflict, "verification", "No conflict to resolve");
+    await refresh();
+    const matchesOriginal = () => {
+      const matches = directory?.chats.filter((row) => row.id === group);
+      return matches?.length === 1 && samePeer(chat, matches[0]);
+    };
+    requireValue(matchesOriginal(), "changed-key", "The saved contact binding has not returned");
+    requireValue(typeof code === "string" && code.length > 0, "verification", "Enter the original device code");
+    await pin(chat, code, true);
+    await ctx.update((draft) => {
+      const saved = transport(draft).chats[group];
+      requireValue(samePeer(saved, chat) && matchesOriginal(), "changed-key", "The contact binding changed");
+      delete saved.bindingConflict;
+    });
+    remoteBlocked.delete(group);
   }
 
   function rememberRateLimit(error) {
@@ -310,6 +336,7 @@ export function createMessenger(ctx) {
     const id = crypto.randomUUID();
     await ctx.run("queue", { group, id, text }, (draft, envelope) => {
       const data = transport(draft);
+      ensureUsable(data.chats[group]);
       data.outbox[id] = envelope;
       if (draftRevision && data.chats[group].draft?.revision === draftRevision) {
         delete data.chats[group].draft;
@@ -325,6 +352,7 @@ export function createMessenger(ctx) {
     const chat = readChat(entry.group);
     ensureUsable(chat);
     const digest = await ciphertextDigest(entry.ciphertext);
+    ensureUsable(readChat(entry.group));
     let ack;
     try {
       ack = await ctx.api("/v1/messages", {
@@ -486,7 +514,7 @@ export function createMessenger(ctx) {
     if (forceDirectory || performance.now() >= directoryDue) await attempt(refresh);
 
     const usable = Object.values(state().chats ?? {}).filter((chat) => (
-      chat.active !== false && !chat.welcomePending && !remoteBlocked.has(chat.id)
+      chat.active !== false && !chat.welcomePending && !chat.bindingConflict && !remoteBlocked.has(chat.id)
     )).map((chat) => chat.id);
     const pending = Object.values(state().outbox ?? {}).filter((entry) => usable.includes(entry.group));
     const dispatchGroups = [...new Set(pending.map((entry) => entry.group))];
@@ -596,5 +624,5 @@ export function createMessenger(ctx) {
     globalThis.removeEventListener?.("online", wake);
   }
 
-  return { refresh, invite, accept, establish, join, send, tick, select, start, stop };
+  return { refresh, invite, accept, establish, join, reconfirmChat, send, tick, select, start, stop };
 }
