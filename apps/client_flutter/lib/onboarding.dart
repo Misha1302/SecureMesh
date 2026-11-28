@@ -159,6 +159,48 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
     }
   }
 
+  bool resendRequested = false;
+
+  Future<void> resendVerification() async {
+    if (busy || step != 1) return;
+    setState(() {
+      busy = true;
+      error = null;
+      resendRequested = false;
+    });
+    try {
+      final base = httpsServerOrigin(endpoint.text);
+      if (base == null) throw ApiFailure(400, 'TLS_REQUIRED');
+      http ??= nativeHttpClient();
+      await meshHttp(
+        http!,
+        base,
+        '/v2/auth/resend-verification',
+        data: {
+          'username': username.text.trim(),
+          ...await accountCredentialFields(
+            version: 2,
+            endpoint: base,
+            username: username.text.trim(),
+            password: password.text,
+          ),
+        },
+      );
+      if (mounted) setState(() => resendRequested = true);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          error = (
+            ru: 'Не удалось запросить письмо. Проверьте соединение и повторите.',
+            en: 'Could not request a new email. Check the connection and try again.',
+          );
+        });
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> submit() async {
     if (busy || !form.currentState!.validate()) return;
     setState(() {
@@ -193,6 +235,7 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
         if (mounted) {
           setState(() {
             step = 1;
+            resendRequested = false;
             editingServer = false;
           });
         }
@@ -690,6 +733,23 @@ class _AccountOnboardingState extends State<AccountOnboarding> {
                           ),
                         ),
                       ),
+                      if (step == 1)
+                        TextButton(
+                          onPressed: busy ? null : resendVerification,
+                          child: Text(
+                            tr('Запросить новый код', 'Request a new code'),
+                          ),
+                        ),
+                      if (step == 1 && resendRequested)
+                        Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            tr(
+                              'Проверьте почту. Новый код можно запрашивать раз в пять минут, до пяти раз в сутки.',
+                              'Check your email. You can request a new code once every five minutes, up to five times a day.',
+                            ),
+                          ),
+                        ),
                       if (step != 1 &&
                           draft == null &&
                           !resuming &&

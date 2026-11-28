@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify durable registration and bounded transactional mail using local PostgreSQL and Mailpit."""
 import base64
+import concurrent.futures
 import os
 import secrets
 import socket
@@ -62,19 +63,49 @@ def main():
                 api.env['VerificationEmail__MailpitPort'] = os.environ['VerificationEmail__MailpitPort']
                 api.start()
                 second = 'mail_' + uuid.uuid4().hex[:16]
+                second_email = second + '@securemesh.test'
+                credential = base64.b64encode(secrets.token_bytes(32)).decode()
                 test.request('/v2/auth/register',
-                             dict(username=second, email=second + '@securemesh.test',
-                                  credential=base64.b64encode(secrets.token_bytes(32)).decode(), displayName='Queue test'),
+                             dict(username=second, email=second_email,
+                                  credential=credential, displayName='Queue test'),
                              expected=202)
                 for attempt in range(1, 6):
                     wait_for('SELECT attempts FROM verification_email_queue', str(attempt))
                     # Advance the retry schedule without waiting through operational backoff.
                     sql('UPDATE verification_email_queue SET next_attempt_at=now()')
                 wait_for('SELECT count(*) FROM verification_email_queue', '0')
+                resend_path = '/v2/auth/resend-verification'
+                resend = dict(username=second, credential=credential)
+                original_hash = sql("SELECT encode(hash,'hex') FROM email_tokens")
+                assert test.request(resend_path, resend, expected=202) is None
+                assert sql('SELECT count(*) FROM verification_email_queue') == '0'
+                assert sql("SELECT encode(hash,'hex') FROM email_tokens") == original_hash
+                sql("UPDATE email_tokens SET expires_at=now()-interval '1 second'")
+                wrong = base64.b64encode(secrets.token_bytes(32)).decode()
+                assert test.request(resend_path, {**resend, 'credential': wrong}, expected=202) is None
+                assert test.request(resend_path, {**resend, 'username': username + '_x'}, expected=202) is None
+                assert sql('SELECT count(*) FROM verification_email_queue') == '0'
+                sql("UPDATE users SET verification_resends=5,verification_resend_window=now() WHERE NOT verified")
+                assert test.request(resend_path, resend, expected=202) is None
+                assert sql('SELECT count(*) FROM verification_email_queue') == '0'
+                sql("UPDATE users SET verification_resend_window=now()-interval '25 hours' WHERE NOT verified")
+                api.stop()
+                api.env['VerificationEmail__MailpitPort'] = '51028'
+                api.start()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    futures = [pool.submit(test.request, resend_path, resend, expected=202) for _ in range(2)]
+                    assert [future.result() for future in futures] == [None, None]
+                replacement = test.verification_token(second_email)
+                assert sql('SELECT verification_resends FROM users WHERE NOT verified') == '1'
+                assert sql('SELECT count(*) FROM email_tokens') == '1'
+                assert sql("SELECT encode(hash,'hex') FROM email_tokens") != original_hash
+                test.request('/v1/auth/verify-email', dict(token=replacement), expected=204)
+                assert test.request(resend_path, resend, expected=202) is None
+                assert sql('SELECT count(*) FROM email_tokens') == '0'
     finally:
         subprocess.run(['dropdb', database], env=pg, check=True)
 
-    print('Passed local verification email outage, restart, duplicate, token, and retry-bound checks.')
+    print('Passed local verification email outage, restart, retry, token, and resend checks.')
 
 
 if __name__ == '__main__':

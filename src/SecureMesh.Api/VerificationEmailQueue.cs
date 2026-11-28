@@ -13,15 +13,21 @@ internal sealed class VerificationEmailQueue(
     private const int MaxAttempts = 5;
     private readonly IDataProtector protector = protection.CreateProtector("SecureMesh.VerificationEmail.v1");
 
-    public async Task EnqueueAsync(NpgsqlConnection connection, byte[] hash, string recipient,
-        string token, CancellationToken cancellationToken)
+    public async Task EnqueueAsync(NpgsqlConnection connection, Guid user, string recipient,
+        CancellationToken cancellationToken)
     {
+        var token = Sql.Token();
+        var hash = Sql.Hash(token);
         // The address has passed MailAddress validation and cannot contain a newline.
         var payload = protector.Protect(recipient + "\n" + token);
         await using var command = Sql.Cmd(connection, """
+            WITH created AS (
+                INSERT INTO email_tokens VALUES($1,$2,now()+interval '30 minutes')
+                RETURNING hash,expires_at
+            )
             INSERT INTO verification_email_queue(token_hash,payload,expires_at)
-            SELECT hash,$2,expires_at FROM email_tokens WHERE hash=$1
-            """, hash, payload);
+            SELECT hash,$3,expires_at FROM created
+            """, hash, user, payload);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

@@ -101,6 +101,9 @@ fake = ({ path, data, authorization }) => {
     case "/v2/auth/register":
       assert.deepEqual(data, { username, email: "marina@example.org", displayName: me.displayName, credential: derived });
       return request(undefined, 202);
+    case "/v2/auth/resend-verification":
+      assert.deepEqual(data, { username, credential: derived });
+      return request(undefined, 202);
     case "/v1/auth/verify-email":
       assert.deepEqual(data, { token: emailCode });
       return request(undefined, 204);
@@ -118,6 +121,8 @@ fake = ({ path, data, authorization }) => {
 await ctx.update((state) => { delete state.registrationStage; });
 await assert.rejects(account.login(passphrase), /EMAIL_VERIFICATION_REQUIRED/);
 await account.register(username, " marina@example.org ", passphrase, me.displayName);
+assert.equal(ctx.state().registrationStage, "registered");
+await account.resendVerification(passphrase);
 assert.equal(ctx.state().registrationStage, "registered");
 await account.verify(emailCode);
 assert.equal(ctx.state().registrationStage, "verified");

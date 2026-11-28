@@ -10,6 +10,7 @@ namespace SecureMesh;
 
 public sealed record Registration(string Username, string Email, string? Password = null, string? Credential = null, string? DisplayName = null);
 public sealed record Verification(string Token);
+public sealed record VerificationResend(string Username, string? Password = null, string? Credential = null);
 public sealed record Challenge(string Username, Guid DeviceId);
 public sealed record Login(string Username, Guid DeviceId, string PublicKey, Guid ChallengeId, string Signature, string? ClientOs = null, string? Password = null, string? Credential = null, Guid? ExpectedUserId = null, string? ExpectedTrustState = null);
 public sealed record Refresh(string Token);
@@ -28,7 +29,7 @@ public static class Identity
             if (!Regex.IsMatch(username, "^[a-z0-9_]{3,32}$") || input.Email.Length > 254 || (version == 1 && new StringInfo(secret).LengthInTextElements < 16) || (version == 2 && display.Length == 0) || !MailAddress.TryCreate(input.Email, out var mail) || mail.Address != input.Email)
                 throw new ApiError(400, "INVALID_REGISTRATION");
             var phc = Passwords.Marker(version) + await Passwords.Hash(secret);
-            var token = Sql.Token(); var user = Guid.NewGuid();
+            var user = Guid.NewGuid();
             await using var c = await db.OpenConnectionAsync(cancellationToken);
             await using var tx = await c.BeginTransactionAsync(cancellationToken);
             await using var insert = Sql.Cmd(c, """
@@ -38,22 +39,88 @@ public static class Identity
             if (await insert.ExecuteNonQueryAsync(cancellationToken) == 0)
                 return Results.Accepted();
 
-            var tokenHash = Sql.Hash(token);
-            await using var verify = Sql.Cmd(c,
-                "INSERT INTO email_tokens VALUES($1,$2,now()+interval '30 minutes')", tokenHash, user);
-            await verify.ExecuteNonQueryAsync(cancellationToken);
-            await email.EnqueueAsync(c, tokenHash, input.Email, token, cancellationToken);
+            await email.EnqueueAsync(c, user, input.Email, cancellationToken);
             await tx.CommitAsync(cancellationToken);
             return Results.Accepted();
         });
-        app.MapPost("/v1/auth/verify-email", async (Verification input, NpgsqlDataSource db) =>
+        foreach (var version in new[] {1, 2})
+            app.MapPost($"/v{version}/auth/resend-verification", async (VerificationResend input, NpgsqlDataSource db,
+                VerificationEmailQueue email, CancellationToken cancellationToken) =>
+            {
+                var username = input.Username?.ToLowerInvariant();
+                var secret = Passwords.Input(version, input.Password, input.Credential);
+                if (username is null || !Regex.IsMatch(username, "^[a-z0-9_]{3,32}$") || secret is null)
+                    throw new ApiError(400, "INVALID_REGISTRATION");
+                string? phc;
+                await using (var lookup = db.CreateCommand("SELECT password_hash FROM users WHERE username=$1"))
+                {
+                    lookup.Parameters.AddWithValue(username);
+                    phc = await lookup.ExecuteScalarAsync(cancellationToken) as string;
+                }
+                if (!await Passwords.VerifyVersion(version, secret, phc ?? DummyPhc, DummyPhc) || phc is null)
+                    return Results.Accepted();
+
+                await using var c = await db.OpenConnectionAsync(cancellationToken);
+                await using var tx = await c.BeginTransactionAsync(cancellationToken);
+                await using var owner = Sql.Cmd(c, """
+                    SELECT id,email FROM users WHERE username=$1 AND password_hash=$2 AND NOT verified FOR UPDATE
+                    """, username, phc);
+                Guid user;
+                string recipient;
+                await using (var row = await owner.ExecuteReaderAsync(cancellationToken))
+                {
+                    if (!await row.ReadAsync(cancellationToken)) return Results.Accepted();
+                    user = row.GetGuid(0);
+                    recipient = row.GetString(1);
+                }
+
+                // A freshly issued token blocks additional sends for five minutes.
+                await using var recent = Sql.Cmd(c, """
+                    SELECT 1 FROM email_tokens WHERE user_id=$1 AND expires_at>now()+interval '25 minutes' LIMIT 1
+                    """, user);
+                if (await recent.ExecuteScalarAsync(cancellationToken) is not null)
+                    return Results.Accepted();
+                // Require at most five explicit resends in each account's 24-hour window.
+                await using var budget = Sql.Cmd(c, """
+                    UPDATE users SET
+                        verification_resends=CASE WHEN verification_resend_window > now()-interval '24 hours'
+                            THEN verification_resends+1 ELSE 1 END,
+                        verification_resend_window=CASE WHEN verification_resend_window > now()-interval '24 hours'
+                            THEN verification_resend_window ELSE now() END
+                    WHERE id=$1 AND (verification_resend_window IS NULL
+                        OR verification_resend_window <= now()-interval '24 hours' OR verification_resends < 5)
+                    """, user);
+                if (await budget.ExecuteNonQueryAsync(cancellationToken) == 0)
+                    return Results.Accepted();
+
+                await using var invalidate = Sql.Cmd(c, "DELETE FROM email_tokens WHERE user_id=$1", user);
+                await invalidate.ExecuteNonQueryAsync(cancellationToken);
+                await email.EnqueueAsync(c, user, recipient, cancellationToken);
+                await tx.CommitAsync(cancellationToken);
+                return Results.Accepted();
+            });
+
+        app.MapPost("/v1/auth/verify-email", async (Verification input, NpgsqlDataSource db, CancellationToken cancellationToken) =>
         {
-            await using var c = await db.OpenConnectionAsync();
-            await using var cmd = Sql.Cmd(c, """
-                WITH consumed AS (DELETE FROM email_tokens WHERE hash=$1 AND expires_at>now() RETURNING user_id)
-                UPDATE users SET verified=true WHERE id IN (SELECT user_id FROM consumed)
-                """, Sql.Hash(input.Token));
-            if (await cmd.ExecuteNonQueryAsync() != 1) throw new ApiError(400, "INVALID_TOKEN");
+            await using var c = await db.OpenConnectionAsync(cancellationToken);
+            await using var tx = await c.BeginTransactionAsync(cancellationToken);
+            var hash = Sql.Hash(input.Token);
+            // Lock the account before touching tokens, matching the resend path.
+            await using var owner = Sql.Cmd(c, """
+                SELECT u.id FROM users u JOIN email_tokens t ON t.user_id=u.id
+                WHERE t.hash=$1 AND NOT u.verified FOR UPDATE OF u
+                """, hash);
+            if (await owner.ExecuteScalarAsync(cancellationToken) is not Guid user)
+                throw new ApiError(400, "INVALID_TOKEN");
+            await using var verify = Sql.Cmd(c, """
+                UPDATE users SET verified=true WHERE id=$1 AND EXISTS (
+                    SELECT 1 FROM email_tokens WHERE hash=$2 AND user_id=$1 AND expires_at>statement_timestamp()
+                )
+                """, user, hash);
+            if (await verify.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ApiError(400, "INVALID_TOKEN");
+            await using var consume = Sql.Cmd(c, "DELETE FROM email_tokens WHERE user_id=$1", user);
+            await consume.ExecuteNonQueryAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
             return Results.NoContent();
         });
         app.MapPost("/v1/auth/challenge", async (Challenge input, NpgsqlDataSource db) =>

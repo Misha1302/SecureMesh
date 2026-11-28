@@ -174,6 +174,17 @@ export function createAccount(ctx) {
     });
   }
 
+  async function resendVerification(password) {
+    const state = ctx.state();
+    const binding = principal(state);
+    require(binding.userId === null, "ACCOUNT_BINDING_MISMATCH");
+    require(["registered", "verifying"].includes(state.registrationStage), "REGISTRATION_REQUIRED");
+    const credential = await ctx.derive(apiOrigin, binding.username, password);
+    decodeBase64(credential, 32);
+    stillBound(ctx.state(), binding);
+    await exchange("/v2/auth/resend-verification", { username: binding.username, credential });
+  }
+
   async function verify(code) {
     const state = ctx.state();
     const binding = principal(state);
@@ -294,7 +305,7 @@ export function createAccount(ctx) {
 
   async function api(path, data, method) {
     const url = exchangeUrl(path);
-    require(!/^\/v[12]\/auth\/(?:register|verify-email|challenge|login|reauthenticate|refresh)(?:\/|$)/.test(url.pathname), "INVALID_API_PATH");
+    require(!/^\/v[12]\/auth\/(?:register|resend-verification|verify-email|challenge|login|reauthenticate|refresh)(?:\/|$)/.test(url.pathname), "INVALID_API_PATH");
     const state = ctx.state();
     const binding = principal(state);
     require(binding.userId !== null && !authenticating, "SESSION_REQUIRED");
@@ -345,5 +356,5 @@ export function createAccount(ctx) {
     await api("/v1/auth/session/activity", undefined, "POST");
   }
 
-  return { register, verify, login, api, activity };
+  return { register, resendVerification, verify, login, api, activity };
 }

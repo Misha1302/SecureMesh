@@ -195,6 +195,7 @@ function layout() {
   const stage = state.registrationStage;
   show("register", !stage && !state.userId);
   show("verify", !state.userId && ["registered", "verifying"].includes(stage));
+  show("resend-verification", !state.userId && ["registered", "verifying"].includes(stage));
   show(
     "login",
     Boolean(state.userId || ["verifying", "verified"].includes(stage)),
@@ -418,7 +419,7 @@ bind(byId("entry"), async () => {
     throw err;
   }
 });
-for (const id of ["register", "verify", "login"]) {
+for (const id of ["register", "verify", "resend-verification", "login"]) {
   const form = byId(id);
   bind(form, async () => {
     const current = opened,
@@ -439,6 +440,9 @@ for (const id of ["register", "verify", "login"]) {
       }
       notice("Почта подтверждена. Можно войти.");
       form.reset();
+    } else if (id === "resend-verification") {
+      await current.account.resendVerification();
+      notice("Проверьте почту. Новый код можно запрашивать раз в пять минут, до пяти раз в сутки.");
     } else {
       await current.account.login();
       notice(
