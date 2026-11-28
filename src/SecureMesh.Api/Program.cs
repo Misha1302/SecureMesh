@@ -58,8 +58,14 @@ app.Use(async(ctx,next)=>
     catch(ApiError e) {ctx.Response.StatusCode=e.Status; await ctx.Response.WriteAsJsonAsync(new {code=e.Code});}
     catch(Exception e) when(e is FormatException or ArgumentException or BadHttpRequestException)
     {ctx.Response.StatusCode=400; await ctx.Response.WriteAsJsonAsync(new {code="INVALID_REQUEST"});}
-    catch(NpgsqlException)
-    {ctx.Response.StatusCode=503; await ctx.Response.WriteAsJsonAsync(new {code="STORAGE_UNAVAILABLE"});}
+    catch (NpgsqlException error)
+    {
+        // Database exception messages can contain SQL, identifiers or request values.
+        app.Logger.LogWarning("Storage operation failed ({Type}, SQLSTATE {State}, transient {Transient}).",
+            error.GetType().Name, error.SqlState ?? "unavailable", error.IsTransient);
+        ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        await ctx.Response.WriteAsJsonAsync(new {code = "STORAGE_UNAVAILABLE"});
+    }
 });
 if (browserOrigin is not null) app.UseCors("BrowserClient");
 app.UseRateLimiter();

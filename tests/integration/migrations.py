@@ -80,6 +80,19 @@ def main():
                 '202611280113_ChannelPinCleanup',
             ]
             assert result.strip().splitlines() == expected
+            # A missing table in this disposable database must produce a bounded diagnostic.
+            command('psql', '-U', 'securemesh', '-d', database, '-v', 'ON_ERROR_STOP=1',
+                    '-c', 'ALTER TABLE contact_blocks RENAME TO fixture_unavailable_blocks')
+            try:
+                error = d.request('/v1/contact-blocks', token=legacy['accessToken'], expected=503)
+                assert error == {'code': 'STORAGE_UNAVAILABLE'}
+            finally:
+                command('psql', '-U', 'securemesh', '-d', database, '-v', 'ON_ERROR_STOP=1',
+                        '-c', 'ALTER TABLE fixture_unavailable_blocks RENAME TO contact_blocks')
+            assert d.request('/v1/contact-blocks', token=legacy['accessToken']) == {'items': []}
+            log = Path(server.log.name).read_text()
+            assert 'Storage operation failed (PostgresException, SQLSTATE 42P01, transient False).' in log
+            assert 'fixture_unavailable_blocks' not in log and legacy['accessToken'] not in log
             print(f'PASS: {len(expected)} EF migrations on a fresh PostgreSQL database; idempotent restart preserves trust and device metadata.')
     finally:
         command('dropdb','-U','securemesh',database)
