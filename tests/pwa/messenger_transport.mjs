@@ -19,6 +19,7 @@ let loseAck = false;
 let wrongSender = false;
 let replaceKey = false;
 let omitChats = false;
+let malformedTail = false;
 let sendCalls = [];
 const digest = (ciphertext) => createHash("sha256").update(Buffer.from(ciphertext, "base64")).digest("base64");
 
@@ -86,13 +87,15 @@ function client(username) {
     }
     if (path === "/v1/conversations") {
       if (omitChats) return [];
-      return [...groups].filter(([, group]) => group.members.includes(username))
+      const result = [...groups].filter(([, group]) => group.members.includes(username))
         .map(([id, group]) => {
           const peerName = group.members.find((name) => name !== username);
           const peer = clients.get(peerName).own;
           return { id, peerName, peerDevice: peer.identity,
             peerKey: replaceKey ? initialized.result.public_key : peer.public_key };
         });
+      if (malformedTail) result.push({ id: "malformed" });
+      return result;
     }
     if (path === "/v1/messages") {
       sendCalls.push(structuredClone(data));
@@ -128,8 +131,15 @@ function client(username) {
   }
 
   const ctx = {
-    api,
+    api(path, data, _method, handoff) {
+      return handoff ? handoff(() => api(path, data)) : api(path, data);
+    },
     state: () => stored,
+    async handoff(check, send) {
+      await check((op, fields) =>
+        JSON.parse(execute(stored.snapshot, JSON.stringify({ ...fields, op }))).result);
+      return send();
+    },
     async update(mutate) {
       const draft = structuredClone(stored);
       mutate(draft);
@@ -244,6 +254,80 @@ await afterConflict.reconfirmChat(group, originalCode);
 await afterConflict.tick();
 assert(!alice.ctx.state().messenger.outbox[queuedBeforeChange]);
 assert.equal(alice.ctx.state().messenger.chats[group].peerKey, bob.own.public_key);
+
+// The account layer can suspend actual network handoff after the outbox was selected.
+const delayed = await afterConflict.send(group, "queued before the actual HTTP handoff");
+const beforeDelay = sendCalls.length;
+const realApi = alice.ctx.api;
+let unblock, seen;
+const waitForSend = new Promise((resolve) => { seen = resolve; });
+const allowSend = new Promise((resolve) => { unblock = resolve; });
+alice.ctx.api = async (...args) => {
+  if (args[0] === "/v1/messages") {
+    seen();
+    await allowSend;
+  }
+  return realApi.apply(alice.ctx, args);
+};
+const withDelay = createMessenger(alice.ctx);
+const draining = withDelay.tick();
+await waitForSend;
+replaceKey = true;
+await withDelay.refresh();
+unblock();
+await assert.rejects(draining, { code: "changed-key" });
+assert.equal(sendCalls.length, beforeDelay);
+assert(alice.ctx.state().messenger.outbox[delayed]);
+alice.ctx.api = realApi;
+
+// A newer conflicting observation cannot be erased by a suspended reconfirmation.
+replaceKey = false;
+let verified, finish;
+const checkingPin = new Promise((resolve) => { verified = resolve; });
+const finishPin = new Promise((resolve) => { finish = resolve; });
+const realRun = alice.ctx.run;
+alice.ctx.run = async (...args) => {
+  if (args[0] === "peer_key_status") {
+    verified();
+    await finishPin;
+  }
+  return realRun.apply(alice.ctx, args);
+};
+const verifying = createMessenger(alice.ctx);
+const clearing = verifying.reconfirmChat(group, originalCode);
+await checkingPin;
+replaceKey = true;
+await verifying.refresh();
+finish();
+await assert.rejects(clearing, { code: "changed-key" });
+assert(alice.ctx.state().messenger.chats[group].bindingConflict);
+alice.ctx.run = realRun;
+replaceKey = false;
+const restored = createMessenger(alice.ctx);
+await restored.reconfirmChat(group, originalCode);
+
+// A malformed later directory row must not discard an already observed conflict.
+replaceKey = true;
+malformedTail = true;
+await assert.rejects(restored.refresh(), { code: "format" });
+assert(alice.ctx.state().messenger.chats[group].bindingConflict);
+assert.equal(sendCalls.length, beforeDelay);
+replaceKey = false;
+malformedTail = false;
+await restored.reconfirmChat(group, originalCode);
+
+// Even a queued, valid ciphertext cannot leave a restored snapshot missing its original pin.
+await alice.ctx.update((draft) => {
+  const saved = JSON.parse(draft.snapshot);
+  const profile = saved.profile ?? saved;
+  assert(profile.pins[bob.own.identity]);
+  delete profile.pins[bob.own.identity];
+  draft.snapshot = JSON.stringify(saved);
+});
+await assert.rejects(restored.tick(), { code: "changed-key" });
+assert(alice.ctx.state().messenger.chats[group].bindingConflict);
+assert(alice.ctx.state().messenger.outbox[delayed]);
+assert.equal(sendCalls.length, beforeDelay);
 
 // Keep the background directory cadence independent of the active thread and
 // prove that every idle group eventually gets a turn in the bounded sync slot.

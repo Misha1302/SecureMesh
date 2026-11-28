@@ -37,6 +37,19 @@ function openDatabase() {
   });
 }
 
+function sameRecord(left, right) {
+  return left?.revision === right.revision && left.salt === right.salt &&
+    left.iv === right.iv && left.ciphertext === right.ciphertext &&
+    left.version === right.version && left.format === right.format;
+}
+
+function withVaultLock(work, required = false) {
+  const locks = globalThis.navigator?.locks;
+  if (locks?.request) return locks.request("securemesh-profile-vault", work);
+  if (required) throw new VaultError("handoff-unavailable", "A profile lock is required to send");
+  return work();
+}
+
 async function accessRecord(replacement, expected, session) {
   let database;
   try {
@@ -56,11 +69,7 @@ async function accessRecord(replacement, expected, session) {
         if (!replacement) return;
         if (session?.closed) {
           failure = new VaultError("locked", "The profile is locked");
-        } else if (expected && (
-          result?.revision !== expected.revision || result.salt !== expected.salt ||
-          result.iv !== expected.iv || result.ciphertext !== expected.ciphertext ||
-          result.version !== expected.version || result.format !== expected.format
-        )) {
+        } else if (expected && !sameRecord(result, expected)) {
           failure = new VaultError("conflict", "The profile changed in another session");
         } else if (!expected && result !== undefined) {
           failure = new VaultError("exists", "A local profile already exists");
@@ -185,6 +194,10 @@ async function seal(key, salt, revision, state) {
 async function openRecord(password, record) {
   const { salt, iv, ciphertext } = validateRecord(record);
   const key = await deriveKey(password, salt);
+  return { key, state: await decryptRecord(key, record, iv, ciphertext) };
+}
+
+async function decryptRecord(key, record, iv, ciphertext) {
   let plaintext;
   try {
     plaintext = new Uint8Array(await crypto.subtle.decrypt(cipherParameters(record, iv), key, ciphertext));
@@ -192,7 +205,7 @@ async function openRecord(password, record) {
     throw new VaultError("authentication", "The password is incorrect or the profile was altered", error);
   }
   try {
-    return { key, state: requireState(JSON.parse(decoder.decode(plaintext))) };
+    return requireState(JSON.parse(decoder.decode(plaintext)));
   } catch (error) {
     throw new VaultError("format", "The decrypted profile state is invalid", error);
   } finally {
@@ -235,18 +248,70 @@ export async function unlockVault(password) {
   return makeHandle(key, record, state);
 }
 
-export async function commitVault(handle, state) {
-  const session = unlockedSession(handle);
-  const expected = session.record;
+async function commitRecord(session, expected, state, refresh) {
   const revision = expected.revision + 1;
   if (revision > maxRevision) throw new VaultError("size", "The profile revision limit was reached");
   const sealed = await seal(session.key, expected.salt, revision, state);
   await accessRecord(sealed.record, expected, session);
-  if (!session.closed) {
+  if (refresh && !session.closed) {
     session.record = sealed.record;
     session.state = sealed.state;
   }
   return revision;
+}
+
+export async function commitVault(handle, state) {
+  const session = unlockedSession(handle);
+  const expected = session.record;
+  return withVaultLock(() => commitRecord(session, expected, state, true));
+}
+
+// A conflict observation must survive an unrelated save in another open tab.
+export async function persistBindingConflicts(handle, groups) {
+  const session = unlockedSession(handle);
+  await withVaultLock(async () => {
+    const latest = await accessRecord();
+    unlockedSession(handle);
+    const current = sameRecord(latest, session.record);
+    let state;
+    if (current) {
+      state = structuredClone(session.state);
+    } else {
+      if (latest?.salt !== session.record.salt) {
+        throw new VaultError("conflict", "The profile changed in another session");
+      }
+      const { iv, ciphertext } = validateRecord(latest);
+      state = await decryptRecord(session.key, latest, iv, ciphertext);
+    }
+    let changed = false;
+    for (const id of groups) {
+      const chat = state.messenger?.chats?.[id];
+      if (chat && !chat.bindingConflict) {
+        chat.bindingConflict = true;
+        changed = true;
+      }
+    }
+    if (changed) await commitRecord(session, latest, state, current);
+    if (!current) throw new VaultError("conflict", "The profile changed in another session");
+  });
+}
+
+export async function handoffVault(handle, check, send) {
+  let response;
+  await withVaultLock(async () => {
+    const persisted = await accessRecord();
+    const session = unlockedSession(handle);
+    if (!sameRecord(persisted, session.record)) {
+      throw new VaultError("conflict", "The profile changed in another session");
+    }
+    await check();
+    unlockedSession(handle);
+    // Start the request while holding the same origin lock as conflict saves.
+    // Once the browser owns it, receipt of the response need not hold the lock.
+    response = Promise.resolve(send());
+    response.catch(() => {});
+  }, true);
+  return response;
 }
 
 // Supply an archival copy of the relevant data, excluding active MLS state.

@@ -409,8 +409,7 @@ export function createAccount(ctx) {
     }
   }
 
-  async function authenticated(path, sendRequest) {
-    const url = exchangeUrl(path);
+  async function authenticated(sendRequest, handoff) {
     const state = ctx.state();
     const binding = principal(state);
     require(binding.userId !== null && !authenticating, "SESSION_REQUIRED");
@@ -424,7 +423,12 @@ export function createAccount(ctx) {
     };
     const observed = currentSession();
     const send = async (session) => {
-      const result = await sendRequest(session);
+      const request = () => {
+        stillBound(ctx.state(), binding);
+        if (handoff) require(currentSession().accessToken === session.accessToken, "SESSION_CHANGED");
+        return sendRequest(session);
+      };
+      const result = await (handoff ? handoff(request) : request());
       stillBound(ctx.state(), binding);
       return result;
     };
@@ -451,15 +455,17 @@ export function createAccount(ctx) {
     }
   }
 
-  async function api(path, data, method) {
+  async function api(path, data, method, handoff) {
     const url = exchangeUrl(path);
     require(!/^\/v[12]\/auth\/(?:register|resend-verification|verify-email|challenge|login|reauthenticate|refresh)(?:\/|$)/.test(url.pathname), "INVALID_API_PATH");
-    return authenticated(path, (session) => exchange(path, data, method, session.accessToken));
+    if (/^\/v1\/messages\/?$/i.test(url.pathname))
+      require(typeof handoff === "function", "DELIVERY_GUARD_REQUIRED");
+    return authenticated((session) => exchange(path, data, method, session.accessToken), handoff);
   }
 
   async function apiBytes(path, maxBytes = 4 * 1024 * 1024 + 16) {
     require(/^\/v1\/conversations\/[0-9a-f-]{36}\/blobs\/[0-9a-f-]{36}$/.test(exchangeUrl(path).pathname), "INVALID_API_PATH");
-    return authenticated(path, (session) => exchangeBytes(path, session.accessToken, maxBytes));
+    return authenticated((session) => exchangeBytes(path, session.accessToken, maxBytes));
   }
 
   async function activity() {

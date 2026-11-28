@@ -294,4 +294,28 @@ await pendingAccount.login(passphrase);
 assert.equal(pending.ctx.state().enrollmentVerified, false);
 await assert.rejects(pendingAccount.api("/v1/conversations"), /DEVICE_ENROLLMENT_REQUIRED/);
 
+const deliveryProfile = context({ userId, trustState, enrollmentVerified: true, session: session() });
+const deliveryAccount = createAccount(deliveryProfile.ctx);
+await assert.rejects(deliveryAccount.api("/v1/messages", {}), /DELIVERY_GUARD_REQUIRED/);
+let handoffs = 0;
+let transmissions = 0;
+let conflict = false;
+fake = ({ path }) => {
+  if (path === "/v1/auth/refresh") {
+    conflict = true;
+    return request(session("d", "f"));
+  }
+  if (path === "/v1/users/me") return request(me);
+  assert.equal(path, "/v1/messages");
+  transmissions++;
+  return request({ code: "AUTH_REQUIRED" }, 401);
+};
+await assert.rejects(deliveryAccount.api("/v1/messages", {}, undefined, (send) => {
+  handoffs++;
+  if (conflict) throw Object.assign(new Error("conflict before retry"), { code: "changed-key" });
+  return send();
+}), { code: "changed-key" });
+assert.equal(handoffs, 2);
+assert.equal(transmissions, 1);
+
 console.log("Browser account protocol, origin constraints and session rotation passed");

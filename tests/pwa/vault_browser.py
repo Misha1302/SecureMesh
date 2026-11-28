@@ -123,6 +123,90 @@ def run(origin, engine):
             }"""
         )
         assert persisted == expected
+        # Same-origin tabs use the production IndexedDB and Web Locks handoff.
+        page.evaluate(
+            """async () => {
+              window.vault = await import("/app/vault.js");
+              window.password = "👨‍👩‍👧‍👦".repeat(16);
+              window.profile = await vault.unlockVault(password);
+              await vault.commitVault(profile, {
+                ...profile.state,
+                messenger: { chats: { group: { id: "group" } }, outbox: { queued: "ciphertext" } },
+              });
+            }"""
+        )
+        other.evaluate("""async () => {
+          window.password = "👨‍👩‍👧‍👦".repeat(16);
+          window.profile = await vault.unlockVault(password);
+        }""")
+        page.evaluate("""async () => {
+          await vault.commitVault(profile, { ...profile.state, unrelatedDraft: "new local edit" });
+        }""")
+        other.evaluate(
+            """async () => {
+              try { await vault.persistBindingConflicts(profile, ["group"]); }
+              catch (error) { if (error.code === "conflict") return; throw error; }
+              throw new Error("stale tab remained eligible to send");
+            }"""
+        )
+        page.evaluate(
+            """async () => {
+              window.profile = await vault.unlockVault(password);
+              const chat = profile.state.messenger.chats.group;
+              if (!chat.bindingConflict || profile.state.unrelatedDraft !== "new local edit")
+                throw new Error("conflict save overwrote newer profile data or was lost");
+              const clean = structuredClone(profile.state);
+              delete clean.messenger.chats.group.bindingConflict;
+              await vault.commitVault(profile, clean);
+              window.actualHandoffs = 0;
+              window.pending = vault.handoffVault(profile, () => new Promise((resolve) => {
+                window.releaseCheck = resolve;
+              }), () => {
+                actualHandoffs++;
+                return new Promise((resolve) => { window.finishRequest = resolve; });
+              });
+            }"""
+        )
+        page.wait_for_function("typeof window.releaseCheck === 'function'")
+        other.evaluate(
+            """async () => {
+              window.profile = await vault.unlockVault(password);
+              window.conflictWrite = vault.persistBindingConflicts(profile, ["group"]);
+            }"""
+        )
+        page.wait_for_function(
+            "async () => (await navigator.locks.query()).pending.some((lock) => lock.name === 'securemesh-profile-vault')"
+        )
+        page.evaluate("window.releaseCheck()")
+        other.evaluate("async () => await window.conflictWrite")
+        page.evaluate(
+            """async () => {
+              if (actualHandoffs !== 1) throw new Error("handoff did not precede conflict save");
+              window.finishRequest();
+              await pending;
+              const send = () => { actualHandoffs++; };
+              const reject = async (action, code) => {
+                try { await action(); } catch (error) {
+                  if (error.code === code) return;
+                  throw error;
+                }
+                throw new Error("Expected " + code);
+              };
+              await reject(() => vault.handoffVault(profile, () => {}, send), "conflict");
+              window.profile = await vault.unlockVault(password);
+              await reject(() => vault.handoffVault(profile, () => {
+                if (profile.state.messenger.chats.group.bindingConflict)
+                  throw Object.assign(new Error("blocked saved contact"), { code: "changed-key" });
+              }, send), "changed-key");
+              if (actualHandoffs !== 1 || profile.state.messenger.outbox.queued !== "ciphertext")
+                throw new Error("a blocked queued entry was sent or removed");
+              Object.defineProperty(navigator, "locks", { value: undefined, configurable: true });
+              try {
+                await reject(() => vault.handoffVault(profile, () => {}, send), "handoff-unavailable");
+                if (actualHandoffs !== 1) throw new Error("sent without a shared origin lock");
+              } finally { delete navigator.locks; }
+            }"""
+        )
         backup = page.evaluate(
             """async () => {
               const vault = await import("/app/vault.js");

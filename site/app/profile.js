@@ -4,6 +4,8 @@ import {
   unlockVault,
   closeVault,
   commitVault,
+  persistBindingConflicts,
+  handoffVault,
   readBackup,
   exportBackup,
   maxBackupLength,
@@ -31,6 +33,7 @@ const codes = {
   conflict: "Профиль изменился в другой вкладке. Откройте его заново.",
   verification: "Код не совпал. Сверьте отпечаток по независимому каналу.",
   "changed-key": "Ключ собеседника изменился. Отправка остановлена.",
+  "handoff-unavailable": "Браузер не может защитить отправку между вкладками.",
   NETWORK_UNAVAILABLE:
     "Нет соединения с совместимым сервером. Проверьте сеть и доступность API.",
   INVALID_TOKEN: "Не удалось подтвердить код.",
@@ -94,6 +97,7 @@ function attach(handle, worker) {
   let tail = Promise.resolve();
   let timer;
   const edited = new Map();
+  let pendingConflicts = 0;
   function applyEdits(profile, snapshot) {
     for (const [id, edit] of snapshot) {
       const chat = profile.messenger?.chats[id];
@@ -116,11 +120,11 @@ function attach(handle, worker) {
   };
   instance.close = () => {
     clearTimeout(timer);
-    if (!edited.size) {
+    if (!edited.size && !pendingConflicts) {
       closeVault(handle);
       return;
     }
-    // The UI and worker lock immediately. Finish only the pending local vault write.
+    // Stop the UI and worker immediately. Finish already scheduled conflict and draft writes.
     closingVault = tail.then(async () => {
       if (!edited.size) return;
       const profile = structuredClone(handle.state);
@@ -132,6 +136,13 @@ function attach(handle, worker) {
   function state() {
     if (opened !== instance) throw failure("locked");
     return handle.state;
+  }
+  function handleConflict(error) {
+    if (error.code === "conflict" && opened === instance) {
+      lock();
+      notice(codes.conflict);
+    }
+    throw error;
   }
   function change(work) {
     const next = tail.then(async () => {
@@ -146,11 +157,7 @@ function attach(handle, worker) {
           if (edited.get(id) === edit) edited.delete(id);
         }
       } catch (error) {
-        if (error.code === "conflict" && opened === instance) {
-          lock();
-          notice(codes.conflict);
-        }
-        throw error;
+        handleConflict(error);
       }
       state();
       return result;
@@ -161,6 +168,24 @@ function attach(handle, worker) {
   const ctx = {
     state,
     update: change,
+    persistBindingConflicts(groups) {
+      state();
+      pendingConflicts++;
+      const next = tail.then(() => persistBindingConflicts(handle, groups));
+      tail = next.catch(() => {});
+      return next.catch(handleConflict).finally(() => { pendingConflicts--; });
+    },
+    handoff(check, send) {
+      const inspect = async (op, fields) => {
+        const { result } = await worker.call({
+          snapshot: state().snapshot,
+          request: { ...fields, op },
+        });
+        state();
+        return result;
+      };
+      return handoffVault(handle, () => check(inspect), send).catch(handleConflict);
+    },
     derive: (endpoint, username) =>
       worker.call({ type: "derive", args: [endpoint, username] }),
     run: (op, fields = {}, mutate) =>

@@ -97,7 +97,8 @@ export function createMessenger(ctx) {
   let backgroundDue = 0;
   let rateLimitedUntil = 0;
   let rateLimitFailure;
-  const remoteBlocked = new Set();
+  const remoteBlocked = new Map();
+  const reconfirming = new Set();
   const privateImageUrls = new Map();
   let privateImageGeneration = 0;
 
@@ -184,6 +185,7 @@ export function createMessenger(ctx) {
     }
   }
 
+
   const state = () => ctx.state()?.messenger ?? empty;
   const readChat = (id) => {
     const chat = state().chats?.[uuid(id)];
@@ -191,9 +193,26 @@ export function createMessenger(ctx) {
     return chat;
   };
 
+  function observeConflict(id) {
+    remoteBlocked.set(id, Symbol());
+  }
+
+  async function persistConflicts(ids) {
+    if (!ids.length) return;
+    if (ctx.persistBindingConflicts) await ctx.persistBindingConflicts(ids);
+    else await ctx.update((draft) => {
+      for (const id of ids) {
+        const chat = transport(draft).chats[id];
+        if (chat) chat.bindingConflict = true;
+      }
+    });
+  }
+
   function ensureUsable(chat) {
+    requireValue(chat, "unknown-chat", "This conversation has not been verified");
     requireValue(chat.active !== false, "inactive-chat", "This conversation is inactive");
-    requireValue(!chat.bindingConflict && !remoteBlocked.has(chat.id), "changed-key", "The conversation contact changed");
+    requireValue(!chat.bindingConflict && !remoteBlocked.has(chat.id) && !reconfirming.has(chat.id),
+      "changed-key", "The conversation contact changed");
   }
 
   async function identity() {
@@ -225,18 +244,19 @@ export function createMessenger(ctx) {
     requireValue(Array.isArray(requests) && requests.length <= 100 &&
       Array.isArray(welcomes) && welcomes.length <= 20 && Array.isArray(chats) && chats.length <= 100,
       "format", "Invalid conversation directory");
-    const changed = [];
-    for (const row of chats) {
-      const chat = state().chats?.[uuid(row.id)];
-      if (chat && !samePeer(chat, row)) {
-        remoteBlocked.add(row.id);
-        if (!chat.bindingConflict) changed.push(row.id);
+    const changed = new Set();
+    try {
+      for (const row of chats) {
+        const chat = state().chats?.[uuid(row.id)];
+        if (chat && !samePeer(chat, row)) {
+          observeConflict(row.id);
+          if (!chat.bindingConflict || reconfirming.has(row.id)) changed.add(row.id);
+        }
       }
+      directory = { requests, welcomes, chats };
+    } finally {
+      await persistConflicts([...changed]);
     }
-    if (changed.length) await ctx.update((draft) => {
-      for (const id of changed) transport(draft).chats[id].bindingConflict = true;
-    });
-    directory = { requests, welcomes, chats };
     const pending = welcomes.length || requests.some((row) => !row.established);
     const populated = Object.keys(state().chats ?? {}).length > 0;
     directoryDue = performance.now() + jitter(pending || !populated ? 12_500 : 30_000);
@@ -254,21 +274,33 @@ export function createMessenger(ctx) {
 
   async function reconfirmChat(group, code) {
     const chat = readChat(group);
-    requireValue(chat.bindingConflict, "verification", "No conflict to resolve");
-    await refresh();
-    const matchesOriginal = () => {
-      const matches = directory?.chats.filter((row) => row.id === group);
-      return matches?.length === 1 && samePeer(chat, matches[0]);
-    };
-    requireValue(matchesOriginal(), "changed-key", "The saved contact binding has not returned");
+    requireValue(chat.bindingConflict && !reconfirming.has(group), "verification", "No conflict to resolve");
     requireValue(typeof code === "string" && code.length > 0, "verification", "Enter the original device code");
-    await pin(chat, code, true);
-    await ctx.update((draft) => {
-      const saved = transport(draft).chats[group];
-      requireValue(samePeer(saved, chat) && matchesOriginal(), "changed-key", "The contact binding changed");
-      delete saved.bindingConflict;
-    });
-    remoteBlocked.delete(group);
+    reconfirming.add(group);
+    try {
+      await refresh();
+      const observed = remoteBlocked.get(group);
+      const matchesOriginal = () => {
+        const matches = directory?.chats.filter((row) => row.id === group);
+        return matches?.length === 1 && samePeer(chat, matches[0]) && remoteBlocked.get(group) === observed;
+      };
+      requireValue(matchesOriginal(), "changed-key", "The saved contact binding has not returned");
+      await pin(chat, code, true);
+      await ctx.update((draft) => {
+        const saved = transport(draft).chats[group];
+        requireValue(saved?.bindingConflict && samePeer(saved, chat) && matchesOriginal(),
+          "changed-key", "The contact binding changed");
+        delete saved.bindingConflict;
+      });
+      if (!matchesOriginal()) {
+        observeConflict(group);
+        await persistConflicts([group]);
+        requireValue(false, "changed-key", "The contact binding changed");
+      }
+      remoteBlocked.delete(group);
+    } finally {
+      reconfirming.delete(group);
+    }
   }
 
   function rememberRateLimit(error) {
@@ -446,26 +478,55 @@ export function createMessenger(ctx) {
 
   async function flushOne(entry) {
     const chat = readChat(entry.group);
-    ensureUsable(chat);
+    const assertQueued = () => {
+      const current = readChat(entry.group);
+      ensureUsable(current);
+      const saved = state().outbox?.[entry.id];
+      requireValue(samePeer(chat, current) && saved?.group === entry.group &&
+        saved.epoch === entry.epoch && saved.kind === entry.kind && saved.ciphertext === entry.ciphertext,
+      "conflict", "The queued message or its contact changed");
+      return current;
+    };
+    async function checkPin(inspect) {
+      const current = assertQueued();
+      const { status } = await inspect("peer_key_status", {
+        identity: current.peerDevice, public_key: current.peerKey,
+      });
+      if (status !== "matches") observeConflict(entry.group);
+      requireValue(status === "matches", "changed-key", "The saved contact device key is unavailable");
+    }
+    const handoff = async (request) => {
+      const send = () => {
+        assertQueued();
+        return request();
+      };
+      requireValue(ctx.handoff, "handoff-unavailable", "A profile lock is required to send");
+      return ctx.handoff(checkPin, send);
+    };
+    assertQueued();
     const digest = await ciphertextDigest(entry.ciphertext);
-    ensureUsable(readChat(entry.group));
     let ack;
     try {
       ack = await ctx.api("/v1/messages", {
         conversationId: entry.group, clientMessageId: entry.id, mlsEpoch: entry.epoch,
         envelopeKind: entry.kind, ciphertext: entry.ciphertext,
-      });
+      }, undefined, handoff);
     } catch (error) {
-      const text = chat.messages.find((message) => message.direction === "outgoing" && message.id === entry.id)?.text;
-      if (error.code !== "MLS_EPOCH_CONFLICT" || !(chat.epoch > entry.epoch) || !text ||
-          Object.values(chat.envelopes).some((old) => old.id === entry.id)) throw error;
-      // The server checks deduplication before epochs. A definite epoch rejection,
-      // plus a verified newer MLS commit, allows this unsaved ID to be re-encrypted.
+      if (error.code === "changed-key" && remoteBlocked.has(entry.group) && !readChat(entry.group).bindingConflict) {
+        await persistConflicts([entry.group]);
+      }
+      if (error.code !== "MLS_EPOCH_CONFLICT") throw error;
+      const latest = assertQueued();
+      const text = latest.messages.find((message) => message.direction === "outgoing" && message.id === entry.id)?.text;
+      if (!(latest.epoch > entry.epoch) || !text ||
+          Object.values(latest.envelopes).some((old) => old.id === entry.id)) throw error;
+      // A definite epoch rejection allows this unsaved ID to be re-encrypted.
       await ctx.run("queue", { group: entry.group, id: entry.id, text }, (draft, replacement) => {
-        const outbox = transport(draft).outbox;
-        requireValue(outbox[entry.id]?.ciphertext === entry.ciphertext && replacement.epoch > entry.epoch,
+        const data = transport(draft);
+        ensureUsable(data.chats[entry.group]);
+        requireValue(data.outbox[entry.id]?.ciphertext === entry.ciphertext && replacement.epoch > entry.epoch,
           "conflict", "The queued message changed");
-        outbox[entry.id] = replacement;
+        data.outbox[entry.id] = replacement;
       });
       return flushOne(state().outbox[entry.id]);
     }
