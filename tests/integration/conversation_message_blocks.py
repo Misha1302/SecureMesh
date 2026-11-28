@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Established MLS message pause through HTTPS/WSS and live PostgreSQL."""
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from subprocess import CalledProcessError
 import tempfile
+from unittest.mock import patch
 import uuid
 
 import delivery as d
 from delivery_recovery_serialization import hold_row, scalar, wait_for
 from directory import establish
-from private_blobs import database
+from private_blobs import database, postgres
 
 
-def run():
+def run(pre_block):
     d.BASE = 'https://127.0.0.1:5297'
     with database() as db, d.Server(db, legacy_bootstrap=False), tempfile.TemporaryDirectory() as scratch:
         sender, receiver, outsider = (d.account(Path(scratch)) for _ in range(3))
@@ -56,6 +59,46 @@ def run():
             assert stream.send(first, group).durable_ack.server_sequence == 1
         finally:
             stream.close()
+        if pre_block:
+            # Both binaries share one DB. The old server cannot interpret the
+            # block, so it returns its generic storage failure instead of an ACK.
+            with patch.object(d, 'BASE', 'https://127.0.0.1:5298'), d.Server(
+                db, legacy_bootstrap=False, api_dll=pre_block,
+            ):
+                assert d.request(messages, d.envelope(pending, group), token=at, expected=503)['code'] == 'STORAGE_UNAVAILABLE'
+                assert d.request(messages, d.envelope(first, group), token=at)['serverSequence'] == 1
+                old_stream = d.Stream(at, a)
+                try:
+                    denied = old_stream.send(pending, group)
+                    assert denied.kind == d.wire.SERVER_ERROR and denied.server_error.code == 503
+                    assert old_stream.send(first, group).durable_ack.server_sequence == 1
+                finally:
+                    old_stream.close()
+
+        # Simulate a writer that mutates bookkeeping before INSERT (as roster
+        # commit does). The guard must roll back all writes in that transaction.
+        try:
+            scalar(db, f"""BEGIN;
+                UPDATE conversations SET next_seq=2,epoch=2 WHERE id='{group}';
+                INSERT INTO messages(id,conversation_id,seq,device_id,client_id,ciphertext,digest,epoch,kind)
+                SELECT gen_random_uuid(),conversation_id,2,device_id,gen_random_uuid(),ciphertext,digest,1,3
+                FROM messages WHERE conversation_id='{group}' AND seq=1;
+                COMMIT;""")
+        except CalledProcessError as error:
+            assert 'Conversation message delivery is paused' in error.stderr
+        else:
+            raise AssertionError('Database admitted a new envelope while paused')
+
+        # A full restore installs trigger definitions after restoring already
+        # accepted history and the active block rows.
+        with database() as restored, tempfile.TemporaryFile() as dump:
+            postgres('pg_dump', '-U', 'securemesh', '-d', db, '-Fc', stdout=dump)
+            dump.seek(0)
+            postgres('pg_restore', '-U', 'securemesh', '-d', restored, '--no-owner',
+                     '--exit-on-error', stdin=dump)
+            assert scalar(restored, f"SELECT count(*) FROM messages WHERE conversation_id='{group}'") == '1'
+            assert scalar(restored, f"SELECT count(*) FROM conversation_message_blocks WHERE conversation_id='{group}'") == '1'
+            assert scalar(restored, "SELECT count(*) FROM pg_trigger WHERE tgname='conversation_message_delivery_open'") == '1'
         assert scalar(db, f"SELECT next_seq,epoch FROM conversations WHERE id='{group}'") == '1|1'
         d.sync(b, bt, group)
         assert b.call('cursor', group=group)['seq'] == 1
@@ -76,8 +119,19 @@ def run():
             'Reverse delivery is also paused']
         # This preference does not silently activate the legacy invite block.
         assert d.request('/v1/contact-blocks', token=bt) == {'items': []}
+
+        # The established-pair pause must not obstruct device revocation.
+        assert d.request(route, token=bt, method='PUT')['paused']
+        d.request(f'/v1/devices/{a.identity}', token=at, method='DELETE', expected=204)
+        d.request(f'/v1/sync?conversationId={group}', token=at, expected=401)
+        assert not d.request(route, token=bt, method='DELETE')['paused']
+        after_revoke = queue(b, 'Must remain queued until a safe roster is available')
+        assert d.request(messages, d.envelope(after_revoke, group), token=bt, expected=409)['code'] == 'MLS_ROSTER_REKEY_REQUIRED'
+        assert scalar(db, f"SELECT next_seq,epoch FROM conversations WHERE id='{group}'") == '3|1'
     print('PASS established message blocks, concurrent gate, HTTPS/WSS, stable ACK, MLS resume and history')
 
 
 if __name__ == '__main__':
-    run()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--pre-block', type=Path, help='Debug API DLL from before message blocking')
+    run(parser.parse_args().pre_block)
