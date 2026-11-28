@@ -132,7 +132,7 @@ function client(username) {
     },
     async run(op, fields, mutate) {
       const result = JSON.parse(execute(stored.snapshot, JSON.stringify({ ...fields, op })));
-      if (op === "keypackage") packages.set(device, result.result);
+      if (op === "directory_consent" || op === "keypackage") packages.set(device, result.result);
       if (op === "process" && fields.id === failProcess) throw new Error("simulated vault write failure");
       if (op === "process" && fields.id === unsupportedProcess) {
         // Exercise the WASM caller's authenticated unsupported-event result shape.
@@ -272,4 +272,49 @@ paths = [];
 await assert.rejects(idle.tick({ forceDirectory: false }), { status: 429 });
 assert.deepEqual(paths, []);
 mock.restoreAll();
+// Prior releases kept the consent only in the outer encrypted vault and
+// published into the recipient's unscoped package pool.
+for (const pooledMismatch of [false, true]) {
+  const label = pooledMismatch ? "mismatch" : "matched";
+  const senderName = "sender_" + label, recipientName = "legacy_" + label;
+  const sender = client(senderName), recipient = client(recipientName);
+  const send = createMessenger(sender.ctx), receive = createMessenger(recipient.ctx);
+  const invitation = await send.invite(recipientName);
+  const code = await fingerprint(sender.own.public_key);
+  await recipient.ctx.run("pin", { ...sender.own, confirmed: true });
+  const pkg = await recipient.ctx.run("keypackage", {});
+  await recipient.ctx.update((draft) => {
+    draft.messenger = { chats: {}, invites: {}, proposals: {}, outbox: {}, accepted: {
+      [invitation]: { peerDevice: sender.own.identity, peerKey: sender.own.public_key,
+        peerName: senderName, ...pkg, posted: true },
+    }};
+    const legacy = JSON.parse(draft.snapshot);
+    legacy.version = 1;
+    delete legacy.consents;
+    draft.snapshot = JSON.stringify(legacy);
+  });
+  await recipient.ctx.api(`/v1/chat-requests/${invitation}/accept`, {});
+  if (pooledMismatch) await recipient.ctx.run("keypackage", {});
+  const [row] = (await send.refresh()).requests;
+  const group = await send.establish(row, await fingerprint(recipient.own.public_key));
+  const [welcome] = (await receive.refresh()).welcomes;
+  if (pooledMismatch) {
+    await assert.rejects(receive.join(welcome, code), { code: "invitation" });
+    assert.equal(recipient.ctx.state().messenger.chats[group], undefined);
+    assert(groups.get(group).pending);
+  } else {
+    await assert.rejects(receive.join(welcome), { code: "verification" });
+    await assert.rejects(receive.join(welcome, "wrong"), { code: "verification" });
+    assert.equal(await receive.join(welcome, code), group);
+    await recipient.ctx.update((draft) => {
+      // A previously joined v1 group can replay the identical signed receipt.
+      const legacy = JSON.parse(draft.snapshot);
+      legacy.version = 1;
+      delete legacy.consents;
+      draft.snapshot = JSON.stringify(legacy);
+      delete draft.messenger.accepted[invitation].coreConsent;
+    });
+    assert.equal(await createMessenger(recipient.ctx).join(welcome), group);
+  }
+}
 console.log("Browser messenger transport passed with real WASM");

@@ -5,7 +5,9 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto as Provider;
-use openmls_traits::{crypto::OpenMlsCrypto, signatures::Signer, OpenMlsProvider};
+use openmls_traits::{
+    crypto::OpenMlsCrypto, signatures::Signer, storage::StorageProvider as _, OpenMlsProvider,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -31,6 +33,15 @@ type Store = Vec<(Vec<u8>, Vec<u8>)>;
 type Roster = BTreeMap<String, Vec<u8>>;
 
 #[derive(Serialize, Deserialize)]
+struct Consent {
+    sender: String,
+    key: Vec<u8>,
+    reference: String,
+    keypackage: String,
+    group: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
 struct Profile {
     version: u8,
     identity: String,
@@ -38,6 +49,8 @@ struct Profile {
     pins: Roster,
     store: Store,
     pending: BTreeMap<String, Value>,
+    #[serde(default)]
+    consents: BTreeMap<String, Consent>,
     joined: BTreeMap<String, [u8; 32]>,
 }
 
@@ -66,7 +79,11 @@ fn read_profile(snapshot: Option<&str>, req: &Value, provider: &Provider) -> Res
     if let Some(snapshot) = snapshot {
         ensure!(field(req, "op")? != "init", "already initialized");
         let mut profile: Profile = serde_json::from_str(snapshot)?;
-        ensure!(profile.version == 1, "unsupported profile version");
+        ensure!(
+            [1, 2].contains(&profile.version),
+            "unsupported profile version"
+        );
+        profile.version = 2;
         ensure!(
             profile.pins.get(&profile.identity) == Some(&profile.public),
             "identity pin mismatch"
@@ -85,12 +102,13 @@ fn read_profile(snapshot: Option<&str>, req: &Value, provider: &Provider) -> Res
     signer.store(provider.storage())?;
     let public = signer.public().to_vec();
     Ok(Profile {
-        version: 1,
+        version: 2,
         pins: [(identity.clone(), public.clone())].into(),
         identity,
         public,
         store: Vec::new(),
         pending: BTreeMap::new(),
+        consents: BTreeMap::new(),
         joined: BTreeMap::new(),
     })
 }
@@ -283,6 +301,18 @@ fn join(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<Value
         MlsGroup::load(provider.storage(), &GroupId::from_slice(gid.as_bytes()))?.is_none(),
         "group already exists"
     );
+    let invitation = coordinate(req, "invitation")?;
+    let receipt = profile
+        .consents
+        .get(invitation)
+        .context("local invitation consent required")?;
+    ensure!(
+        receipt.sender == sender
+            && receipt.key == *key
+            && receipt.reference == field(req, "reference")?
+            && receipt.group.is_none(),
+        "invitation consent mismatch"
+    );
     let welcome = match MlsMessageIn::tls_deserialize_exact(&welcome)?.extract() {
         MlsMessageBodyIn::Welcome(welcome) => welcome,
         _ => bail!("expected MLS Welcome"),
@@ -305,6 +335,11 @@ fn join(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<Value
             && members.contains_key(&profile.identity),
         "unexpected MLS participant"
     );
+    profile
+        .consents
+        .get_mut(invitation)
+        .context("missing consent")?
+        .group = Some(gid.to_owned());
     profile.joined.insert(gid.to_owned(), digest);
     Ok(json!({"epoch":group.epoch().as_u64()}))
 }
@@ -358,6 +393,71 @@ fn operation(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<
                 json!({"keypackage":B64.encode(kp.tls_serialize_detached()?),
                 "reference":B64.encode(kp.hash_ref(provider.crypto())?.as_slice())}),
             )
+        }
+        "directory_consent" => {
+            let invitation = coordinate(req, "invitation")?;
+            let sender = coordinate(req, "sender")?;
+            let key = bytes(req, "senderKey", 32)?;
+            ensure!(
+                req["confirmed"] == true && sender != profile.identity,
+                "explicit recipient consent required"
+            );
+            check_pin(profile, sender, &key)?;
+            ensure!(
+                req.get("keypackage").is_some() == req.get("reference").is_some(),
+                "incomplete consent package"
+            );
+            if let Some(existing) = profile.consents.get(invitation) {
+                ensure!(
+                    existing.sender == sender
+                        && existing.key == key
+                        && (req.get("keypackage").is_none()
+                            || (req["keypackage"] == existing.keypackage
+                                && req["reference"] == existing.reference)),
+                    "invitation consent mismatch"
+                );
+                return Ok(
+                    json!({"keypackage":existing.keypackage,"reference":existing.reference}),
+                );
+            }
+            let offered = if req.get("keypackage").is_some() {
+                // An older vault stores the public package alongside its local invitation.
+                // The user has independently re-confirmed this contact before this operation.
+                let raw = bytes(req, "keypackage", 16384)?;
+                let kp = KeyPackageIn::tls_deserialize_exact(&raw)?
+                    .validate(provider.crypto(), ProtocolVersion::Mls10)?;
+                let leaf = kp.leaf_node();
+                let hash = kp.hash_ref(provider.crypto())?;
+                ensure!(
+                    kp.ciphersuite() == SUITE
+                        && BasicCredential::try_from(leaf.credential().clone())?.identity()
+                            == profile.identity.as_bytes()
+                        && leaf.signature_key().as_slice() == profile.public
+                        && hash.as_slice() == bytes(req, "reference", 32)?,
+                    "legacy consent package mismatch"
+                );
+                let local: Option<KeyPackageBundle> = provider.storage().key_package(&hash)?;
+                ensure!(local.is_some(), "legacy local package unavailable");
+                json!({"keypackage":B64.encode(raw),"reference":field(req,"reference")?})
+            } else {
+                operation(provider, profile, &json!({"op":"keypackage"}))?
+            };
+            let reference = field(&offered, "reference")?.to_owned();
+            ensure!(
+                !profile.consents.values().any(|r| r.reference == reference),
+                "package already bound"
+            );
+            profile.consents.insert(
+                invitation.to_owned(),
+                Consent {
+                    sender: sender.to_owned(),
+                    key,
+                    reference,
+                    keypackage: field(&offered, "keypackage")?.to_owned(),
+                    group: None,
+                },
+            );
+            Ok(offered)
         }
         "directory_pending" => match profile.pending.get(coordinate(req, "invitation")?) {
             Some(result) => Ok(json!({"prepared":true,"request":result})),

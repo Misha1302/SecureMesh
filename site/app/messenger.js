@@ -184,21 +184,38 @@ export function createMessenger(ctx) {
     await ctx.update((draft) => { transport(draft).accepted[id].posted = true; });
   }
 
+  async function confirmInvitation(id, peer, code) {
+    const existing = state().accepted?.[id];
+    requireValue(!existing || samePeer(existing, peer), "changed-key", "The invitation sender changed");
+    if (existing?.coreConsent) {
+      await pin(peer, code, true);
+      return;
+    }
+    // Upgrading a pending pre-v2 receipt requires a fresh independent code.
+    await pin(peer, code);
+    await ctx.run("directory_consent", {
+      invitation: id, sender: peer.peerDevice, senderKey: peer.peerKey, confirmed: true,
+      ...(existing ? { keypackage: existing.keypackage, reference: existing.reference } : {}),
+    }, (draft, result) => {
+      const accepted = transport(draft).accepted;
+      if (existing) {
+        const saved = accepted[id];
+        requireValue(saved && samePeer(saved, peer) && saved.reference === result.reference &&
+          saved.keypackage === result.keypackage, "invitation", "The saved invitation changed");
+        saved.coreConsent = true;
+      } else {
+        requireValue(!accepted[id], "invitation", "The invitation changed");
+        accepted[id] = { ...peer, coreConsent: true, offeredFor: id, keypackage: result.keypackage,
+          reference: result.reference, posted: false };
+      }
+    });
+  }
+
   async function accept(request, code) {
     const id = uuid(request.id);
     requireValue(request.outgoing === false, "invitation", "This is not an incoming invitation");
     const peer = peerInfo(request.senderDevice, request.senderKey, request.username);
-    const existing = state().accepted?.[id];
-    requireValue(!existing || samePeer(existing, peer), "changed-key", "The invitation sender changed");
-    await pin(peer, code, Boolean(existing));
-    if (!existing) {
-      await ctx.run("keypackage", {}, (draft, result) => {
-        const accepted = transport(draft).accepted;
-        requireValue(!accepted[id] || samePeer(accepted[id], peer),
-          "changed-key", "The invitation sender changed");
-        accepted[id] ??= { ...peer, offeredFor: id, keypackage: result.keypackage, reference: result.reference, posted: false };
-      });
-    }
+    await confirmInvitation(id, peer, code);
     const pending = state().accepted[id];
     if (!pending.posted) await postAccept(id, pending);
     return id;
@@ -260,13 +277,17 @@ export function createMessenger(ctx) {
     await ctx.update((draft) => { transport(draft).chats[group].welcomePending = false; });
   }
 
-  async function join(welcome) {
+  async function join(welcome, code) {
     const group = uuid(welcome.group);
     const invitation = uuid(welcome.invitation);
     const accepted = state().accepted?.[invitation];
     requireValue(accepted?.posted && accepted.reference === welcome.reference && accepted.peerDevice === welcome.sender && accepted.peerKey === welcome.senderKey &&
       welcome.recipient === await identity(), "invitation", "Welcome does not match the verified invitation");
-    await pin(accepted, undefined, true);
+    if (!accepted.coreConsent && !accepted.joined) {
+      await confirmInvitation(invitation, accepted, code);
+    } else {
+      await pin(accepted, undefined, true);
+    }
     const { lease, sender, recipient, reference, signature } = welcome;
     requireValue(!accepted.joined || accepted.joined === group, "invitation", "This invitation already has a conversation");
     await ctx.run("directory_join", {

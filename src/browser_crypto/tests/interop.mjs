@@ -81,6 +81,15 @@ try {
     if (!senderIsBrowser) {
       assert.throws(() => accept({ ...join, reference: alice.public_key }), /Welcome KeyPackage reference mismatch/);
     }
+    if (!senderIsBrowser) {
+      assert.throws(() => accept(join), /local invitation consent required/);
+      const receipt = { op: "directory_consent", invitation, sender: sender.identity,
+        senderKey: sender.public_key, keypackage: packageResponse.keypackage, reference };
+      assert.throws(() => browser(receipt), /explicit recipient consent/);
+      assert.throws(() => browser({ ...receipt, confirmed: true, reference: sender.public_key }), /legacy consent package mismatch/);
+      browser({ ...receipt, confirmed: true });
+      assert.throws(() => browser({ ...receipt, confirmed: true, invitation: randomUUID() }), /package already bound/);
+    }
     assert.equal(accept(join).epoch, 1);
     assert.equal(accept(join).already_joined, true);
 

@@ -320,14 +320,27 @@ function renderRequests(current, value) {
     if (!row.established && row.outgoing && row.accepted)
       rows.push(["establish", row, "Открыть чат с @" + row.username]);
   }
-  for (const row of value?.welcomes ?? [])
-    rows.push(["join", row, "Открыть проверенное приглашение"]);
+  for (const row of value?.welcomes ?? []) {
+    const receipt = current.handle.state.messenger?.accepted?.[row.invitation];
+    if (!receipt?.posted || receipt.reference !== row.reference ||
+        receipt.peerDevice !== row.sender || receipt.peerKey !== row.senderKey) {
+      rows.push(["blocked", row, "Приглашение не совпадает с сохранённым согласием. Попросите собеседника отправить новое."]);
+    } else if (!receipt.coreConsent && !receipt.joined) {
+      rows.push(["reconfirm", row, "Сверить код и повторно принять приглашение"]);
+    } else {
+      rows.push(["join", row, "Открыть проверенное приглашение"]);
+    }
+  }
   // Keep the fingerprint field and its focus during background refreshes.
   const key = JSON.stringify(rows);
   if (current.requestKey === key) return;
   current.requestKey = key;
   root.replaceChildren();
   for (const [act, row, label] of rows) {
+    if (act === "blocked") {
+      root.append(element("p", label));
+      continue;
+    }
     const form = element("form"),
       button = element("button", label);
     button.dataset.action = act;
@@ -346,7 +359,7 @@ function renderRequests(current, value) {
     }
     form.append(button);
     bind(form, async () => {
-      await current.mesh[act](row, form.elements.fingerprint?.value);
+      await current.mesh[act === "reconfirm" ? "join" : act](row, form.elements.fingerprint?.value);
       await refresh(current);
     });
     root.append(form);
