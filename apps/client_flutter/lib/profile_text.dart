@@ -98,7 +98,9 @@ class _ProfileTextEditorState extends State<ProfileTextEditor> {
     });
     try {
       final response = await widget.api(
-        '/v1/users/me/profile-text',
+        visibleToPeers == null
+            ? '/v1/users/me/profile-text'
+            : '/v1/users/me/profile-text/with-visibility',
         method: 'PUT',
         data: {
           'bio': about.isEmpty ? null : about,
@@ -117,6 +119,15 @@ class _ProfileTextEditorState extends State<ProfileTextEditor> {
       setState(() {
         conflict = failure is ApiFailure && failure.code == 'PROFILE_CHANGED';
         busy = false;
+        if (visibleToPeers != null &&
+            failure is ApiFailure &&
+            failure.status == 404) {
+          error = tr(
+            'Сервер не поддерживает сохранение видимости. Изменения не сохранены.',
+            'This server does not support saving visibility. Your changes were not saved.',
+          );
+          return;
+        }
         error = conflict
             ? tr(
                 'Профиль изменён на другом устройстве. Загрузите текущую версию перед редактированием.',

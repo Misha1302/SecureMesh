@@ -31,7 +31,7 @@ def verify(request, owner, peer, outsider, pending, group, owner_device):
         save(bio, status, 1, 400)
     request(own, {'bio': None}, token=owner, method='PUT', expected=400)
     assert request(peer_url, token=peer) == updated
-    hidden = request(own, {**updated, 'revision': 1, 'visibleToPeers': False}, token=owner, method='PUT')
+    hidden = request(own+'/with-visibility', {**updated, 'revision': 1, 'visibleToPeers': False}, token=owner, method='PUT')
     assert hidden == {**updated, 'revision': 2, 'visibleToPeers': False}
     assert request(peer_url, token=peer) == empty
     assert request(own, token=owner) == hidden

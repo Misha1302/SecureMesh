@@ -84,7 +84,7 @@ public static class ProfileText
             return result;
         });
 
-        app.MapPut("/v1/users/me/profile-text", async (ProfileTextUpdate input, HttpContext ctx, NpgsqlDataSource db) =>
+        static async Task<IResult> Save(ProfileTextUpdate input, HttpContext ctx, NpgsqlDataSource db)
         {
             var actor = await Sql.Authenticate(ctx, db);
             if (input.Revision < 0) throw new ApiError(400, "INVALID_PROFILE_REVISION");
@@ -117,7 +117,10 @@ public static class ProfileText
             }
             await tx.CommitAsync(ctx.RequestAborted);
             return Results.Ok(new { bio = bio.Length == 0 ? null : bio, status = status.Length == 0 ? null : status, revision, visibleToPeers = visible });
-        });
+        }
+
+        app.MapPut("/v1/users/me/profile-text", Save);
+        app.MapPut("/v1/users/me/profile-text/with-visibility", Save);
 
         app.MapGet("/v1/conversations/{id:guid}/profile-text/{peer:guid}", async (Guid id, Guid peer, HttpContext ctx, NpgsqlDataSource db) =>
         {
