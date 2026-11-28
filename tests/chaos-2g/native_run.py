@@ -17,6 +17,7 @@ ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests/integration'))
 import delivery as d
 from directory import establish
+from private_blobs import database
 
 COMPOSE=['docker','compose','-f','docker-compose.yml','-f','compose.chaos.yml']
 def docker(*args):return subprocess.check_output(COMPOSE+list(args),cwd=ROOT,text=True)
@@ -32,7 +33,7 @@ def main():
         docker('up','-d','netem-a','netem-b')
         for seed in map(int,args.seeds.split(',')):
             for i,name in enumerate(('netem-a','netem-b')):docker('exec','-T',name,'sh','/netem/configure.sh','10000','0','0',str(seed+i))
-            with d.Server(legacy_bootstrap=False),tempfile.TemporaryDirectory(prefix='securemesh-native-netem-',dir=ROOT/'.local') as tmp:
+            with database() as test_db, d.Server(test_db, legacy_bootstrap=False), tempfile.TemporaryDirectory(prefix='securemesh-native-netem-',dir=ROOT/'.local') as tmp:
                 root=Path(tmp);a,b=[d.account(root) for _ in range(2)];a['device'].pin(b['device']);b['device'].pin(a['device']);group=establish(a,b)
                 output=ROOT/f'reports/evidence/native-netem-{args.profile}-{seed}-{args.count}.json'
                 if output.exists():
