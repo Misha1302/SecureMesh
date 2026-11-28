@@ -123,6 +123,13 @@
           <div class="thread-header">
             <button type="button" id="to-chats">Все чаты</button>
             <h2 id="peer" tabindex="-1"></h2>
+            <button type="button" id="chat-search-toggle" aria-expanded="false" aria-controls="chat-search">Поиск в чате</button>
+            <section id="chat-search" aria-label="Поиск в чате" hidden>
+              <input id="chat-search-query" type="search" aria-label="Текст для поиска" placeholder="Текст для поиска" maxlength="256" autocomplete="off" spellcheck="false" />
+              <button type="button" id="chat-search-older">Предыдущее</button>
+              <button type="button" id="chat-search-newer">Следующее</button>
+              <p id="chat-search-result" role="status"></p>
+            </section>
             <button type="button" id="peer-profile-open" aria-expanded="false" aria-controls="peer-profile" hidden>Анкета собеседника</button>
             <section id="peer-profile" aria-label="Анкета собеседника" hidden>
               <p id="peer-profile-note" role="status"></p>
