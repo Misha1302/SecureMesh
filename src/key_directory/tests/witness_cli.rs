@@ -6,7 +6,12 @@ use akd::{
 use anyhow::Result;
 use ed25519_dalek::SigningKey;
 use securemesh_crypto::api::NativeClient;
-use securemesh_key_directory::{encode_consistency, store::Store, Checkpoint};
+use securemesh_key_directory::{
+    encode_consistency,
+    store::Store,
+    witness::{Policy, Witness},
+    Checkpoint,
+};
 use std::{
     fs,
     io::Write,
@@ -137,5 +142,35 @@ async fn operator_and_client_reopen_separate_ledgers_and_exchange_public_votes()
     *args.last_mut().unwrap() = "v2";
     assert_eq!(cli(at, &args, pw.as_bytes())?.stdout, b"Committed\n");
     assert_eq!(cli(at, &args, pw.as_bytes())?.stdout, b"AlreadyCommitted\n");
+
+    let policy = Policy::new(
+        [7; 32],
+        vrf,
+        keys.each_ref().map(|key| key.verifying_key().to_bytes()),
+    )?;
+    let checkpoint = Checkpoint {
+        epoch: next.epoch(),
+        root: next.hash(),
+    };
+    let observations = (0..3)
+        .map(|slot| {
+            let witness = Witness::open(
+                &at.join(format!("ledger{slot}")),
+                policy.clone(),
+                slot as u8,
+            )?;
+            witness.observe_current(&keys[slot])
+        })
+        .collect::<Result<Vec<_>>>()?;
+    assert!(observations
+        .iter()
+        .all(|observation| observation.checkpoint() == checkpoint));
+    let store = Store::open(&path, pw, owner, vrf)?;
+    let accepted = store.accept_checkpoint_freshness(&policy, &observations)?;
+    assert_eq!(accepted.checkpoint(), checkpoint);
+    assert_eq!(store.current_checkpoint_freshness(&policy)?, accepted);
+    drop(store);
+    let reopened = Store::open(&path, pw, owner, vrf)?;
+    assert_eq!(reopened.current_checkpoint_freshness(&policy)?, accepted);
     Ok(())
 }

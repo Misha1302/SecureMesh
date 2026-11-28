@@ -1,4 +1,4 @@
-use super::{Policy, Vote};
+use super::{unix_time_seconds, Observation, Policy, Vote};
 use crate::{Checkpoint, Client};
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::{Signer, SigningKey};
@@ -124,5 +124,22 @@ impl Witness {
             slot: self.slot,
             signature: key.sign(&statement).to_bytes(),
         })
+    }
+
+    /// Sign a fresh observation only for this witness's durable current checkpoint.
+    /// Each real operator obtains its own observation; callers cannot use this method
+    /// to manufacture a quorum from a single witness.
+    pub fn observe_current(&self, key: &SigningKey) -> Result<Observation> {
+        ensure!(
+            key.verifying_key() == self.policy.keys[usize::from(self.slot)],
+            "wrong signing key"
+        );
+        Observation::sign(
+            &self.policy,
+            self.slot,
+            self.checkpoint()?,
+            unix_time_seconds()?,
+            key,
+        )
     }
 }

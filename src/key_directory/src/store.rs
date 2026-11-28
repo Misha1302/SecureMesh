@@ -256,5 +256,6 @@ fn record(
 mod names;
 mod rosters;
 pub use rosters::{DeviceKeyPackageEvidence, VerifiedKeyPackage, VerifiedPackageSet};
+mod freshness;
 #[cfg(test)]
 mod tests;
