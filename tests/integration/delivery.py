@@ -112,10 +112,11 @@ def sync(device,token,group,limit=100):
     request('/v1/acks',dict(conversationId=group,sequence=sequence),token=token,expected=204)
 
 class Server:
-    def __init__(self,database='securemesh',legacy_bootstrap=True):
+    def __init__(self,database='securemesh',legacy_bootstrap=True,api_dll=None):
         assert database.replace('_','').isalnum()
         self.database=database
         self.legacy_bootstrap=legacy_bootstrap
+        self.api_dll=Path(api_dll).resolve(strict=True) if api_dll is not None else ROOT/'src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll'
     def __enter__(self):
         port=urllib.parse.urlparse(BASE).port
         self.port_lock=(ROOT/'.local'/f'test-api-{port}.lock').open('w')
@@ -139,7 +140,7 @@ class Server:
             probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
             try:probe.bind((endpoint.hostname,endpoint.port))
             except OSError:raise RuntimeError(f'TEST_API_PORT_IN_USE_{endpoint.port}') from None
-        self.p=subprocess.Popen(['dotnet','src/SecureMesh.Api/bin/Debug/net10.0/SecureMesh.Api.dll','--urls',os.environ.get('SECUREMESH_TEST_URLS',BASE)],cwd=ROOT,env=self.env,stdout=self.log,stderr=self.log)
+        self.p=subprocess.Popen(['dotnet',str(self.api_dll),'--urls',os.environ.get('SECUREMESH_TEST_URLS',BASE)],cwd=ROOT,env=self.env,stdout=self.log,stderr=self.log)
         for _ in range(150):
             if self.p.poll() is not None: raise RuntimeError('API died; inspect .local/api-delivery.log')
             try: request('/health/ready'); break

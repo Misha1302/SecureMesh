@@ -111,4 +111,7 @@ and a `seq` from that channel. Pass a null `seq` to unpin. Success returns
 204. A conflicting revision returns 409 and requires refreshing the feed.
 An immediate retry of a successful change is idempotent. Pin changes and
 publication deletion serialize on the channel row. Deleting the pinned post
-clears its pin and advances the revision in the same transaction.
+clears its pin and advances the revision in the same transaction. Migration
+`202611280113_ChannelPinCleanup` makes PostgreSQL perform the cleanup for
+both current and older API binaries, and clears any existing pin to a
+tombstone during upgrade.

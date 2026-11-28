@@ -556,8 +556,6 @@ public static partial class PublicChannels
         await using var cmd=Sql.Cmd(c,"UPDATE public_channel_posts SET body=NULL,deleted_at=now() WHERE channel_id=$1 AND seq=$2 AND body IS NOT NULL",id,seq);
         if(await cmd.ExecuteNonQueryAsync()!=0)
         {
-            await using (var clear=Sql.Cmd(c,"UPDATE channel_catalog SET pinned_seq=NULL,pin_revision=pin_revision+1 WHERE id=$1 AND pinned_seq=$2",id,seq))
-                await clear.ExecuteNonQueryAsync();
             await using (var comments=Sql.Cmd(c,"DELETE FROM public_channel_comments WHERE post_seq=$1",seq))
                 await comments.ExecuteNonQueryAsync();
             await using var reactions=Sql.Cmd(c,"DELETE FROM public_channel_reactions WHERE post_seq=$1",seq);
