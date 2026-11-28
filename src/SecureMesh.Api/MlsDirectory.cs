@@ -24,7 +24,10 @@ public static class MlsDirectory
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE username=$1 AND verified",input.Username))
                 recipient=await cmd.ExecuteScalarAsync() is Guid id?id:throw new ApiError(404,"USER_NOT_FOUND");
             if(recipient==actor.UserId) throw new ApiError(400,"SELF_REQUEST_NOT_SUPPORTED");
-            await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=ANY($1) ORDER BY id FOR UPDATE",new Guid[]{actor.UserId,recipient})) await cmd.ExecuteNonQueryAsync();
+            // Existing pair quota/block locks must stay in canonical order; validate the session after acquiring them.
+            await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=ANY($1) ORDER BY id FOR UPDATE",new Guid[]{actor.UserId,recipient}))
+                await cmd.ExecuteNonQueryAsync(ctx.RequestAborted);
+            await Sql.LockTrustedDeliverySession(c,actor,ctx.RequestAborted);
             await using(var old=Sql.Cmd(c,"SELECT 1 FROM chat_requests WHERE id=$1 AND sender_device=$2 AND recipient_user=$3",input.Id,actor.DeviceId,recipient))
                 if(await old.ExecuteScalarAsync() is not null) return Results.Ok(new{id=input.Id});
             await using (var blocked = Sql.Cmd(c, "SELECT 1 FROM contact_blocks WHERE owner_id=$1 AND blocked_id=$2", recipient, actor.UserId))
@@ -60,6 +63,8 @@ public static class MlsDirectory
         {
             var actor=await Sql.Authenticate(ctx,db);
             await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
+            await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
+            await Sql.LockTrustedDeliverySession(c,actor,ctx.RequestAborted);
             // Retain the request ID for retry deduplication. An accepted request may
             // already have an MLS lease, so its identity binding must stay intact.
             await using var cmd=Sql.Cmd(c,"""
@@ -67,16 +72,21 @@ public static class MlsDirectory
                 WHERE id=$1 AND (recipient_user=$2 OR sender_device=$3) AND recipient_device IS NULL
                 """,id,actor.UserId,actor.DeviceId);
             if(await cmd.ExecuteNonQueryAsync(ctx.RequestAborted)!=1) throw new ApiError(404,"PENDING_REQUEST_NOT_FOUND");
+            await tx.CommitAsync(ctx.RequestAborted);
             return Results.NoContent();
         });
         app.MapPost("/v1/chat-requests/{id:guid}/accept",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
         {
-            var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync();
+            var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
+            await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
+            await Sql.LockTrustedDeliverySession(c,actor,ctx.RequestAborted);
             await using var cmd=Sql.Cmd(c,"""
                 UPDATE chat_requests SET recipient_device=$3 WHERE id=$1 AND recipient_user=$2 AND expires_at>now()
                 AND (recipient_device IS NULL OR recipient_device=$3)
                 """,id,actor.UserId,actor.DeviceId);
-            if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(404,"CHAT_REQUEST_NOT_FOUND");return Results.NoContent();
+            if(await cmd.ExecuteNonQueryAsync(ctx.RequestAborted)!=1) throw new ApiError(404,"CHAT_REQUEST_NOT_FOUND");
+            await tx.CommitAsync(ctx.RequestAborted);
+            return Results.NoContent();
         });
         app.MapGet("/v1/chat-requests/{id:guid}",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
         {
@@ -129,9 +139,13 @@ public static class MlsDirectory
         });
         app.MapPost("/v1/crypto/welcomes/{id:guid}/ack",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
         {
-            var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync();
+            var actor=await Sql.Authenticate(ctx,db);await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);
+            await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
+            await Sql.LockTrustedDeliverySession(c,actor,ctx.RequestAborted);
             await using var cmd=Sql.Cmd(c,"UPDATE conversation_bootstraps SET received=true WHERE conversation_id=$1 AND recipient_device=$2",id,actor.DeviceId);
-            if(await cmd.ExecuteNonQueryAsync()!=1) throw new ApiError(404,"WELCOME_NOT_FOUND");return Results.NoContent();
+            if(await cmd.ExecuteNonQueryAsync(ctx.RequestAborted)!=1) throw new ApiError(404,"WELCOME_NOT_FOUND");
+            await tx.CommitAsync(ctx.RequestAborted);
+            return Results.NoContent();
         });
     }
 
@@ -145,6 +159,7 @@ public static class MlsDirectory
         byte[]? reference = input.InvitationId is null
             ? await validator.Validate(input.Payload, actor.DeviceId, key, ctx.RequestAborted) : null;
         await using var tx = await c.BeginTransactionAsync(ctx.RequestAborted);
+        await Sql.LockTrustedDeliverySession(c,actor,ctx.RequestAborted);
         if (input.InvitationId is Guid invitation)
         {
             // Serialize publication with leasing and establishment for this invitation.
@@ -211,7 +226,8 @@ public static class MlsDirectory
     {
         var actor=await Sql.Authenticate(ctx,db);
         if(input.RequestId==Guid.Empty) throw new ApiError(400,"INVALID_LEASE_ID");
-        await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
+        await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
+        await Sql.LockTrustedDeliverySession(c,actor,ctx.RequestAborted);
         Guid target;byte[] key;
         await using(var cmd=Sql.Cmd(c,"""
             SELECT d.id,d.public_key FROM chat_requests q JOIN devices d ON d.id=q.recipient_device
@@ -259,7 +275,8 @@ public static class MlsDirectory
     {
         var actor=await Sql.Authenticate(ctx,db);
         if(input.Id==Guid.Empty || input.Welcome.Length is <1 or >32768 || input.Signature.Length!=64) throw new ApiError(400,"INVALID_WELCOME");
-        await using var c=await db.OpenConnectionAsync();await using var tx=await c.BeginTransactionAsync();
+        await using var c=await db.OpenConnectionAsync(ctx.RequestAborted);await using var tx=await c.BeginTransactionAsync(ctx.RequestAborted);
+        await Sql.LockTrustedDeliverySession(c,actor,ctx.RequestAborted);
         var committed=await ExistingBootstrap(c,input,actor);
         if(committed is not null) return committed;
         Guid recipient;byte[] reference,key;
