@@ -32,14 +32,11 @@ PRODUCTION_APPROVED=false.
 
 ## Состояние при перезапуске
 
-Команды `pin`, `advance` и `read` используют существующий нативный профиль с уже инициализированной идентичностью. В них тот же rusqlite 0.41.1 и SQLCipher 4.20.0, что и в crypto_core. Версия поддерживаемого реестра миграций OpenMLS — 6. Пароль профиля передаётся в stdin. Пример предполагает заранее установленную переменную PROFILE с путём, OWNER с идентификатором этого устройства и независимо проверенные VRF, ROOT1 и ROOT2. Функция запускается в Bash, ввод пароля скрыт, пароль не передаётся в аргументах процесса.
+Команды `pin`, `advance` и `read` используют существующий нативный профиль с уже инициализированной идентичностью. В них тот же rusqlite 0.41.1 и SQLCipher 4.20.0, что и в crypto_core. Версия поддерживаемого реестра миграций OpenMLS — 6. Пароль профиля передаётся в stdin. Пример предполагает заранее установленную переменную PROFILE с путём, OWNER с идентификатором этого устройства и независимо проверенные VRF, ROOT1 и ROOT2. Пример читает пароль из заранее подготовленного защищённого источника PROFILE_SECRET_FILE; содержимое не передаётся в аргументах процесса. CLI принимает 16–4096 байт UTF-8 без NUL. Пробелы и переводы строк, включая последний LF, входят в пароль. Источник должен выдавать точные байты пароля.
 
 ```bash
 directory_store() {
-  local profile_secret
-  read -rs -p 'Пароль профиля: ' profile_secret </dev/tty
-  printf '\n' >/dev/tty
-  printf '%s' "$profile_secret" | cargo +1.100.0 run --locked --offline -j2 --example directory -- "$@"
+  cargo +1.100.0 run --locked --offline -j2 --example directory -- "$@" < "$PROFILE_SECRET_FILE"
 }
 directory_store pin "$PROFILE" "$OWNER" "$VRF" 1 "$ROOT1"
 directory_store advance "$PROFILE" "$OWNER" "$VRF" 1 "$ROOT1" 2 "$ROOT2" "$proof_dir/advance.pb"

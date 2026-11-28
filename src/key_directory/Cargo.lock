@@ -2572,6 +2572,7 @@ dependencies = [
  "securemesh-crypto",
  "tempfile",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
