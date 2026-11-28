@@ -58,3 +58,7 @@ Latest broad aggregate: make verify exits2, 24/27 groups pass, three mandatory r
 Current source: 1c08659 adds the tested journal and challenge binding, 5cbdb01 fixes language changes without clearing entered credentials. Independent UI verdict ship covers only its scored Linux correction. Read reports/ONBOARDING_RESUME_REPORT.md for exact scope and retained failures.
 
 Next order: compatible upstream dependency/provider/storage remediation; remaining pre-journal and refresh lost-reply/crash edges; complete combined 2G blackout/lost-ACK/SIGKILL/half-open/DB/media schedule; then MLS multi-device leaf/rekey/history transfer/recovery and remaining S2–S4 features. No stage is complete, no production approval, no public deployment. Continue from reports/FINAL_HANDOFF_RU.md and the exact working matrices; do not recreate completed modules.
+
+## Проверка ключей собеседников
+
+Начать с модели отзыва и очереди, затем реализовать вертикальный срез на двух клиентах. Этапы, допущения и критерии приведены в [ТЗ Key Transparency](docs/KEY_TRANSPARENCY_TZ_RU.md).
