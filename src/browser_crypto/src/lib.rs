@@ -6,8 +6,8 @@ use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto as Provider;
 use openmls_traits::{
-    crypto::OpenMlsCrypto, signatures::Signer, storage::StorageProvider as _, types::AeadType,
-    OpenMlsProvider,
+    crypto::OpenMlsCrypto, random::OpenMlsRand, signatures::Signer, storage::StorageProvider as _,
+    types::AeadType, OpenMlsProvider,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -557,6 +557,31 @@ fn operation(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<
             let gid = coordinate(req, "group")?;
             let id = coordinate(req, "id")?;
             let text = field(req, "text")?;
+            let photo = match req.get("photo") {
+                Some(_) => {
+                    let plain = bytes(req, "photo", 1024 * 1024)?;
+                    ensure!(!plain.is_empty(), "empty photo");
+                    let key = provider.rand().random_array::<32>()?;
+                    let nonce = provider.rand().random_array::<12>()?;
+                    let info = json!({"v":1,"blobId":coordinate(req, "blobId")?,"size":plain.len(),
+                        "name":"photo.jpg","media":"photo","key":B64.encode(key),"nonce":B64.encode(nonce)});
+                    let sealed = provider.crypto().aead_encrypt(
+                        AeadType::Aes256Gcm,
+                        &key,
+                        &plain,
+                        &nonce,
+                        &attachment_aad(gid, id, &info)?,
+                    )?;
+                    Some((info, Some(B64.encode(sealed))))
+                }
+                None if req.get("attachment").is_some() => {
+                    let info = &req["attachment"];
+                    attachment_size(info)?;
+                    ensure!(info["media"] == "photo", "invalid photo descriptor");
+                    Some((info.clone(), None))
+                }
+                None => None,
+            };
             ensure!(
                 !text.is_empty() && text.chars().count() <= 4000,
                 "invalid message text"
@@ -564,13 +589,18 @@ fn operation(provider: &Provider, profile: &mut Profile, req: &Value) -> Result<
             let mut group = group(provider, gid)?;
             ensure!(group.is_active(), "inactive conversation");
             roster(profile, &group)?;
-            let payload = json!({"id":id,"group":gid,"sender":profile.identity,"text":text});
+            let mut payload = json!({"id":id,"group":gid,"sender":profile.identity,"text":text});
+            if let Some((info, _)) = &photo {
+                payload["attachment"] = info.clone();
+            }
             let message =
                 group.create_message(provider, &signer, &serde_json::to_vec(&payload)?)?;
-            Ok(
-                json!({"id":id,"group":gid,"epoch":group.epoch().as_u64(),"kind":1,
-                "ciphertext":B64.encode(message.tls_serialize_detached()?)}),
-            )
+            let mut result = json!({"id":id,"group":gid,"epoch":group.epoch().as_u64(),"kind":1,
+                "ciphertext":B64.encode(message.tls_serialize_detached()?)});
+            if let Some((info, Some(sealed))) = photo {
+                result["photo"] = json!({"descriptor":info,"sealed":sealed});
+            }
+            Ok(result)
         }
         "process" => process(provider, profile, req),
         _ => bail!("unsupported crypto operation"),
