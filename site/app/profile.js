@@ -13,6 +13,7 @@ import {
 import { createAccount, apiOrigin, deviceFingerprint } from "./account.js";
 import { createMessenger } from "./messenger.js";
 import { privatePhotoControl } from "./private-image.js";
+import { findHistory, historyPage, matchesHistory, searchText, timelinePageSize } from "./history-search.js";
 
 const byId = (id) => document.getElementById(id);
 const show = (id, visible) => {
@@ -268,6 +269,11 @@ byId("peer-profile-open").onclick = async () => {
   }
   const view = peerProfileContext();
   if (!view || document.hidden) return;
+  if (chatSearch) {
+    clearChatSearch();
+    renderChats();
+    byId("timeline").scrollTop = byId("timeline").scrollHeight;
+  }
   peerProfileView = view;
   const button = byId("peer-profile-open");
   button.textContent = "Закрыть анкету";
@@ -367,6 +373,7 @@ byId("peer-block").onclick = async () => {
 
 function lock() {
   generation++;
+  clearChatSearch();
   clearPeerProfile();
   const current = opened;
   opened = null;
@@ -536,6 +543,7 @@ function layout() {
   if (!trusted) {
     clearProfileText();
     clearPeerProfile();
+    clearChatSearch();
   }
   show("security-email", trusted);
   if (!trusted) {
@@ -599,6 +607,89 @@ document.addEventListener("visibilitychange", () => {
   if (opened && !byId("conversations").hidden) renderChats();
 });
 
+let chatSearch;
+
+function clearChatSearch() {
+  clearTimeout(chatSearch?.timer);
+  chatSearch = undefined;
+  const toggle = byId("chat-search-toggle");
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.textContent = "Поиск в чате";
+  show("chat-search", false);
+  byId("chat-search-query").value = "";
+  byId("chat-search-result").textContent = "";
+}
+
+function selectHistoryMatch(state, messages, index) {
+  state.index = index;
+  state.id = messages[index]?.id;
+  state.length = undefined;
+  state.center = index >= 0;
+}
+
+function updateChatSearch(messages) {
+  const state = chatSearch;
+  if (!state || !state.query) return;
+  // Delivery normally appends. Re-anchor by ID if the current row moved.
+  if (state.id && (messages[state.index]?.id !== state.id || !matchesHistory(messages[state.index], state.query))) {
+    const index = messages.findIndex(message => message.id === state.id && matchesHistory(message, state.query));
+    selectHistoryMatch(state, messages, index >= 0 ? index : findHistory(messages, state.query, messages.length - 1, -1));
+  } else if (!state.id && state.length !== messages.length) {
+    selectHistoryMatch(state, messages, findHistory(messages, state.query, messages.length - 1, -1));
+  }
+  if (state.length === messages.length) return;
+  state.length = messages.length;
+  state.older = state.id ? findHistory(messages, state.query, state.index - 1, -1) : -1;
+  state.newer = state.id ? findHistory(messages, state.query, state.index + 1, 1) : -1;
+  byId("chat-search-older").disabled = state.older < 0;
+  byId("chat-search-newer").disabled = state.newer < 0;
+  byId("chat-search-result").textContent = state.id ? "Совпадение найдено." : "Совпадений нет.";
+}
+
+byId("chat-search-toggle").onclick = () => {
+  if (!opened || !selected) return;
+  if (chatSearch) {
+    clearChatSearch();
+    renderChats();
+    byId("timeline").scrollTop = byId("timeline").scrollHeight;
+    return;
+  }
+  if (peerProfileView) clearPeerProfile();
+  chatSearch = { current: opened, group: selected };
+  const toggle = byId("chat-search-toggle");
+  toggle.setAttribute("aria-expanded", "true");
+  toggle.textContent = "Закрыть поиск";
+  byId("chat-search-older").disabled = true;
+  byId("chat-search-newer").disabled = true;
+  show("chat-search", true);
+  byId("chat-search-query").focus();
+};
+byId("chat-search-query").oninput = event => {
+  const state = chatSearch;
+  if (!state) return;
+  clearTimeout(state.timer);
+  state.query = "";
+  state.id = undefined;
+  state.length = undefined;
+  byId("chat-search-older").disabled = true;
+  byId("chat-search-newer").disabled = true;
+  byId("chat-search-result").textContent = "";
+  state.timer = setTimeout(() => {
+    if (chatSearch !== state) return;
+    state.query = searchText(event.target.value.trim());
+    renderChats();
+  }, 100);
+};
+for (const direction of ["older", "newer"]) {
+  byId(`chat-search-${direction}`).onclick = () => {
+    const state = chatSearch;
+    if (!state || state[direction] < 0) return;
+    const messages = opened.handle.state.messenger.chats[selected].messages;
+    selectHistoryMatch(state, messages, state[direction]);
+    renderChats();
+  };
+}
+
 function renderChats() {
   const chats = opened?.handle.state.messenger?.chats ?? {};
   const list = byId("chat-list");
@@ -627,7 +718,7 @@ function renderChats() {
       btn.dataset.chat = id;
       btn.onclick = () => {
         if (selected !== id) {
-          opened.visibleMessages = 100;
+          opened.visibleMessages = timelinePageSize;
           byId("compose").elements.text.value = opened.getDraft(id)?.text ?? "";
           composeRevision++;
         }
@@ -659,6 +750,7 @@ function renderChats() {
     else button.removeAttribute("aria-current");
   }
   const chat = chats[selected];
+  if (chatSearch && (!chat || chatSearch.current !== opened || chatSearch.group !== selected)) clearChatSearch();
   const peerContext = peerProfileContext();
   if (peerProfileView && !samePeerProfile(peerProfileView, peerContext)) clearPeerProfile();
   show("peer-profile-open", Boolean(peerContext));
@@ -684,18 +776,24 @@ function renderChats() {
   }
   if (opened.renderedGroup !== selected) byId("reconfirm-chat").reset();
   const messages = byId("messages");
-  const count = opened.visibleMessages ?? 100;
-  show("earlier", chat.messages.length > count);
-  const rows = chat.messages.slice(-count);
+  const count = opened.visibleMessages ?? timelinePageSize;
+  updateChatSearch(chat.messages);
+  const match = chatSearch?.id;
+  show("earlier", !match && chat.messages.length > count);
+  const rows = match
+    ? chat.messages.slice(...historyPage(chat.messages.length, chatSearch.index))
+    : chat.messages.slice(-count);
   const version = JSON.stringify([
-    selected,
+    selected, match,
     rows.map(({ id, status }) => [id, status]),
   ]);
   if (opened.timelineSignature === version) {
+    if (match) return;
     watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
     return;
   }
   const timeline = byId("timeline");
+  let matchingRow;
   const previousHeight = timeline.scrollHeight;
   const previousTop = timeline.scrollTop;
   const wasAtEnd = previousHeight - previousTop - timeline.clientHeight < 48;
@@ -738,6 +836,11 @@ function renderChats() {
     }
     row.dir = "auto";
     row.dataset.message = message.id;
+    if (message.id === match) {
+      row.classList.add("search-match");
+      row.setAttribute("aria-current", "true");
+      matchingRow = row;
+    }
     if (message.direction === "outgoing") {
       row.className = "out";
       footer.append(element("span", message.status === "saved" ? "Принято сервером" : "В очереди"));
@@ -747,7 +850,17 @@ function renderChats() {
   }
   if (prepended) timeline.scrollTop = previousTop + timeline.scrollHeight - previousHeight;
   else if (newChat || wasAtEnd) timeline.scrollTop = timeline.scrollHeight;
-  watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
+  if (matchingRow) {
+    stopWatchingUnread();
+    if (chatSearch.center || !timeline.scrollTop) {
+      const bounds = matchingRow.getBoundingClientRect();
+      timeline.scrollTop += bounds.top - timeline.getBoundingClientRect().top -
+        (timeline.clientHeight - bounds.height) / 2;
+      chatSearch.center = false;
+    }
+  } else {
+    watchUnread(chat, messages.lastElementChild?.querySelector("small") ?? messages.lastElementChild);
+  }
 }
 byId("to-chats").onclick = () => {
   const old = selected;
@@ -1101,7 +1214,7 @@ byId("show-password").onchange = (e) => {
 };
 byId("earlier").onclick = () => {
   if (!opened) return;
-  opened.visibleMessages = (opened.visibleMessages ?? 100) + 100;
+  opened.visibleMessages = (opened.visibleMessages ?? timelinePageSize) + timelinePageSize;
   renderChats();
 };
 byId("lock").onclick = lock;
