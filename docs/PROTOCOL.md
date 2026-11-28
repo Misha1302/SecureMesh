@@ -90,6 +90,10 @@ Migration 011 keeps a public-only compatibility view for the original server bin
 
 For two real Flutter sessions against the isolated HTTPS integration server, run `.local/venv/bin/python tests/integration/public_channels.py --ui` from the repository root after local bootstrap and Flutter dependency installation. Test accounts, device keys and credentials belong to that fixture.
 
+### Browser profile links
+
+The PWA shares its own HTTPS profile page with a fragment of the form `#/@username`. The client consumes the fragment locally and offers the username in the new-chat form after unlock. Opening a link neither sends a request nor verifies a cryptographic identity. An existing draft requires explicit replacement.
+
 ### Native profile QR
 
 The profile QR encodes `securemesh:profile:v1:<https-origin>/@<username>`. The scanner in the new-chat form accepts only its configured origin and a lowercase username of 3–32 ASCII letters, digits or underscores. Scanning fills the contact field. The user still submits a chat request. Device verification uses a separate QR type and compares the device fingerprint.

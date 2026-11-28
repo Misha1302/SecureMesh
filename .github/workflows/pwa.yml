@@ -104,6 +104,8 @@ jobs:
             .local/venv/bin/python tests/pwa/native_photo_browser.py --browser "$browser"
           done
           .local/venv/bin/python tests/pwa/contact_blocks_browser.py
+          .local/venv/bin/python tests/pwa/message_blocks_browser.py
+          .local/venv/bin/python tests/pwa/profile_links_browser.py
           .local/venv/bin/python tests/pwa/history_search_browser.py
           .local/venv/bin/python tests/pwa/recovery_browser.py
           .local/venv/bin/python tests/pwa/private_image_browser.py

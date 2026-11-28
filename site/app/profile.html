@@ -111,6 +111,7 @@
                 autocapitalize="none" spellcheck="false" /></label>
             <button>Отправить приглашение</button>
           </form>
+          <button id="use-linked-peer" type="button" hidden></button>
           <div id="requests"></div>
           <details>
             <summary>Мой код проверки</summary>
@@ -175,6 +176,9 @@
       </section>
       <details id="profile-text" hidden>
         <summary>Мой профиль</summary>
+        <button id="share-profile-link" type="button">Скопировать ссылку на профиль</button>
+        <input id="own-profile-link" aria-label="Ссылка на профиль" readonly hidden />
+        <p id="share-link-status" aria-live="polite"></p>
         <form id="profile-text-form">
           <fieldset disabled>
             <label>О себе<textarea name="bio" rows="3"></textarea></label>

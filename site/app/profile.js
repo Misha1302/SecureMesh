@@ -431,6 +431,9 @@ byId("dm-block").onclick = () => {
 
 function lock() {
   generation++;
+  linkedPeer = undefined;
+  offerLinkedPeer();
+  clearSharedLink();
   clearChatSearch();
   clearPeerProfile();
   const current = opened;
@@ -457,6 +460,69 @@ function lock() {
   notice("");
   layout();
 }
+let linkedPeer;
+const profileName = /^[a-z0-9_]{3,32}$/;
+
+function takeProfileFragment() {
+  const fragment = location.hash;
+  if (!fragment.startsWith("#/@")) return;
+  history.replaceState(history.state, "", location.pathname + location.search);
+  const name = fragment.slice(3);
+  linkedPeer = profileName.test(name) ? name : undefined;
+}
+
+function clearSharedLink() {
+  byId("own-profile-link").value = "";
+  show("own-profile-link", false);
+  byId("share-link-status").textContent = "";
+}
+
+function offerLinkedPeer(replace = false) {
+  const target = byId("use-linked-peer");
+  target.hidden = true;
+  target.textContent = "";
+  if (!linkedPeer || !opened || byId("conversations").hidden) return;
+  const input = byId("invite").elements.peer;
+  if (linkedPeer === opened.handle.state.username) {
+    linkedPeer = undefined;
+    return;
+  }
+  if (selected) byId("to-chats").click();
+  if (input.value && input.value !== linkedPeer && !replace) {
+    target.textContent = "Выбрать @" + linkedPeer + " из ссылки";
+    target.hidden = false;
+    return;
+  }
+  input.value = linkedPeer;
+  linkedPeer = undefined;
+}
+
+byId("use-linked-peer").onclick = () => offerLinkedPeer(true);
+takeProfileFragment();
+window.addEventListener("hashchange", () => {
+  takeProfileFragment();
+  offerLinkedPeer();
+});
+byId("share-profile-link").onclick = async () => {
+  const current = opened;
+  const name = current?.handle.state.username;
+  if (!current || byId("profile-text").hidden || !profileName.test(name ?? "")) return;
+  const link = new URL("./profile.html", location.href);
+  link.hash = "/@" + name;
+  const field = byId("own-profile-link");
+  try {
+    await navigator.clipboard.writeText(link.href);
+    if (opened === current && byId("profile-text").open) byId("share-link-status").textContent = "Ссылка скопирована.";
+  } catch {
+    if (opened !== current || !byId("profile-text").open) return;
+    field.value = link.href;
+    show("own-profile-link", true);
+    field.focus();
+    field.select();
+    byId("share-link-status").textContent = "Скопируйте выделенную ссылку.";
+  }
+};
+
 const profileForm = byId("profile-text-form");
 let profileRevision = null;
 let profileDirty = false;
@@ -519,7 +585,8 @@ async function editProfileText(save) {
   }
 }
 byId("profile-text").ontoggle = () => {
-  if (byId("profile-text").open && !profileDirty) editProfileText(false);
+  if (!byId("profile-text").open) clearSharedLink();
+  else if (!profileDirty) editProfileText(false);
 };
 profileForm.oninput = () => { profileDirty = true; };
 profileForm.onsubmit = event => {
@@ -599,6 +666,7 @@ function layout() {
   show("conversations", trusted);
   show("profile-text", trusted);
   if (!trusted) {
+    clearSharedLink();
     clearProfileText();
     clearPeerProfile();
     clearChatSearch();
@@ -624,7 +692,10 @@ function layout() {
     "login",
     Boolean(state.userId || ["verifying", "verified"].includes(stage)),
   );
-  if (trusted) renderChats();
+  if (trusted) {
+    offerLinkedPeer();
+    renderChats();
+  }
 }
 function element(tag, text) {
   const node = document.createElement(tag);
