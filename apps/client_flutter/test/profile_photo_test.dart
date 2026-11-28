@@ -48,6 +48,31 @@ void main() {
     expect(tile.length, 6912);
     expect(tile.sublist(3 * 24 * 48, 3 * 24 * 48 + 3), [255, 0, 0]);
   });
+  testWidgets('directory refresh clears a previously loaded avatar', (
+    tester,
+  ) async {
+    final pixels = base64Encode(Uint8List(photoSide * photoSide * 3));
+    Widget view(String? route) => MaterialApp(
+      home: PeerAvatar(
+        route: route,
+        username: 'alice',
+        fetch: (path, {data, method}) async => {'pixels': pixels},
+      ),
+    );
+    await tester.pumpWidget(view('/photo/visible'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<CircleAvatar>(find.byType(CircleAvatar)).foregroundImage,
+      isNotNull,
+    );
+    await tester.pumpWidget(view(null));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<CircleAvatar>(find.byType(CircleAvatar)).foregroundImage,
+      isNull,
+    );
+    expect(find.text('A'), findsOneWidget);
+  });
   testWidgets('a late avatar response stays hidden after contact blocking', (
     tester,
   ) async {

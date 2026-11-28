@@ -130,8 +130,8 @@ class _ContactBlocksState extends State<_ContactBlocks> {
         children: [
           Text(
             tr(
-              'Блокировка убирает ожидающие входящие запросы от этого аккаунта и предотвращает новые. Принятые запросы и существующие чаты остаются доступны.',
-              'Blocking removes pending incoming invitations from this account and prevents new ones. Accepted invitations and existing chats remain available.',
+              'Блокировка убирает ожидающие входящие запросы от этого аккаунта и предотвращает новые. Вы и собеседник не видите фото профиля, описание и статус друг друга. Принятые запросы и существующие чаты остаются доступны.',
+              'Blocking removes pending incoming invitations from this account and prevents new ones. Neither of you can see the other’s profile photo, bio or status. Accepted invitations and existing chats remain available.',
             ),
           ),
           if (items == null && !working)

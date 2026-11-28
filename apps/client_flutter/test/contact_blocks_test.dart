@@ -28,6 +28,7 @@ void main() {
     await tester.tap(find.text('Open blocked accounts'));
     await tester.pumpAndSettle();
     expect(find.text('alice'), findsOneWidget);
+    expect(find.textContaining('profile photo, bio or status'), findsOneWidget);
     await tester.tap(find.text('Block invitations'));
     await tester.pumpAndSettle();
     expect(find.text('@alice'), findsOneWidget);

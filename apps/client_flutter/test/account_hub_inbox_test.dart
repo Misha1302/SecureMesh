@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -95,6 +97,87 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  testWidgets('closing block dialog refreshes the cached avatar', (
+    tester,
+  ) async {
+    const group = '00000000-0000-0000-0000-000000000001';
+    const version = '00000000-0000-0000-0000-000000000002';
+    var blocked = false;
+    var directoryReads = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AccountHub(
+            russian: false,
+            profile: {'trustState': 'DEVICE_TRUSTED'},
+            crypto: (_, [args = const {}]) async => {},
+            api: (route, {data}) async {
+              if (route == '/v1/users/me')
+                return {'trustState': 'DEVICE_TRUSTED', 'userId': 'me'};
+              if (route == '/v1/conversations') {
+                directoryReads++;
+                return [
+                  {
+                    'id': group,
+                    'peerName': 'alice',
+                    'peerKey': 'key',
+                    'peerDevice': 'device',
+                    'peerPhotoVersion': blocked ? null : version,
+                  },
+                ];
+              }
+              if (route == '/v1/chat-requests')
+                return blocked
+                    ? []
+                    : [
+                        {
+                          'id': 'request',
+                          'username': 'alice',
+                          'outgoing': false,
+                          'accepted': false,
+                        },
+                      ];
+              if (route.contains('/photo/'))
+                return {'pixels': base64Encode(Uint8List(6912))};
+              return [];
+            },
+            channelApi: (route, {data, method}) async {
+              if (method == 'PUT') {
+                blocked = true;
+                return null;
+              }
+              return {'items': <String>[]};
+            },
+            saveProfile: (_) async {},
+            openChat: (_, _, _, _) async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<CircleAvatar>(find.byType(CircleAvatar).first)
+          .foregroundImage,
+      isNotNull,
+    );
+    await tester.ensureVisible(find.byTooltip('Block invitations'));
+    await tester.tap(find.byTooltip('Block invitations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Block invitations').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close').last);
+    await tester.pumpAndSettle();
+    expect(directoryReads, greaterThanOrEqualTo(2));
+    expect(
+      tester
+          .widget<CircleAvatar>(find.byType(CircleAvatar).first)
+          .foregroundImage,
+      isNull,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
 
   testWidgets(
     'new chat submits a normalized username through the existing request protocol',
