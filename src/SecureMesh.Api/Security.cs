@@ -71,7 +71,7 @@ public static class Sql
         await using (var session = Sql.Cmd(c, """
             SELECT 1 FROM sessions s JOIN devices d ON d.id=s.device_id
             WHERE s.id=$1 AND d.id=$2 AND d.user_id=$3 AND (NOT $4 OR d.trusted) AND NOT d.revoked
-                AND NOT s.used AND NOT s.revoked AND s.expires_at>now()
+                AND NOT s.used AND NOT s.revoked AND s.expires_at>statement_timestamp()
                 AND session_idle_active(s.last_interactive_at,s.idle_timeout_days)
             """, actor.SessionId, actor.DeviceId, actor.UserId, requireTrusted))
             if (await session.ExecuteScalarAsync(cancellationToken) is null)

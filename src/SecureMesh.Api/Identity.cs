@@ -274,7 +274,7 @@ public static class Identity
             await using(var cmd=Sql.Cmd(c,"SELECT id FROM users WHERE id=$1 AND username=$2 AND verified AND password_hash=$3 FOR UPDATE",user,input.Username,phc))
                 if(await cmd.ExecuteScalarAsync() is null) throw new ApiError(401,"INVALID_CREDENTIALS");
             byte[] payload;
-            await using(var cmd=Sql.Cmd(c,"DELETE FROM auth_challenges WHERE id=$1 AND username=$2 AND device_id=$3 AND expires_at>now() RETURNING payload",input.ChallengeId,input.Username,input.DeviceId))
+            await using(var cmd=Sql.Cmd(c,"DELETE FROM auth_challenges WHERE id=$1 AND username=$2 AND device_id=$3 AND expires_at>statement_timestamp() RETURNING payload",input.ChallengeId,input.Username,input.DeviceId))
                 payload=await cmd.ExecuteScalarAsync() as byte[] ?? throw new ApiError(401,"DEVICE_PROOF_REQUIRED");
             var publicKey=Convert.FromBase64String(input.PublicKey);
             var key=PublicKey.Import(SignatureAlgorithm.Ed25519,publicKey,KeyBlobFormat.RawPublicKey);
@@ -316,7 +316,7 @@ public static class Identity
                 owner = await lookup.ExecuteScalarAsync() as Guid? ?? throw new ApiError(401, "INVALID_REFRESH");
             await using (var account = Sql.Cmd(c, "SELECT id FROM users WHERE id=$1 FOR UPDATE", owner))
                 if (await account.ExecuteScalarAsync() is null) throw new ApiError(401, "INVALID_REFRESH");
-            await using(var cmd=Sql.Cmd(c,"SELECT id,device_id,family,used,revoked FROM sessions WHERE refresh_hash=$1 AND refresh_expires_at>now() FOR UPDATE",refreshHash))
+            await using(var cmd=Sql.Cmd(c,"SELECT id,device_id,family,used,revoked FROM sessions WHERE refresh_hash=$1 AND refresh_expires_at>statement_timestamp() FOR UPDATE",refreshHash))
             await using(var r=await cmd.ExecuteReaderAsync())
             {
                 if(!await r.ReadAsync()) throw new ApiError(401,"INVALID_REFRESH");

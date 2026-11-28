@@ -26,7 +26,7 @@ public static class DeviceTrust
             byte[] key;
             await using (var cmd = Sql.Cmd(c, "SELECT public_key FROM devices WHERE id=$1 AND NOT trusted AND NOT revoked", actor.DeviceId))
                 key = await cmd.ExecuteScalarAsync() as byte[] ?? throw new ApiError(409, "DEVICE_NOT_PENDING");
-            await using (var expired = Sql.Cmd(c, "DELETE FROM device_enrollments WHERE device_id=$1 AND approved_at IS NULL AND expires_at<=now()", actor.DeviceId))
+            await using (var expired = Sql.Cmd(c, "DELETE FROM device_enrollments WHERE device_id=$1 AND approved_at IS NULL AND expires_at<=statement_timestamp()", actor.DeviceId))
                 await expired.ExecuteNonQueryAsync();
             await using (var existing = Sql.Cmd(c, "SELECT id,payload FROM device_enrollments WHERE device_id=$1 AND approved_at IS NULL", actor.DeviceId))
             await using (var r = await existing.ExecuteReaderAsync())
@@ -55,7 +55,7 @@ public static class DeviceTrust
             byte[] payload, key;
             await using (var cmd = Sql.Cmd(c, """
                 SELECT e.payload,d.public_key FROM device_enrollments e JOIN devices d ON d.id=e.device_id
-                WHERE e.id=$1 AND e.device_id=$2 AND e.user_id=$3 AND e.expires_at>now() AND e.approved_at IS NULL AND NOT d.revoked AND NOT d.trusted FOR UPDATE OF e
+                WHERE e.id=$1 AND e.device_id=$2 AND e.user_id=$3 AND e.expires_at>statement_timestamp() AND e.approved_at IS NULL AND NOT d.revoked AND NOT d.trusted FOR UPDATE OF e
                 """, id, actor.DeviceId, actor.UserId))
             await using (var r = await cmd.ExecuteReaderAsync())
             {
@@ -106,7 +106,7 @@ public static class DeviceTrust
             await using (var cmd = Sql.Cmd(c, """
                 SELECT e.device_id,e.payload,e.candidate_signature,d.public_key
                 FROM device_enrollments e JOIN devices d ON d.id=e.device_id
-                WHERE e.id=$1 AND e.user_id=$2 AND e.expires_at>now() AND e.approved_at IS NULL
+                WHERE e.id=$1 AND e.user_id=$2 AND e.expires_at>statement_timestamp() AND e.approved_at IS NULL
                   AND e.candidate_signature IS NOT NULL AND NOT d.revoked AND NOT d.trusted FOR UPDATE OF e
                 """, id, actor.UserId))
             await using (var r = await cmd.ExecuteReaderAsync())
@@ -132,7 +132,7 @@ public static class DeviceTrust
                 SELECT e.grant_signature,d.public_key,e.activated_at IS NOT NULL
                 FROM device_enrollments e JOIN devices d ON d.id=e.device_id JOIN devices a ON a.id=e.approver_id
                 WHERE e.id=$1 AND e.device_id=$2 AND e.user_id=$3 AND e.approved_at IS NOT NULL
-                  AND (e.expires_at>now() OR e.activated_at IS NOT NULL) AND NOT d.revoked AND a.trusted AND NOT a.revoked FOR UPDATE OF e
+                  AND (e.expires_at>statement_timestamp() OR e.activated_at IS NOT NULL) AND NOT d.revoked AND a.trusted AND NOT a.revoked FOR UPDATE OF e
                 """,id,actor.DeviceId,actor.UserId))
             await using(var r=await cmd.ExecuteReaderAsync())
             {
