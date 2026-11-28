@@ -829,6 +829,7 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     bool? backgroundLockPreference,
     bool? autoTranscribe,
     ({String? group, bool dark, String? color})? wallpaper,
+    ({String? group, bool dark, int? value})? dimming,
   }) {
     final epoch = generation;
     final write = profileWrites.then((_) async {
@@ -859,6 +860,16 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
         );
       } else if (profile!.containsKey('chatBackgrounds')) {
         updated['chatBackgrounds'] = profile!['chatBackgrounds'];
+      }
+      if (dimming != null) {
+        updated['chatDimming'] = updateChatDimming(
+          profile,
+          dimming.group,
+          dimming.dark,
+          dimming.value,
+        );
+      } else if (profile!.containsKey('chatDimming')) {
+        updated['chatDimming'] = profile!['chatDimming'];
       }
       // Preserve a newer privacy choice across concurrent profile/session writes.
       if (updateNotificationPolicy != null) {
@@ -1420,6 +1431,11 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
     final background = chatBackgroundColor(
       scheme,
       chatBackground(
+        profile,
+        profile?['group'] as String?,
+        scheme.brightness == Brightness.dark,
+      ),
+      dimming: chatDimming(
         profile,
         profile?['group'] as String?,
         scheme.brightness == Brightness.dark,
@@ -3224,6 +3240,20 @@ class _ClientAppState extends State<ClientApp> with WidgetsBindingObserver {
             group: profile?['group'] as String?,
             name: profile?['peerName'] as String?,
             tr: tr,
+            saveDimming: (group, dark, value) async {
+              final epoch = generation;
+              try {
+                await persistProfile(
+                  {},
+                  removedFields: {},
+                  dimming: (group: group, dark: dark, value: value),
+                );
+                if (mounted && epoch == generation) setState(() {});
+              } catch (_) {
+                if (mounted && epoch == generation)
+                  setState(() => appearanceSaveFailed = true);
+              }
+            },
             save: (group, dark, color) async {
               final epoch = generation;
               try {

@@ -16,6 +16,14 @@ void main() {
                 group: 'a',
                 name: 'alice',
                 tr: (_, en) => en,
+                saveDimming: (group, dark, value) => setState(() {
+                  profile['chatDimming'] = updateChatDimming(
+                    profile,
+                    group,
+                    dark,
+                    value,
+                  );
+                }),
                 save: (group, dark, color) => setState(() {
                   profile['chatBackgrounds'] = updateChatBackground(
                     profile,
@@ -29,6 +37,12 @@ void main() {
           ),
         ),
       );
+      await tester.tap(find.byType(DropdownButtonFormField<int>).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('20%').last);
+      await tester.pumpAndSettle();
+      expect(chatDimming(profile, 'a', false), 20);
+      expect(chatDimming(profile, 'b', false), 0);
       await tester.tap(find.text('Mint').last);
       await tester.pumpAndSettle();
       expect(chatBackground(profile, 'a', false), 'mint');
@@ -36,6 +50,27 @@ void main() {
       await tester.tap(find.text('Use global setting'));
       await tester.pumpAndSettle();
       expect(chatBackground(profile, 'a', false), 'blue');
+    },
+  );
+
+  test(
+    'dimming is inherited, overrides only one theme and ignores invalid data',
+    () {
+      final profile = <String, dynamic>{};
+      profile['chatDimming'] = updateChatDimming(profile, null, true, 20);
+      expect(chatDimming(profile, 'a', true), 20);
+      expect(chatDimming(profile, 'a', false), 0);
+      profile['chatDimming'] = updateChatDimming(profile, 'a', true, 0);
+      expect(chatDimming(profile, 'a', true), 0);
+      profile['chatDimming'] = updateChatDimming(profile, 'a', true, null);
+      expect(chatDimming(profile, 'a', true), 20);
+      profile['chatDimming']['a/dark'] = 9000;
+      expect(chatDimming(profile, 'a', true), 20);
+      final scheme = ColorScheme.fromSeed(seedColor: Colors.blue);
+      expect(
+        chatBackgroundColor(scheme, 'blue', dimming: 20).computeLuminance(),
+        lessThan(chatBackgroundColor(scheme, 'blue').computeLuminance()),
+      );
     },
   );
 

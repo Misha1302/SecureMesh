@@ -38,17 +38,52 @@ Map<String, dynamic> updateChatBackground(
   return next;
 }
 
-Color chatBackgroundColor(ColorScheme scheme, String value) => switch (value) {
-  'blue' => Color.alphaBlend(
-    scheme.primary.withValues(alpha: .085),
-    scheme.surface,
-  ),
-  'mint' => Color.alphaBlend(
-    const Color(0xff439779).withValues(alpha: .13),
-    scheme.surface,
-  ),
-  _ => scheme.surface,
-};
+const _dimmingLevels = [0, 10, 20];
+
+int? _savedDimming(Map? profile, String? group, bool dark) {
+  final values = profile?['chatDimming'];
+  final value = values is Map ? values[_key(group, dark)] : null;
+  return value is int && _dimmingLevels.contains(value) ? value : null;
+}
+
+int chatDimming(Map? profile, String? group, bool dark) =>
+    _savedDimming(profile, group, dark) ??
+    _savedDimming(profile, null, dark) ??
+    0;
+
+Map<String, dynamic> updateChatDimming(
+  Map? profile,
+  String? group,
+  bool dark,
+  int? value,
+) {
+  final old = profile?['chatDimming'];
+  final next = old is Map
+      ? Map<String, dynamic>.from(old)
+      : <String, dynamic>{};
+  if (value == null) {
+    next.remove(_key(group, dark));
+  } else {
+    if (!_dimmingLevels.contains(value)) throw ArgumentError.value(value);
+    next[_key(group, dark)] = value;
+  }
+  return next;
+}
+
+Color chatBackgroundColor(ColorScheme scheme, String value, {int dimming = 0}) {
+  final base = switch (value) {
+    'blue' => Color.alphaBlend(
+      scheme.primary.withValues(alpha: .085),
+      scheme.surface,
+    ),
+    'mint' => Color.alphaBlend(
+      const Color(0xff439779).withValues(alpha: .13),
+      scheme.surface,
+    ),
+    _ => scheme.surface,
+  };
+  return Color.alphaBlend(Colors.black.withValues(alpha: dimming / 100), base);
+}
 
 class ChatBackgroundSettings extends StatelessWidget {
   const ChatBackgroundSettings({
@@ -58,11 +93,14 @@ class ChatBackgroundSettings extends StatelessWidget {
     required this.name,
     required this.tr,
     required this.save,
+    required this.saveDimming,
   });
   final Map? profile;
   final String? group, name;
   final String Function(String, String) tr;
   final void Function(String?, bool, String?) save;
+
+  final void Function(String?, bool, int?) saveDimming;
 
   @override
   Widget build(BuildContext context) {
@@ -76,27 +114,61 @@ class ChatBackgroundSettings extends StatelessWidget {
       final selected = id == null
           ? chatBackground(profile, id, dark)
           : _choice(profile, id, dark);
-      return Wrap(
-        spacing: 8,
+      final dimming = chatDimming(profile, id, dark);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (id != null)
-            ChoiceChip(
-              label: Text(tr('Как у всех чатов', 'Use global setting')),
-              selected: selected == null,
-              onSelected: (_) => save(id, dark, null),
-            ),
-          for (var i = 0; i < _colors.length; i++)
-            ChoiceChip(
-              label: Text(labels[i]),
-              selected: selected == _colors[i],
-              avatar: CircleAvatar(
-                backgroundColor: chatBackgroundColor(
-                  Theme.of(context).colorScheme,
-                  _colors[i],
+          Wrap(
+            spacing: 8,
+            children: [
+              if (id != null)
+                ChoiceChip(
+                  label: Text(tr('Как у всех чатов', 'Use global setting')),
+                  selected: selected == null,
+                  onSelected: (_) => save(id, dark, null),
                 ),
-              ),
-              onSelected: (_) => save(id, dark, _colors[i]),
+              for (var i = 0; i < _colors.length; i++)
+                ChoiceChip(
+                  label: Text(labels[i]),
+                  selected: selected == _colors[i],
+                  avatar: CircleAvatar(
+                    backgroundColor: chatBackgroundColor(
+                      Theme.of(context).colorScheme,
+                      _colors[i],
+                      dimming: dimming,
+                    ),
+                  ),
+                  onSelected: (_) => save(id, dark, _colors[i]),
+                ),
+            ],
+          ),
+          DropdownButtonFormField<int>(
+            key: ValueKey((
+              id,
+              dark,
+              dimming,
+              _savedDimming(profile, id, dark),
+            )),
+            decoration: InputDecoration(
+              labelText: tr('Затемнение фона', 'Background dimming'),
             ),
+            initialValue: id == null
+                ? dimming
+                : _savedDimming(profile, id, dark) ?? -1,
+            items: [
+              if (id != null)
+                DropdownMenuItem(
+                  value: -1,
+                  child: Text(tr('Как у всех чатов', 'Use global dimming')),
+                ),
+              for (final level in _dimmingLevels)
+                DropdownMenuItem(value: level, child: Text('$level%')),
+            ],
+            onChanged: (level) {
+              if (level != null)
+                saveDimming(id, dark, level == -1 ? null : level);
+            },
+          ),
         ],
       );
     }
